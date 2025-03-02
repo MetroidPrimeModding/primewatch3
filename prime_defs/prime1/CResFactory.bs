@@ -1,0 +1,27 @@
+struct CResFactory {
+    CResLoader loader 0x4
+    CFactoryMgr factoryManager 0x5c
+    rstl::list<SLoadingData> loadList 0x8C
+}
+
+struct CResLoader {
+
+}
+
+struct CFactoryMgr {
+
+}
+
+struct SLoadingData {
+    SObjectTag tag 0x0
+    rstl::autoptr<IDvdRequest> dvdReq 0x8
+    *IObj targetPtr 0x10
+    *u8 loadBuffer 0x14
+    u32 resLen 0x2C
+    u32 compressed 0x30
+    //CVParamTransfer cvXfer 0x34
+}
+
+struct IDvdRequest {
+
+}

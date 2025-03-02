@@ -136,15 +136,13 @@ impl DolphinMemoryAccess {
       if self.emu_ram_address_start.is_null() {
         return false;
       }
-      let copy_size = size.min(DOLPHIN_MEMORY_SIZE);
-      let src_ptr = unsafe {
-        self
-          .emu_ram_address_start
-          .add((offset & 0x7FFF_FFFF).min(DOLPHIN_MEMORY_SIZE as usize))
-      };
+      let offset = (offset & 0x7FFF_FFFF).clamp(0, DOLPHIN_MEMORY_SIZE);
+      let copy_size = size.clamp(0, DOLPHIN_MEMORY_SIZE - offset);
+      let src_ptr = unsafe { self.emu_ram_address_start.add(offset) };
       unsafe {
         std::ptr::copy_nonoverlapping(src_ptr, dest.as_mut_ptr(), copy_size);
       }
+      true
     }
 
     #[cfg(target_os = "windows")]

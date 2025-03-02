@@ -1,9 +1,11 @@
 mod mem;
+mod structs;
 
 use bevy::prelude::*;
 use bevy_egui::{EguiContexts, EguiPlugin, egui};
 use crate::mem::dolphin_memory::DolphinMemoryAccess;
 use crate::mem::game_memory::GameMemory;
+use crate::structs::prime_structs::PrimeStructs;
 
 fn main() {
   let default_plugins = DefaultPlugins.set(WindowPlugin {
@@ -22,10 +24,17 @@ fn main() {
   let pids = dma.get_dolphin_pids();
   println!("PIDs: {:?}", pids);
 
+  let mut structs = PrimeStructs::new_empty();
+  let loadResult = structs.load_from_dir("prime_defs");
+  match loadResult {
+    Ok(_) => println!("Loaded {} structs and {} enums", structs.structs.len(), structs.enums.len()),
+    Err(err) => println!("Error loading structs: {}", err),
+  }
 
   App::new()
     .add_plugins(default_plugins)
     .add_plugins(EguiPlugin)
+    .insert_resource(structs)
     .add_systems(Update, ui_example_system)
     .run();
 }

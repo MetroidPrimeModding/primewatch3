@@ -1,0 +1,3 @@
+[submodule "bstruct"]
+	path = bstruct
+	url = git@github.com:Pwootage/bstruct_rust.git
