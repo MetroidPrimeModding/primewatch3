@@ -1,6 +1,12 @@
+use bevy::prelude::Resource;
+use std::fs;
+use std::io::Read;
+
 const DOLPHIN_MEMORY_SIZE: u32 = 0x1800000u32;
+
+#[derive(Resource)]
 pub struct GameMemory {
-  data: [u8; DOLPHIN_MEMORY_SIZE as usize],
+  pub data: [u8; DOLPHIN_MEMORY_SIZE as usize],
 }
 
 impl GameMemory {
@@ -8,6 +14,18 @@ impl GameMemory {
     GameMemory {
       data: [0; DOLPHIN_MEMORY_SIZE as usize],
     }
+  }
+  
+  pub fn load_from_file(&mut self, path: &str) -> Result<(), std::io::Error> {
+    let file = fs::File::open(path)?;
+    let mut reader = std::io::BufReader::new(file);
+
+    // could use read_exact(&mut self.data), but this is safer, since it won't override the existing data
+    let mut contents = vec![0; DOLPHIN_MEMORY_SIZE as usize];
+    reader.read_exact(&mut contents)?;
+    self.data = contents.try_into().unwrap();
+
+    Ok(())
   }
 }
 
