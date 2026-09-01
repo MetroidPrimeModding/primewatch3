@@ -361,8 +361,250 @@ steps; `port-implementer` moves it to `IN REVIEW`; `port-reviewer` moves it to `
     calls `loadDefs()`). Needs `&mut GameStructs` reachable from the egui closure; fold into the
     P9 app shell when defs reloading / the main menu land.
 
-- [ ] **P1.3** Decide + spike the egui/wgpu 3D compositing pattern (render 3D to a texture shown via
-  an `egui-wgpu` paint callback / `egui::Image`). Document the chosen pattern here. — `TODO`
+- [x] **P1.3** Decide + spike the egui/wgpu 3D compositing pattern (render 3D to a texture shown via
+  an `egui-wgpu` paint callback / `egui::Image`). Document the chosen pattern here. — `DONE`
+
+  **Chosen pattern: B — render 3D to an offscreen wgpu texture, show it via `egui::Image`.**
+
+  Each frame the 3D scene renders into an app-owned offscreen color+depth target, then the color
+  texture is handed to egui as a user texture (`egui_wgpu::Renderer::register_native_texture` on
+  first use, `update_egui_texture_from_wgpu_texture` to reuse the same `TextureId` every frame
+  afterwards — that call rebuilds the bind group from the current view, so it also covers resize)
+  and drawn as an `egui::Image` inside a panel. The egui pass still targets the swapchain and
+  clears it to black exactly as today (C++ `glClearColor(0,0,0,1)`).
+
+  Rationale:
+  - The world view owns its own depth buffer, camera, MSAA choice, and clear color. An offscreen
+    target keeps all of that isolated from egui's render pass instead of interleaving pipeline
+    state inside it (pattern A / `CallbackTrait`).
+  - Sizing/lifetime is easy to reason about: the target is resized to the panel's allocated size;
+    there is no clip-rect/scissor math and no "callback runs inside egui's pass with egui's
+    bind groups still bound" surprises.
+  - It matches how `WorldRenderer` is already shaped in C++ (`render()` builds its own projection
+    from `fov/aspect/zNear/zFar` and does a full clear) — Phase 8 ports `WorldRenderer::render`
+    into `SpikeScene::render`'s place with minimal API disruption.
+  - Tradeoffs accepted: one extra full-screen texture + blit's worth of bandwidth per frame, one
+    frame of latency is possible if the panel resize and the re-register race (mitigated by
+    resizing the target *before* the scene pass, from last frame's panel size), and the color
+    target must be `wgpu::TextureFormat::Rgba8Unorm` (egui-wgpu hard-requires it for
+    `register_native_texture`) rather than the surface's sRGB format — the spike must pick
+    `Rgba8Unorm` and note the gamma implication for Phase 8.
+  - Pattern A stays available if a perf problem shows up later; nothing above `SpikeScene` needs
+    to know which is used as long as the P8 renderer keeps the "give me an encoder + a target
+    size, I hand you back a `TextureView`" contract.
+
+  Note for P8/P9: whether the world view ends up as a full-window `CentralPanel` background with
+  floating inspector windows (like C++ `PrimeWatch::doFrame`) or a docked side panel is a *layout*
+  decision — the offscreen-texture mechanism is identical either way. The spike uses a simple
+  dedicated `egui::Window`/`SidePanel` to prove the plumbing.
+
+  **Port from:**
+  - `../primewatch2/src/PrimeWatch.cpp:PrimeWatch::doFrame` (lines 235-278) — frame order: memory
+    parse → egui new-frame → build UI → clear `(0,0,0,1)` + `GL_DEPTH_BUFFER_BIT` + `GL_MULTISAMPLE`
+    → `worldRenderer.render(...)` → egui render. The spike keeps this order with the 3D pass
+    redirected to the offscreen target.
+  - `../primewatch2/src/world/WorldRenderer.cpp:WorldRenderer::render` (lines 248-407) — reference
+    only, NOT ported here: shows the world pass owns its projection (`glm::perspective(fov, aspect,
+    zNear, zFar)`, line 259/291), its view matrix, and does its own clear. The spike stubs this
+    with a single rotating primitive; the real port is P8.4.
+  - `../primewatch2/src/gl/OpenGLShader.cpp` + the inline `meshVertShader` in `WorldRenderer.cpp`
+    (`uniform mat4 projection; gl_Position = projection * view * model * vec4(aPos,1.0)`) — target
+    shape for the spike's trivial WGSL shader (one MVP uniform).
+  - `../primewatch2/src/PrimeWatch.cpp:framebuffer_size_cb` / `updateWindowSize` (~lines 485-492) —
+    resize path; here it drives the offscreen target size via the panel rect, not the surface.
+  - Current Rust: `src/app.rs` — `AppWindow` (fields, `new`, `resize`, `render`). The spike adds a
+    `scene` field and a `scene.render()` call before the egui pass in `AppWindow::render`.
+
+  **Steps:**
+  1. [x] New module `src/scene.rs` (`mod scene;` in `src/main.rs`). Define
+     `pub struct SpikeScene` holding: color texture + view (`Rgba8Unorm`, usage
+     `RENDER_ATTACHMENT | TEXTURE_BINDING`), depth texture + view (`Depth32Float`,
+     `RENDER_ATTACHMENT`), `wgpu::RenderPipeline`, an MVP uniform `wgpu::Buffer` + `BindGroup`,
+     `size: (u32, u32)`, and a rotation accumulator (`start: std::time::Instant` or `angle: f32`).
+     No `static` / `OnceCell` / `lazy_static`; the scene is owned by `AppWindow`.
+  2. [x] `SpikeScene::new(device: &wgpu::Device, size: (u32, u32)) -> Self`: clamp size to `>=1`,
+     create the two textures, an inline WGSL shader (vertex pulls 3 hard-coded positions/colors or a
+     small cube vertex buffer; fragment passes colour through), a pipeline with the depth-stencil
+     state (`Depth32Float`, `depth_write_enabled: true`, `Less`), a 64-byte uniform buffer for one
+     `mat4`, and the bind group. MSAA = 1 for the spike (leave a `// TODO(P8): MSAA` note).
+  3. [x] `SpikeScene::resize(&mut self, device: &wgpu::Device, size: (u32, u32)) -> bool`: if
+     `size` (clamped `>=1`) differs from `self.size`, recreate color+depth textures/views, store the
+     new size, return `true` (caller must re-register the egui texture). Otherwise return `false`.
+  4. [x] `SpikeScene::render(&mut self, queue: &wgpu::Queue, encoder: &mut wgpu::CommandEncoder)`:
+     advance the angle from elapsed time, build `proj * view * model` with `glam`
+     (`Mat4::perspective_rh(60°, w/h, 0.1, 100.0)`, a fixed eye via `Mat4::look_at_rh`,
+     `Mat4::from_rotation_y(angle)`), `queue.write_buffer` the uniform (`.to_cols_array()`), then a
+     render pass on the offscreen color view with `LoadOp::Clear` to a *distinct* colour (e.g.
+     `Color { r: 0.05, g: 0.05, b: 0.12, a: 1.0 }` — visibly not the black surface) + depth clear
+     `1.0`, bind pipeline + group, draw.
+  5. [x] `src/app.rs` `AppWindow`: add `scene: SpikeScene` and
+     `scene_texture: Option<egui::TextureId>`. In `AppWindow::new`, construct `SpikeScene::new` with
+     an initial size (e.g. `(800, 600)`); leave `scene_texture: None`.
+  6. [x] `src/app.rs` `AppWindow::render`: after building `encoder` and *before* the egui
+     `begin_pass`, call `self.scene.render(&self.queue, &mut encoder)`. Then register or update the
+     egui texture: if `scene_texture` is `None` or `scene.resize(..)` returned `true` last step, call
+     `register_native_texture(&device, &color_view, FilterMode::Linear)` and store the id; else
+     `update_egui_texture_from_wgpu_texture(&device, &color_view, FilterMode::Linear, id)`.
+  7. [x] `src/app.rs` `AppWindow::render` UI: inside `begin_pass`/`end_pass`, in addition to the
+     existing status window, add an `egui::Window::new("World")` (or `SidePanel`) that does
+     `let avail = ui.available_size(); ui.image(egui::load::SizedTexture::new(id, avail));` and
+     records `avail` (rounded, `* pixels_per_point`) as the desired scene size. After `end_pass`,
+     call `self.scene.resize(&self.device, desired_size)` so next frame's pass matches the panel —
+     recreate + re-register happens on the following frame (documented one-frame lag).
+  8. [x] Keep the egui swapchain pass exactly as now: `LoadOp::Clear(wgpu::Color::BLACK)`,
+     `renderer.render(&mut pass.forget_lifetime(), ..)`. The scene pass is a separate pass in the
+     same encoder, submitted in the same `queue.submit`.
+  9. [x] `cargo fmt` (2-space), `cargo build`, `cargo clippy --all-targets` — all clean, no new
+     warnings. Add the manual-verification checklist entries (below) — the window cannot be
+     exercised in this environment (no display / no GPU adapter).
+  10. [x] Fill in the **Implementation notes** with any wgpu-30 / egui-wgpu-0.36 API deviations
+     found (mirroring the P1.2 notes style), and confirm the "Chosen pattern" section above still
+     matches what was built.
+
+  **Watch for:**
+  - BE conversion location / `& 0x7FFFFFFF` masking / explicit `Ctx` / bitfield semantics: all N/A
+    — the spike does zero memory reads. Do not display any `mem`/`dolphin` value; keep it to a
+    rotating primitive. `Ctx<'a>` is still P4.5 — don't pre-build it.
+  - No globals: `SpikeScene` is a plain field on `AppWindow`; the rotation clock is a field, not a
+    `static`. `grep -n "OnceCell\|lazy_static\|static mut" src/scene.rs src/app.rs` must stay empty.
+  - egui-wgpu hard requirement: the offscreen color texture **must** be
+    `wgpu::TextureFormat::Rgba8Unorm` (see `egui-wgpu-0.36.1/src/renderer.rs:770,818`). Not the
+    surface's sRGB format, not `Bgra8*`. Note the gamma implication for P8 in the impl notes.
+  - Offscreen color texture usage must include `TEXTURE_BINDING` as well as `RENDER_ATTACHMENT`, or
+    `register_native_texture` / sampling fails.
+  - Don't `register_native_texture` every frame (leaks a sampler + bind group each call): register
+    once, then `update_egui_texture_from_wgpu_texture` with the stored `TextureId`, re-registering
+    only when the target is recreated on resize.
+  - wgpu 30 pass descriptors: `RenderPassColorAttachment.depth_slice: None`,
+    `RenderPassDescriptor.multiview_mask: None` (already handled in `app.rs` — match it for the
+    scene pass). `egui_wgpu::Renderer::render` wants `&mut RenderPass<'static>` → `.forget_lifetime()`.
+  - Panel size can be zero (collapsed window / dragged tiny) — clamp to `>=1` before creating
+    textures or configuring the pass; `Mat4::perspective_rh` with aspect `0` produces NaNs.
+  - Scope guard: this is a *spike*. No `CollisionMesh`, no `ShapeGenerator`, no camera modes, no
+    `WorldRenderer`, no memory-driven geometry, no MSAA, no lighting. One rotating triangle or cube.
+    Phase 8 does the real thing.
+  - Possible vertical flip: egui `Image` UV origin is top-left and so is the wgpu render target —
+    should line up, but eyeball it in manual verification and flip UVs in the `Image` if the
+    primitive renders upside down.
+  - 2-space rustfmt (`.rustfmt.toml`); `edition = "2024"`.
+  - No carried-over C++ bug in scope here.
+
+  **Done when:**
+  - `cargo build` and `cargo clippy --all-targets` are clean with no new warnings; `cargo fmt --check`
+    is clean.
+  - `grep -n "OnceCell\|lazy_static\|static mut" src/scene.rs src/app.rs` prints nothing.
+  - `src/scene.rs` exists with `SpikeScene::{new,resize,render}`; `AppWindow` renders the scene to an
+    offscreen `Rgba8Unorm` target and shows it via `egui::Image` in a panel, with the swapchain
+    still cleared to black by the egui pass.
+  - The **Chosen pattern** section above is committed as the documented decision (this is the
+    primary deliverable of P1.3).
+  - Committed with the `TASKS.md` promotion as `port(P1.3): spike offscreen-texture 3D compositing`.
+
+  **Manual verification (human, needs a display — none in this env):**
+  - [ ] `cargo run` opens the window; a "World" panel/window contains a rotating triangle/cube on a
+    dark-blue clear, distinct from the black window background.
+  - [ ] Resizing the OS window (and the panel) resizes the 3D content to fit within ~1 frame,
+    without stretching, garbling, aspect distortion, or panic.
+  - [ ] Collapsing / shrinking the "World" panel to near-zero does not panic.
+  - [ ] The existing "Prime Watch" status window still shows `Loaded 211 structs and 36 enums`.
+  - [ ] Closing the window exits cleanly (exit code 0).
+
+  **Implementation notes (P1.3):**
+  - New `src/scene.rs` (`mod scene;` added to `src/main.rs`). `pub struct SpikeScene` with
+    `new` / `resize` / `render` / `color_view`, owned as a plain field on `AppWindow` — no
+    `static` / `OnceCell` / `lazy_static` (`grep` clean). Rotation is driven by a `start:
+    std::time::Instant` field.
+  - Offscreen target: `Rgba8Unorm` colour (`RENDER_ATTACHMENT | TEXTURE_BINDING`) + `Depth32Float`
+    depth (`RENDER_ATTACHMENT`), MSAA = 1 (`// TODO(P8): MSAA`). Scene pass clears colour to
+    `Color { r: 0.05, g: 0.05, b: 0.12, a: 1.0 }` and depth to `1.0`; depth test `Less`,
+    depth write on. Draws an indexed 8-vertex / 36-index cube with per-vertex colour — the
+    back faces are behind the front faces so the depth buffer is genuinely exercised
+    (`cull_mode: Back` as well).
+  - **Gamma note for P8:** the egui composite target is *linear* `Rgba8Unorm` (egui-wgpu
+    hard-requires it — `renderer.rs:770`), not the surface's sRGB format. Colours written by the
+    scene shader are not gamma-encoded, so the real `WorldRenderer` port must do its own
+    linear→sRGB handling (or accept the slightly-dark look) when it lands here.
+  - `AppWindow`: added `scene: SpikeScene` (initial size `(800, 600)`) and
+    `scene_texture: Option<egui::TextureId>`. `render()` order now: get frame → encoder →
+    `scene.render(&queue, &mut encoder)` → register-or-update the egui user texture →
+    `begin_pass` → "Prime Watch"/"NOT LOADED" status window + new `egui::Window::new("World")`
+    with `ui.image(SizedTexture::new(id, ui.available_size()))` → `end_pass` → egui swapchain
+    pass unchanged (`LoadOp::Clear(BLACK)`, `.forget_lifetime()`) → submit (scene + egui in one
+    `queue.submit`) → present → `scene.resize(panel_size * pixels_per_point)` for next frame
+    (documented one-frame lag).
+  - Deviation from step 6: do **not** re-`register_native_texture` on resize. `SpikeScene::resize`
+    still returns `bool` (target recreated), but `AppWindow` ignores it and always calls
+    `update_egui_texture_from_wgpu_texture` after the first registration — that call rebuilds the
+    egui bind group from the current `TextureView` every frame, so it transparently picks up a
+    resized target with zero leaked bind groups (the "register once" guidance in Watch-for,
+    taken to its logical conclusion).
+  - wgpu 30.0.1 API deviations found (this crate's `wgpu 30.0.1` is a newer API snapshot than
+    older tutorials / the P1.2 notes — verified against the installed crate source):
+    - `PipelineLayoutDescriptor`: `bind_group_layouts: &[Option<&BindGroupLayout>]` (was
+      `&[&BindGroupLayout]`); `push_constant_ranges` is gone, replaced by `immediate_size: u32`
+      (set to `0`).
+    - `DepthStencilState`: `depth_write_enabled: Option<bool>` and
+      `depth_compare: Option<CompareFunction>` (were bare `bool` / `CompareFunction`).
+    - `VertexState.buffers: &[Option<VertexBufferLayout>]` (wrap the layout in `Some`).
+    - `VertexState` / `FragmentState`: `entry_point: Option<&str>` + `compilation_options`
+      (`PipelineCompilationOptions::default()`).
+    - `RenderPipelineDescriptor`: has `multiview_mask: Option<NonZeroU32>` and
+      `cache: Option<&PipelineCache>` (both `None`); no `multiview` field.
+    - Render-pass descriptors match the P1.2 shapes: `RenderPassColorAttachment.depth_slice: None`,
+      `RenderPassDescriptor.multiview_mask: None`.
+  - glam 0.33.6 deviation: `Mat4::perspective_rh` / `Mat4::look_at_rh` are **deprecated** in this
+    version (would trip the "no new warnings" gate). Used
+    `glam::camera::rh::proj::directx::perspective` (RH world, [0,1] clip depth — wgpu convention)
+    and `glam::camera::rh::view::look_at_mat4` instead.
+  - `egui-wgpu 0.36.1` `register_native_texture(&mut self, &Device, &TextureView, FilterMode)
+    -> TextureId` and `update_egui_texture_from_wgpu_texture(&Device, &TextureView, FilterMode,
+    TextureId)` used as the planner described — signatures confirmed against
+    `egui-wgpu-0.36.1/src/renderer.rs:771,792`.
+  - No `bytemuck` dependency added: a tiny local `as_bytes<T: Copy>(&[T]) -> &[u8]` helper (one
+    documented `unsafe` block, `u8` align-1) casts the static vertex/index arrays and the MVP
+    `[f32; 16]` for upload.
+  - Gates: `cargo fmt --check` exit 0; `cargo build` clean; `cargo clippy --all-targets` reports
+    zero warnings in `src/scene.rs` / `src/app.rs` (all remaining warnings are pre-existing in
+    `src/mem/**`, `src/structs/**`, `src/bstruct_link.rs`, `bstruct/`); `cargo test` 0 pass /
+    0 fail (no offline test possible — needs a GPU + display, covered by the manual checklist).
+    Window not exercised in this env (no display / no adapter).
+
+  **Review (P1.3):** `cargo fmt --check` exit 0; `cargo build` clean; `cargo clippy --all-targets`
+  and `cargo test` (0/0) clean — every warning is pre-existing in `src/mem/**`, `src/structs/**`,
+  `src/bstruct_link.rs`, `bstruct/`; zero from `src/scene.rs` / `src/app.rs`. No
+  `static`/`OnceCell`/`lazy_static` in either file (consts only). Scope clean — only `src/scene.rs`,
+  `src/app.rs`, `src/main.rs`, `TASKS.md`. Chosen-pattern-B decision is committed as the primary
+  deliverable. Frame order in `AppWindow::render` matches C++ `PrimeWatch::doFrame` (PrimeWatch.cpp
+  235-278) adapted for the offscreen pattern: scene pass encoded first -> egui texture
+  register/update -> begin_pass -> status window + "World" `ui.image` -> end_pass -> swapchain pass
+  `LoadOp::Clear(BLACK)` (== `glClearColor(0,0,0,1)`) -> egui render -> single `queue.submit`
+  (scene + egui) -> present -> `scene.resize` for next frame (documented one-frame lag). Depth
+  buffer genuinely wired: `Depth32Float` attachment, `depth_compare: Some(Less)`,
+  `depth_write_enabled: Some(true)`, depth cleared to `1.0`, indexed 36-index cube. Offscreen colour
+  is `Rgba8Unorm | RENDER_ATTACHMENT | TEXTURE_BINDING` per egui-wgpu's hard requirement; gamma note
+  for P8 recorded.
+
+  Verified the reported unusual API paths against installed crate sources under
+  `~/.cargo/registry/src/`:
+  - `glam::camera::rh::proj::directx::perspective` (glam-0.33.6 `src/camera/rh/proj.rs`) — RH Y-up
+    view-space input, NDC Z in [0,1], Y-up: exactly the wgpu convention. Its `camera_impl` const
+    generics are `<true, true, false>` (rh, zero-to-one, y-up). This is the *exact* replacement the
+    deprecation note on `Mat4::perspective_rh` names ("use the `glam::camera::rh::proj::directx::
+    perspective` function instead", `src/f32/scalar/mat4.rs:1031`). Not dubious — glam-prescribed.
+  - `glam::camera::rh::view::look_at_mat4` (glam-0.33.6 `src/camera/rh/view.rs:27`) — full RH view
+    transform from eye/center/up; the deprecation note on `Mat4::look_at_rh` names it verbatim
+    (`mat4.rs:847`).
+  - wgpu-30 `PipelineLayoutDescriptor` (wgpu-30.0.1 `src/api/pipeline_layout.rs:33`): fields are
+    `bind_group_layouts: &[Option<&BindGroupLayout>]` + `immediate_size: u32`; `push_constant_ranges`
+    is gone. `DepthStencilState` (wgpu-types-30.0.1 `src/render.rs:831,837`):
+    `depth_write_enabled: Option<bool>`, `depth_compare: Option<CompareFunction>`.
+  - `egui_wgpu::Renderer::{register_native_texture, update_egui_texture_from_wgpu_texture}`
+    (egui-wgpu-0.36.1 `src/renderer.rs:771,792`) — signatures match the call sites.
+
+  Manual verification still required by the human (no display / GPU in this env) — the checklist
+  above applies. Additionally eyeball that the cube is not rendered inside-out: winding vs
+  `cull_mode: Back` was not verified analytically; worst case one face-set is culled and the far
+  faces show instead — still a visible rotating cube, but note it.
 
 ## Phase 2 — Memory access (ports `src/MemoryAccess.cpp`)
 

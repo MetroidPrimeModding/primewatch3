@@ -15,6 +15,7 @@ use winit::window::{Window, WindowId};
 
 use crate::mem::dolphin_memory::DolphinMemoryAccess;
 use crate::mem::game_memory::GameMemory;
+use crate::scene::SpikeScene;
 use crate::structs::prime_structs::GameStructs;
 
 /// Build the event loop and run the app. Mirrors `main()` in the C++ entrypoint.
@@ -133,6 +134,13 @@ struct AppWindow {
   egui_ctx: egui::Context,
   egui_state: egui_winit::State,
   egui_renderer: egui_wgpu::Renderer,
+  /// P1.3 spike: rotating cube rendered to an offscreen texture, composited into
+  /// the egui UI as an `egui::Image` (see the "Chosen pattern B" note in TASKS.md).
+  scene: SpikeScene,
+  /// egui user-texture id for `scene`'s colour target. `None` until the first
+  /// `register_native_texture`; reused via `update_egui_texture_from_wgpu_texture`
+  /// thereafter (that call rebuilds the bind group, so it survives target resize).
+  scene_texture: Option<egui::TextureId>,
 }
 
 impl AppWindow {
@@ -192,6 +200,8 @@ impl AppWindow {
       egui_wgpu::RendererOptions::default(),
     );
 
+    let scene = SpikeScene::new(&device, (800, 600));
+
     Ok(Self {
       window,
       surface,
@@ -201,6 +211,8 @@ impl AppWindow {
       egui_ctx,
       egui_state,
       egui_renderer,
+      scene,
+      scene_texture: None,
     })
   }
 
@@ -237,6 +249,33 @@ impl AppWindow {
         label: Some("primewatch"),
       });
 
+    // 3D scene first, into its own offscreen target (C++ `doFrame` renders the
+    // world before the egui draw data). Separate pass, same encoder + submit.
+    self.scene.render(&self.queue, &mut encoder);
+
+    // Register (first use / after resize) or reuse the egui user texture that
+    // wraps the scene's colour target.
+    let scene_texture = match self.scene_texture {
+      Some(id) => {
+        self.egui_renderer.update_egui_texture_from_wgpu_texture(
+          &self.device,
+          self.scene.color_view(),
+          wgpu::FilterMode::Linear,
+          id,
+        );
+        id
+      }
+      None => {
+        let id = self.egui_renderer.register_native_texture(
+          &self.device,
+          self.scene.color_view(),
+          wgpu::FilterMode::Linear,
+        );
+        self.scene_texture = Some(id);
+        id
+      }
+    };
+
     let raw_input = self.egui_state.take_egui_input(&self.window);
     self.egui_ctx.begin_pass(raw_input);
     // Single window either way, matching the C++ "NOT LOADED" fallback in `doFrame`.
@@ -258,6 +297,18 @@ impl AppWindow {
           ui.label(status_text);
         }
       });
+
+    // P1.3 spike: show the offscreen 3D target. The panel's available size drives
+    // next frame's scene target size (documented one-frame lag).
+    let mut world_view_size_pts: Option<egui::Vec2> = None;
+    egui::Window::new("World")
+      .default_size([640.0, 480.0])
+      .show(&self.egui_ctx, |ui| {
+        let avail = ui.available_size();
+        world_view_size_pts = Some(avail);
+        ui.image(egui::load::SizedTexture::new(scene_texture, avail));
+      });
+
     let full_output = self.egui_ctx.end_pass();
 
     self
@@ -322,5 +373,17 @@ impl AppWindow {
     );
     self.window.pre_present_notify();
     self.queue.present(frame);
+
+    // Resize the offscreen target to match the "World" panel for the next frame
+    // (documented one-frame lag). `SpikeScene::resize` reports whether the target
+    // was recreated; `AppWindow` doesn't need to act on it because
+    // `update_egui_texture_from_wgpu_texture` rebuilds the egui bind group from
+    // the current view every frame anyway (no re-`register` / no leak).
+    if let Some(sz) = world_view_size_pts {
+      let ppp = full_output.pixels_per_point;
+      let w = (sz.x * ppp).round().max(1.0) as u32;
+      let h = (sz.y * ppp).round().max(1.0) as u32;
+      let _recreated = self.scene.resize(&self.device, (w, h));
+    }
   }
 }
