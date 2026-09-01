@@ -18,7 +18,8 @@ pub struct DolphinMemoryAccess {
   #[cfg(any(target_os = "linux", target_os = "macos"))]
   emu_ram_address_start: *mut u8,
 
-  // windows specific (bodies land in P2.2)
+  // Windows: raw `HANDLE` from `OpenProcess` (wrapped as `windows::…::HANDLE` at
+  // call sites) plus the remote base address of Dolphin's MEM1 mapping.
   #[cfg(target_os = "windows")]
   dolphin_proc_handle: *mut std::os::raw::c_void,
   #[cfg(target_os = "windows")]
@@ -59,14 +60,96 @@ impl DolphinMemoryAccess {
       .iter()
       .filter_map(|(&pid, process)| {
         let exe = process.exe()?;
-        let filename = exe.file_name()?;
-        if filename == "dolphin-emu" {
+        // C++ `getDolphinPids` matches the Linux binary `dolphin-emu`
+        // (`MemoryAccess.cpp:44`) or the Windows `Dolphin.exe` (`:230`). Match the
+        // lowercased file stem against `dolphin` so a single path covers both plus
+        // `dolphin-emu-nogui` etc.
+        let stem = exe.file_stem()?.to_str()?.to_ascii_lowercase();
+        if stem.starts_with("dolphin") {
           Some(pid)
         } else {
           None
         }
       })
       .collect()
+  }
+
+  /// Ports `MemoryAccess.cpp:169` `getEmuRAMAddressStart()`. Scans the target's
+  /// virtual address space for Dolphin's MEM1 mapping: the first `0x2000000`-byte
+  /// `MEM_MAPPED` region that `QueryWorkingSetEx` reports as physically valid (this
+  /// disambiguates unrelated mapped regions of the same size). Stores its base in
+  /// `self.emu_ram_address_start` and returns `true` on success.
+  ///
+  /// Deviations from C++:
+  /// - The original keeps scanning past MEM1 to set the `MEM2Present` flag; that flag
+  ///   is never read anywhere in primewatch2, so we stop at the first valid MEM1
+  ///   region and do not carry `MEM2Present`.
+  /// - `wsInfo.VirtualAttributes.Valid` is bit 0 of the bitfield union; this `windows`
+  ///   crate version generates no `.Valid()` accessor, so we mask `Flags & 1`.
+  #[cfg(target_os = "windows")]
+  fn get_emu_ram_address_start(&mut self) -> bool {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::Memory::{MEM_MAPPED, MEMORY_BASIC_INFORMATION, VirtualQueryEx};
+    use windows::Win32::System::ProcessStatus::{
+      PSAPI_WORKING_SET_EX_INFORMATION, QueryWorkingSetEx,
+    };
+
+    if self.dolphin_proc_handle.is_null() {
+      return false;
+    }
+    let handle = HANDLE(self.dolphin_proc_handle);
+    let info_size = std::mem::size_of::<MEMORY_BASIC_INFORMATION>();
+
+    let mut addr: usize = 0;
+    loop {
+      let mut info = MEMORY_BASIC_INFORMATION::default();
+      // SAFETY: `handle` is a live process handle opened with PROCESS_QUERY_INFORMATION;
+      // `info` is a valid, correctly sized, zeroed output buffer; `addr` is a plain
+      // integer address, never dereferenced by us.
+      let written = unsafe {
+        VirtualQueryEx(
+          handle,
+          Some(addr as *const core::ffi::c_void),
+          &mut info,
+          info_size,
+        )
+      };
+      if written != info_size || info.RegionSize == 0 {
+        break;
+      }
+
+      if info.RegionSize == 0x2000000 && info.Type == MEM_MAPPED {
+        let mut ws = PSAPI_WORKING_SET_EX_INFORMATION {
+          VirtualAddress: info.BaseAddress,
+          ..Default::default()
+        };
+        // SAFETY: `handle` is live; `ws` is a valid, correctly sized buffer whose
+        // `VirtualAddress` we just set to the region base being queried.
+        let ok = unsafe {
+          QueryWorkingSetEx(
+            handle,
+            (&raw mut ws).cast(),
+            std::mem::size_of::<PSAPI_WORKING_SET_EX_INFORMATION>() as u32,
+          )
+        }
+        .is_ok();
+        // SAFETY: reading the `Flags` arm of a `#[repr(C)]` union whose members are
+        // all `usize`-sized is always valid.
+        let valid = ok && (unsafe { ws.VirtualAttributes.Flags } & 1) != 0;
+        if valid {
+          self.emu_ram_address_start = info.BaseAddress as u64;
+          println!("Found ram start: {:#x}", self.emu_ram_address_start);
+          return true;
+        }
+      }
+
+      match addr.checked_add(info.RegionSize) {
+        Some(next) => addr = next,
+        None => break,
+      }
+    }
+
+    false
   }
 
   /// Ports `MemoryAccess.cpp:73` (Linux) / `:392` (macOS) — identical bodies.
@@ -126,9 +209,40 @@ impl DolphinMemoryAccess {
 
     #[cfg(target_os = "windows")]
     {
-      // P2.2: OpenProcess / VirtualQueryEx to locate the emulated RAM base.
-      let _ = pid;
-      false
+      use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_OPERATION, PROCESS_VM_READ,
+      };
+
+      println!("Connecting to Dolphin pid {pid}");
+
+      // SAFETY: FFI call; `pid` is passed by value and the access-rights flags are
+      // plain bitmasks — no pointers are involved.
+      let handle = match unsafe {
+        OpenProcess(
+          PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_READ,
+          false,
+          pid as u32,
+        )
+      } {
+        Ok(h) => h,
+        Err(e) => {
+          // Deviation from C++ (`MemoryAccess.cpp:247`): the original ignores an
+          // `OpenProcess` failure and still returns `true`. A null handle makes every
+          // later call fail, so surface it here instead.
+          eprintln!("Failed to open Dolphin process {pid}: {e}");
+          return false;
+        }
+      };
+
+      self.dolphin_proc_handle = handle.0;
+
+      if !self.get_emu_ram_address_start() {
+        // Wait for Dolphin to start running a game (C++ `:251`).
+        println!("Detected dolphin isn't running a game. We'll check for it in copy.");
+      }
+
+      self.attached_pid = pid;
+      true
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
@@ -167,7 +281,11 @@ impl DolphinMemoryAccess {
     #[cfg(target_os = "windows")]
     {
       if !self.dolphin_proc_handle.is_null() {
-        // P2.2: CloseHandle(self.dolphin_proc_handle) goes here.
+        println!("Closing process");
+        use windows::Win32::Foundation::{CloseHandle, HANDLE};
+        // SAFETY: `dolphin_proc_handle` is a handle we obtained from `OpenProcess`
+        // and have not yet closed; the `is_null` guard ensures we close it once.
+        let _ = unsafe { CloseHandle(HANDLE(self.dolphin_proc_handle)) };
         self.dolphin_proc_handle = std::ptr::null_mut();
         self.emu_ram_address_start = 0;
         self.attached_pid = -1;
@@ -212,9 +330,68 @@ impl DolphinMemoryAccess {
       true
     }
 
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(target_os = "windows")]
     {
-      // P2.2: Windows ReadProcessMemory path.
+      use windows::Win32::Foundation::{ERROR_PARTIAL_COPY, GetLastError, HANDLE};
+      use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+
+      if self.dolphin_proc_handle.is_null() || self.emu_ram_address_start == 0 {
+        // Base not resolved yet (Dolphin running, no game). The P3.2 caller
+        // re-attaches every frame, which re-runs the region scan — see decision E.
+        // Keeping the `&self` signature means we cannot re-scan in place here.
+        return false;
+      }
+
+      let real_offset = offset & 0x7FFF_FFFF;
+      if real_offset > DOLPHIN_MEMORY_SIZE {
+        // Deviation from C++ `getRealPtr` (which silently substitutes offset 0) —
+        // matches the sanctioned P2.1 POSIX deviation.
+        return false;
+      }
+
+      // Clamp to `dest.len()` as well as `DOLPHIN_MEMORY_SIZE`: C++ only clamps to
+      // the latter, a latent overrun fixed for POSIX in P2.1.
+      let n = size.min(DOLPHIN_MEMORY_SIZE).min(dest.len());
+      let mut read: usize = 0;
+      // SAFETY: `dolphin_proc_handle` is a live handle with PROCESS_VM_READ;
+      // `emu_ram_address_start + real_offset` lies inside the 0x2000000-byte MEM1
+      // mapping (`real_offset <= DOLPHIN_MEMORY_SIZE`); `dest` has room for `n` bytes
+      // (clamped to `dest.len()`); `read` is a valid out pointer. The remote address
+      // is only read by the kernel, never dereferenced in this process.
+      let result = unsafe {
+        ReadProcessMemory(
+          HANDLE(self.dolphin_proc_handle),
+          (self.emu_ram_address_start + real_offset as u64) as *const core::ffi::c_void,
+          dest.as_mut_ptr().cast(),
+          n,
+          Some(&mut read),
+        )
+      };
+
+      if let Err(e) = result {
+        // SAFETY: FFI call with no arguments.
+        let err = unsafe { GetLastError() };
+        eprintln!(
+          "Failed to read memory from {offset:#x}. Error: {} ({e})",
+          err.0
+        );
+        if err == ERROR_PARTIAL_COPY {
+          // C++ zeroes `emuRAMAddressStart` here to force a re-scan; we cannot
+          // (`&self`), and the per-frame re-attach (P3.2) covers it — decision E.
+          eprintln!("Game probably closed. Will continue looking.");
+        }
+        return false;
+      }
+
+      if read != n {
+        // Warn but do not fail hard, matching the C++ tone (`MemoryAccess.cpp:304`).
+        eprintln!("Failed to read enough from {offset:#x}. Read {read} of {n}");
+      }
+      read == n
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
+    {
       let _ = (dest, offset, size);
       false
     }

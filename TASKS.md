@@ -775,8 +775,263 @@ steps; `port-implementer` moves it to `IN REVIEW`; `port-reviewer` moves it to `
   - [ ] `dolphin_memcpy(&mut buf, 0, 0x1800000)` fills a `0x1800000`-byte buffer; `&buf[0..6] == b"GM8E01"`
     (matches `../primewatch2/mem1.raw` first bytes) and a live field (e.g. `g_stateManager` chain) reads sanely.
   - [ ] Dropping / re-attaching does not leak (check `/proc/<our-pid>/maps` shrinks after `detach_from_process`).
-- [ ] **P2.2** Real Windows `OpenProcess` / `VirtualQueryEx` / `ReadProcessMemory` bodies
-  (`windows` crate). — `TODO`
+- [x] **P2.2** Real Windows `OpenProcess` / `VirtualQueryEx` / `ReadProcessMemory` bodies
+  (`windows` crate). — `DONE`
+
+  **Environment note (planner):** this Linux dev box CAN check the Windows code. `rustup target add
+  x86_64-pc-windows-msvc` succeeds (network is up) and `cargo check --target x86_64-pc-windows-msvc`
+  builds the whole tree clean in ~30s (checking does not link, so no MSVC linker is needed). That is
+  the gate for this task. It cannot be *run* or *link-tested* here — that stays a human/Windows job,
+  folded into P2.3.
+
+  **Port from:**
+  - `../primewatch2/src/MemoryAccess.cpp:169` — `getEmuRAMAddressStart()`: iterate
+    `VirtualQueryEx(handle, p, &info, sizeof(info))` from `p = null`, advancing `p += info.RegionSize`;
+    the MEM1 region is the first where `info.RegionSize == 0x2000000 && info.Type == MEM_MAPPED` AND
+    `QueryWorkingSetEx` reports `VirtualAttributes.Valid` (physical-backed — disambiguates stray
+    0x2000000 mapped regions). Store `info.BaseAddress` into `emuRAMAddressStart`. Returns `false`
+    (game not started) if nothing matched.
+  - `../primewatch2/src/MemoryAccess.cpp:241` — `attachToProcess(int pid)`: `detachFromProcess()`;
+    `OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_READ, FALSE, pid)`;
+    call `getEmuRAMAddressStart()` (OK if it fails — log and continue); `attachedPid = pid`.
+  - `../primewatch2/src/MemoryAccess.cpp:259` — `detachFromProcess()`: `CloseHandle(dolphinProcHandle)`,
+    then null the handle, zero `emuRAMAddressStart`, `attachedPid = -1`.
+  - `../primewatch2/src/MemoryAccess.cpp:275` — `getRealPtr(uint32_t)`: `masked = address & 0x7FFFFFFF;
+    if masked > DOLPHIN_MEMORY_SIZE return 0`.
+  - `../primewatch2/src/MemoryAccess.cpp:283` — `dolphin_memcpy(dest, offset, size)`: if
+    `emuRAMAddressStart == 0` retry `getEmuRAMAddressStart()` (needs a live handle), else bail; clamp
+    `size` to `DOLPHIN_MEMORY_SIZE`; `ReadProcessMemory(handle, emuRAMAddressStart + getRealPtr(offset),
+    dest, size, &read)`; on failure check `GetLastError()`, and on `299` (`ERROR_PARTIAL_COPY`) zero
+    `emuRAMAddressStart` so the next call re-scans; warn if `read != size`.
+  - `../primewatch2/src/MemoryAccess.cpp:25-27` — the Win32 headers used map to `windows` crate
+    features: `windows.h` → `Win32_Foundation` + `Win32_System_Threading` + `Win32_System_Memory`,
+    `psapi.h` → `Win32_System_ProcessStatus`, `ReadProcessMemory` → `Win32_System_Diagnostics_Debug`.
+    `tlhelp32.h` (Toolhelp PID scan) is NOT ported — `sysinfo` already covers PID discovery.
+  - `../primewatch2/src/MemoryAccess.hpp:7` — `DOLPHIN_MEMORY_SIZE = 0x1800000` (already a const in
+    `dolphin_memory.rs`).
+  - Current Rust: `src/mem/dolphin_memory.rs` — the `#[cfg(target_os = "windows")]` fields
+    (`dolphin_proc_handle: *mut c_void`, `emu_ram_address_start: u64`) and the three `// P2.2:` stub
+    arms in `attach_to_process` / `detach_from_process` / `dolphin_memcpy`.
+
+  **Steps:**
+  1. [x] Add the dep, target-gated, in `Cargo.toml`:
+     `[target.'cfg(windows)'.dependencies]` → `windows = { version = "<latest that resolves>",
+     features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_Memory",
+     "Win32_System_ProcessStatus", "Win32_System_Diagnostics_Debug"] }`. Confirm
+     `cargo check --target x86_64-pc-windows-msvc` still resolves; note the exact version in the impl
+     notes. Do not add it as a plain `[dependencies]` entry (it must not touch the Linux/macOS build).
+  2. [x] `dolphin_memory.rs`: add a private helper
+     `#[cfg(target_os = "windows")] fn get_emu_ram_address_start(&mut self) -> bool` porting
+     `MemoryAccess.cpp:169`. Loop `VirtualQueryEx` from a null base, advance by `info.RegionSize`
+     (stop when the call returns `0` or `RegionSize == 0`), match
+     `RegionSize == 0x2000000 && Type == MEM_MAPPED`, then confirm with `QueryWorkingSetEx` +
+     `PSAPI_WORKING_SET_EX_INFORMATION` that `VirtualAttributes.Valid()` is set. On the first match,
+     store `info.BaseAddress as u64` in `self.emu_ram_address_start`, log the base, return `true`.
+     Return `false` if the scan ends with no match. Every Win32 call in its own `unsafe` block with a
+     `// SAFETY:` note. Deviation to record: the C++ keeps scanning past MEM1 to set the unused
+     `MEM2Present` flag — skip that; `MEM2Present` is written but never read anywhere in primewatch2
+     (`grep` confirms), so stop at the first valid MEM1 region.
+  3. [x] Implement the `#[cfg(target_os = "windows")]` arm of `attach_to_process` (port
+     `MemoryAccess.cpp:241`): after the existing `detach_from_process()` call, `OpenProcess(...)` with
+     the three access flags and `pid as u32`. On `Err`/null handle → `eprintln!` with the OS error and
+     `return false` (deviation: C++ ignores `OpenProcess` failure and still returns `true` — a latent
+     bug; a null handle makes every later call fail anyway). Store `handle.0` in
+     `self.dolphin_proc_handle`; call `self.get_emu_ram_address_start()` and, if it returns `false`,
+     `eprintln!` that the game isn't running yet and continue (C++ line 251); set
+     `self.attached_pid = pid`; `return true`.
+  4. [x] Implement the `#[cfg(target_os = "windows")]` arm of `detach_from_process` (port
+     `MemoryAccess.cpp:259`): the field-reset block already exists — add the real
+     `CloseHandle(HANDLE(self.dolphin_proc_handle))` (in an `unsafe` block with `// SAFETY:`) before
+     nulling `dolphin_proc_handle` / zeroing `emu_ram_address_start` / setting `attached_pid = -1`.
+     Keep the `is_null()` guard so `Drop` is a safe no-op when never attached.
+  5. [x] Restructure the fallback arm of `dolphin_memcpy`: today it is
+     `#[cfg(not(any(target_os = "linux", target_os = "macos")))]` which wrongly also covers "unknown
+     OS". Split into an explicit `#[cfg(target_os = "windows")]` arm plus a
+     `#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]` arm that
+     returns `false` (mirror how `attach_to_process` is already structured).
+  6. [x] Fill the `#[cfg(target_os = "windows")]` `dolphin_memcpy` body (port `MemoryAccess.cpp:283` +
+     `getRealPtr`): if `self.emu_ram_address_start == 0` → if `!self.dolphin_proc_handle.is_null()`
+     try `self.get_emu_ram_address_start()`, and `return false` if it is still `0` (needs `&mut self` —
+     see decision E). `real = offset & 0x7FFF_FFFF`; `real > DOLPHIN_MEMORY_SIZE` → `return false`
+     (matches the sanctioned P2.1 deviation from C++ silent-0). `n = size.min(DOLPHIN_MEMORY_SIZE)
+     .min(dest.len())` — the `dest.len()` clamp fixes the same unbounded-copy bug class P2.1 fixed for
+     POSIX (C++ only clamps to `DOLPHIN_MEMORY_SIZE`). `ReadProcessMemory(HANDLE(handle),
+     (self.emu_ram_address_start + real as u64) as *const c_void, dest.as_mut_ptr() as *mut c_void, n,
+     Some(&mut read))` in an `unsafe` block with `// SAFETY:`. On `Err`, inspect
+     `windows::Win32::Foundation::GetLastError()` (or the returned `windows::core::Error`); if it is
+     `ERROR_PARTIAL_COPY` (`299`) set `self.emu_ram_address_start = 0` and `eprintln!` that the game
+     likely closed; `return false`. `return read == n` (warn, don't fail hard, on a short read to
+     match C++ tone — implementer's call, note it).
+  7. [x] `cargo fmt` (2-space). Gate on BOTH:
+     `cargo build` + `cargo clippy --all-targets` (Linux — must stay clean, no new warnings, the
+     `windows` dep must not appear in the Linux build) AND
+     `cargo check --target x86_64-pc-windows-msvc` + `cargo clippy --target x86_64-pc-windows-msvc`
+     (must be clean — this is the only way the new code is compiled here).
+  8. [x] `grep -n "todo!\|unimplemented!\|// P2.2:" src/mem/dolphin_memory.rs` — must be empty afterwards.
+     Fill in **Implementation notes** with the exact `windows` crate version + feature list, the
+     `HANDLE(...)` / `.0` boundary conversions, and every deviation from the C++ (steps 2, 3, 6).
+
+  **Implementation notes (P2.2):**
+  - `windows` crate: **`0.62.2`** (spec `version = "0.62"`), target-gated under
+    `[target.'cfg(windows)'.dependencies]` in `Cargo.toml` — never enters the Linux/macOS build
+    (`cargo tree --target x86_64-unknown-linux-gnu` shows no `windows` crate; the lone `windows`
+    match is `wgpu-core-deps-windows-linux-android`, unrelated). Features:
+    `Win32_Foundation`, `Win32_System_Threading`, `Win32_System_Memory`,
+    `Win32_System_ProcessStatus`, `Win32_System_Diagnostics_Debug`.
+  - Ports `MemoryAccess.cpp` `getEmuRAMAddressStart` (:169), `attachToProcess` (:241),
+    `detachFromProcess` (:259), `getRealPtr` (:275), `dolphin_memcpy` (:283). Toolhelp PID scan
+    (:220) NOT ported — `sysinfo` covers it.
+  - HANDLE boundary: the field stays `dolphin_proc_handle: *mut c_void`. `OpenProcess` returns
+    `Result<HANDLE>`; store `handle.0`. At every call site wrap back as
+    `windows::Win32::Foundation::HANDLE(self.dolphin_proc_handle)`.
+  - `get_emu_ram_address_start(&mut self)`: `VirtualQueryEx` loop from address `0`, advancing by
+    `info.RegionSize` (`checked_add`, stop on overflow); stop when the call writes `!= size_of::<
+    MEMORY_BASIC_INFORMATION>()` or `RegionSize == 0`. First region with
+    `RegionSize == 0x2000000 && Type == MEM_MAPPED` that `QueryWorkingSetEx` marks valid wins;
+    store `BaseAddress as u64`, print `Found ram start: {:#x}`, return `true`.
+  - Deviations from C++ (all intentional):
+    - **`MEM2Present` dropped** (step 2 / carried-over dead state): C++ keeps scanning past MEM1
+      only to set `MEM2Present`, which is written but never read anywhere in primewatch2. We stop
+      at the first valid MEM1 region and do not carry the field.
+    - **`VirtualAttributes.Valid` accessor** (deviation from the planner's Watch-for note): the
+      `windows 0.62` crate generates `PSAPI_WORKING_SET_EX_BLOCK` as a raw bitfield union with a
+      `Flags: usize` arm and **no** `.Valid()` method. `Valid` is bit 0, so the check is
+      `unsafe { ws.VirtualAttributes.Flags } & 1 != 0` (union-field read, `// SAFETY:` noted).
+    - **`OpenProcess` failure → `return false`** (carried-over bug #1, `MemoryAccess.cpp:247`):
+      C++ ignores the failure and still returns `true`. We `eprintln!` the `windows::core::Error`
+      and return `false`.
+    - **`dolphin_memcpy` clamps to `dest.len()`** as well as `DOLPHIN_MEMORY_SIZE` (carried-over
+      bug #2, same class P2.1 fixed for POSIX): `n = size.min(DOLPHIN_MEMORY_SIZE).min(dest.len())`.
+    - **OOB offset → `return false`** (`real_offset > DOLPHIN_MEMORY_SIZE`), matching the
+      sanctioned P2.1 POSIX deviation from C++ `getRealPtr`'s silent read-from-0.
+    - **`dolphin_memcpy` stays `&self`** (decision E, option 2): the Windows in-copy re-scan
+      (C++ `:284-291`, and the `ERROR_PARTIAL_COPY` → `emuRAMAddressStart = 0` reset at `:301`)
+      is not ported — with `&self` we cannot mutate the base. When `emu_ram_address_start == 0`
+      or the handle is null we `return false`; the P3.2 caller re-attaches per frame, which
+      re-runs `get_emu_ram_address_start`. `ERROR_PARTIAL_COPY` still logs "Game probably closed".
+    - Short read (`read != n`) warns to stderr but returns `read == n` (fails soft), matching the
+      C++ tone at `:304`.
+  - `dolphin_memcpy` fallback arm split: was `#[cfg(not(any(linux, macos)))]` (wrongly covered
+    unknown OS); now an explicit `#[cfg(target_os = "windows")]` arm + a
+    `#[cfg(not(any(linux, macos, windows)))]` arm returning `false`.
+  - `get_dolphin_pids` (decision D): the `sysinfo` filter now matches the lowercased exe **file
+    stem** against `starts_with("dolphin")` — covers Linux `dolphin-emu` and Windows `Dolphin.exe`
+    (and `dolphin-emu-nogui`) in one non-`#[cfg]` path. Without this the Windows attach could
+    never find a PID.
+  - Every Win32 call (`OpenProcess`, `VirtualQueryEx`, `QueryWorkingSetEx`, `ReadProcessMemory`,
+    `CloseHandle`, `GetLastError`) is in its own `unsafe` block with a `// SAFETY:` comment; the
+    two union-field reads (`ws.VirtualAttributes.Flags`) likewise.
+  - Gates: `cargo fmt --check` clean; Linux `cargo build` + `cargo clippy --all-targets` clean
+    (dolphin_memory.rs: same 3 pre-existing dead-code warnings, no new ones — the layer isn't
+    wired until P3.2); `cargo check --target x86_64-pc-windows-msvc` +
+    `cargo clippy --target x86_64-pc-windows-msvc --all-targets` clean (same 4 pre-existing
+    dead-code warnings as the Windows baseline, no new ones); `cargo test` 0/0.
+    `grep -n "todo!\|unimplemented!\|// P2.2:" src/mem/dolphin_memory.rs` empty. Live-Dolphin
+    attach/read verification remains a P2.3 job (no Windows box / live Dolphin here).
+
+  **Watch for:**
+  - **BE conversion stays in `GameMemory`.** Do NOT port `beToHost*` / `hostToBe*`
+    (`MemoryAccess.cpp:309+`, the "assume windows is little endian" block) — `ReadProcessMemory`
+    delivers raw big-endian bytes and `game_memory.rs` does `from_be_bytes` once. No byte-swapping
+    here.
+  - **`& 0x7FFFFFFF` masking:** `getRealPtr` masks before the pointer add — keep the mask in the
+    Windows `dolphin_memcpy` even though `GameMemory::address_to_offset` also masks; this raw layer is
+    reached independently.
+  - **No globals.** C++ `MemoryAccess` uses namespace-scope statics (`dolphinProcHandle`,
+    `emuRAMAddressStart`, `attachedPid`, `MEM2Present`); keep them as `DolphinMemoryAccess` fields.
+    No `static` / `OnceCell` / `lazy_static`. `MEM2Present` is not carried over (dead).
+  - Explicit `Ctx` / bitfield semantics: N/A at this layer.
+  - **`unsafe` discipline** (plan "Open risks" — highest-risk layer): every Win32 call in its own
+    `unsafe` block with a `// SAFETY:` comment; the `ReadProcessMemory` length is clamped by
+    `dest.len()` as well as `DOLPHIN_MEMORY_SIZE`.
+  - `windows` crate `HANDLE` is `#[repr(transparent)] struct HANDLE(pub *mut c_void)` — the field
+    stays `*mut c_void`; wrap as `HANDLE(ptr)` at call sites and read back `handle.0`. A null
+    `HANDLE` is "no handle"; `OpenProcess` returns `Result<HANDLE>` in recent `windows` versions.
+  - `VirtualQueryEx` returns the number of bytes written (`usize`); `0` means stop. `QueryWorkingSetEx`
+    returns `Result<()>` / `BOOL`; `MEMORY_BASIC_INFORMATION` and `PSAPI_WORKING_SET_EX_INFORMATION`
+    must be zero-initialised (`Default::default()` or `core::mem::zeroed()` in an `unsafe` block).
+  - `VirtualAttributes.Valid` in the `windows` crate is a bitfield accessor method
+    (`.Valid()` returns the bit), not a field.
+  - The Windows `get_dolphin_pids` name match: C++ matches `"Dolphin.exe"` (`MemoryAccess.cpp:230`)
+    but the Rust `get_dolphin_pids` filters `filename == "dolphin-emu"` (the Linux binary name). On
+    Windows the process is `Dolphin.exe`. See decision D — do not silently leave Windows unable to
+    find any PID.
+  - Carried-over bugs to fix: (a) C++ `attachToProcess` returns `true` even when `OpenProcess` fails —
+    return `false` (step 3); (b) C++ `dolphin_memcpy` clamps only to `DOLPHIN_MEMORY_SIZE`, not
+    `dest.len()` — add the `dest.len()` clamp (step 6), same fix P2.1 made for POSIX.
+  - 2-space rustfmt; `edition = "2024"`. Scope guard: no POSIX changes, no `GameMemory` wiring
+    (P3.2), no `.raw` path changes, no Toolhelp PID scan. Just the three Windows arms + the helper +
+    the `Cargo.toml` target dep.
+
+  **Decisions for the human before implementing:**
+  - **A. `windows` crate version:** recommend the latest that `cargo check --target
+    x86_64-pc-windows-msvc` resolves cleanly (currently the `0.6x` line). Confirm, or pin a specific
+    version.
+  - **B. OOB offset in `dolphin_memcpy`:** recommend `return false` (consistent with the sanctioned
+    P2.1 POSIX deviation). Confirm, or match C++ silent read-from-0.
+  - **C. `OpenProcess` failure:** recommend `return false` (fixes the carried-over bug). Confirm, or
+    keep C++ "always return true".
+  - **D. Windows `get_dolphin_pids` exe-name match:** the Rust filter is `"dolphin-emu"`; Windows
+    needs `"Dolphin.exe"` (or a case-insensitive `starts_with("dolphin")` that covers both). Options:
+    (1) widen the existing `sysinfo` filter to accept `dolphin-emu`, `Dolphin.exe`, `dolphin` —
+    smallest change, keeps one code path; (2) `#[cfg]`-split the match string per-OS to mirror C++
+    exactly; (3) leave it out of scope for P2.2 and file a follow-up. Recommend option 1 (one-line,
+    unblocks Windows PID discovery, no `#[cfg]`).
+  - **E. `dolphin_memcpy` `&mut self`:** the Windows retry path (`get_emu_ram_address_start` on a
+    zero base) needs `&mut self`, but the signature is `dolphin_memcpy(&self, ...)` (POSIX needs only
+    `&self`). Options: (1) change the signature to `&mut self` (the sole caller in P3.2 will hold it
+    `mut` anyway) — recommended; (2) keep `&self` on Windows and just `return false` when the base is
+    still zero, dropping the in-copy re-scan (the caller re-attaches each frame in P3.2 regardless).
+    Recommend option 2 for this task (keeps the signature identical across all targets, matches the
+    "caller re-attaches per frame" P3.2 design) and note it — option 1 can happen in P3.2 if needed.
+
+  **Done when:**
+  - `cargo build` + `cargo clippy --all-targets` on Linux stay clean with no new warnings, and
+    `cargo tree --target x86_64-unknown-linux-gnu` does not contain `windows`.
+  - `cargo check --target x86_64-pc-windows-msvc` and
+    `cargo clippy --target x86_64-pc-windows-msvc --all-targets` are clean with no warnings in
+    `dolphin_memory.rs`.
+  - `cargo fmt --check` is clean.
+  - `grep -n "todo!\|unimplemented!\|// P2.2:" src/mem/dolphin_memory.rs` is empty; the three Windows
+    arms and `get_emu_ram_address_start` contain real `OpenProcess` / `VirtualQueryEx` /
+    `QueryWorkingSetEx` / `ReadProcessMemory` / `CloseHandle` calls.
+  - Committed with the `TASKS.md` promotion as `port(P2.2): real Windows OpenProcess/VirtualQueryEx
+    Dolphin attach`.
+
+  **Review (P2.2):** Ports `MemoryAccess.cpp` `getEmuRAMAddressStart` (:169), `attachToProcess`
+  (:241), `detachFromProcess` (:259), `getRealPtr`/`dolphin_memcpy` (:275/:283) into the three
+  `#[cfg(target_os = "windows")]` arms + a private `get_emu_ram_address_start` helper. Region scan
+  matches C++: `VirtualQueryEx` loop from addr 0, advance by `RegionSize` (`checked_add`, plus a
+  `RegionSize == 0` break the C++ lacks), first `RegionSize == 0x2000000 && Type == MEM_MAPPED`
+  region that `QueryWorkingSetEx` marks physically valid wins. `.Valid()` bit read verified against
+  `windows-0.62.2` source: `PSAPI_WORKING_SET_EX_BLOCK` is a `#[repr(C)]` union with a `Flags: usize`
+  arm and `Valid` is bit 0, so `Flags & 1` is correct. Sanctioned deviations all present and
+  documented: `MEM2Present` dropped (dead field), `OpenProcess` failure → `return false` (carried bug
+  #1), `dolphin_memcpy` clamps to `dest.len()` (carried bug #2), OOB offset → `return false`,
+  `dolphin_memcpy` stays `&self` and does not reset the base on `ERROR_PARTIAL_COPY` (decision E —
+  relies on the P3.2 per-frame re-attach; see manual note). `& 0x7FFFFFFF` mask applied before the
+  pointer add; no byte-swapping at this layer; no new globals; every Win32 call and both union-field
+  reads carry `// SAFETY:` notes. `get_dolphin_pids` widened to lowercased-stem `starts_with("dolphin")`
+  (decision D option 1) — still matches the Linux `dolphin-emu` case. Gates: `cargo fmt --check` clean;
+  Linux `cargo build` + `cargo clippy --all-targets` byte-identical warning set to the pre-change
+  baseline (`git stash` compare); `cargo check` + `cargo clippy --all-targets` for
+  `x86_64-pc-windows-msvc` clean, only the expected new dead-code entry for `get_emu_ram_address_start`;
+  `cargo tree` for the linux target has no `windows` edge from `primewatch3`; `cargo test` 0/0;
+  grep for `todo!`/`// P2.2:` empty. **Phase 2 is code-complete** — only P2.3 (live-Dolphin manual
+  verification) remains, and it stays `BLOCKED`.
+
+  - _P3.2 forward-dependency:_ the Windows `dolphin_memcpy` never self-heals a stale
+    `emu_ram_address_start` (C++ zeroes it on `ERROR_PARTIAL_COPY`; the `&self` port cannot). P3.2
+    MUST re-attach (or call `detach_from_process`) per frame or a Windows session will get stuck
+    returning `false` after the game closes/reloads.
+
+  **Manual verification (P2.3 — human, needs a Windows box + live Dolphin; not possible in this env):**
+  - [ ] On Windows with MP1 running in Dolphin: `get_dolphin_pids()` returns its pid;
+    `attach_to_process(pid)` returns `true` and logs a "Found ram start" line.
+  - [ ] `dolphin_memcpy(&mut buf, 0, 0x1800000)` fills the buffer; `&buf[0..6] == b"GM8E01"`.
+  - [ ] Closing the game mid-session: the next `dolphin_memcpy` returns `false` and a later re-attach
+    recovers without a leak (Task Manager handle count stable).
+  - [ ] Linux/macOS behaviour is unchanged (POSIX path untouched).
 - [ ] **P2.3** Manual verification against a live Dolphin (user-run). — `BLOCKED (needs user + live Dolphin)`
 
 ## Phase 3 — GameMemory (ports `src/GameMemory.cpp`)
