@@ -90,7 +90,10 @@ here in full until they clear.
   - `get_member` now carries `member.bit` / `member.bit_length` into the returned instance (pointer auto-deref path unchanged).
   - **Deviation (orchestrator-sanctioned, overrides the P3.1 forward-note):** reads return `Option` with NO default substitution; defaulting deferred to P7 render callsites (`.unwrap_or_default()`), so reads compose with `?` and the inspector can distinguish "unreadable" from "zero".
   - No `read_i*` variants (not in the C++ `GameMember` surface). Pre-existing `collapsible_if` lints in P4.1 `get_member_by_name`/`extends` remain — optional cleanup for a later P4 task.
-- [ ] **P4.3** Array-element indexing on `GameMember`/`GameInstance`. — `TODO`
+- [x] **P4.3** Array-element indexing on `GameInstance` — `DONE` · full detail: [`completed_tasks/P4.3.md`](completed_tasks/P4.3.md)
+  - `src/structs/prime_structs.rs`: free `pub fn primitive_size(type_name: &str) -> u32` (exact port of C++ `GameDefinitions::primitiveSize`; `u64`/`i64` deliberately fall through to the `_ => 4` default). `GameInstance` gains `array_length: Option<i64>` + private `with_member(addr, &GameMember)` ctor; `get_member` now carries `bit`/`bit_length`/`array_length` through it. `new` / `with_bitfield` signatures unchanged (globals.rs roots untouched).
+  - `GameInstance::element_size(&self, &GameStructs) -> u32` = struct `size` (`.max(0) as u32`) else `primitive_size`. `GameInstance::element(&self, &GameStructs, index: u32) -> GameInstance` = fresh instance at `address.wrapping_add(index.wrapping_mul(element_size))`, same `type_name`, all of `bit`/`bit_length`/`array_length` cleared. No bounds check on `index` — P4.4/P6/P7 own clamp/panic policy against `array_length`.
+  - `primitive_size` is unused until P6/P7 wire it (dead-code warning, left unsuppressed to match the rest of the not-yet-wired defs layer).
 - [ ] **P4.4** Settle the `operator[]` equivalent: keep `get_member(name)` + add an `Index<&str>`
   impl that panics on absence (matching the documented C++ behavior). — `TODO`
 - [ ] **P4.5** Introduce `Ctx<'a> { structs: &GameStructs, mem: &GameMemory }` and thread it. — `TODO`

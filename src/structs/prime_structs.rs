@@ -189,6 +189,19 @@ impl GameMember {
   }
 }
 
+/// Ports C++ `GameDefinitions::primitiveSize` (`GameDefinitions.cpp:75-96`)
+/// exactly, including the `_ => 4` default. Note the C++ has no `u64`/`i64`
+/// case — those fall through to 4; that is intentionally preserved here.
+pub fn primitive_size(type_name: &str) -> u32 {
+  match type_name {
+    "u8" | "i8" | "bool" => 1,
+    "u16" | "i16" => 2,
+    "u32" | "i32" | "f32" => 4,
+    "f64" => 8,
+    _ => 4,
+  }
+}
+
 #[derive(Clone, Debug)]
 pub struct GameInstance {
   pub address: u32,
@@ -199,6 +212,10 @@ pub struct GameInstance {
   /// consult them. See C++ `GameDefinitions::getBits`.
   pub bit: Option<i64>,
   pub bit_length: Option<i64>,
+  /// Array length carried from the `GameMember` this instance was resolved from
+  /// (C++ `GameMember::arrayLength`). `None` for struct roots, non-array
+  /// members, and every instance produced by [`GameInstance::element`].
+  pub array_length: Option<i64>,
 }
 
 impl GameInstance {
@@ -208,6 +225,7 @@ impl GameInstance {
       type_name,
       bit: None,
       bit_length: None,
+      array_length: None,
     }
   }
 
@@ -222,6 +240,20 @@ impl GameInstance {
       type_name,
       bit,
       bit_length,
+      array_length: None,
+    }
+  }
+
+  /// Build an instance from a resolved `GameMember` at `address`, carrying its
+  /// bitfield and array-length metadata. The pointer auto-deref is handled by
+  /// the caller (`get_member`).
+  fn with_member(address: u32, member: &GameMember) -> Self {
+    Self {
+      address,
+      type_name: member.type_name.clone(),
+      bit: member.bit,
+      bit_length: member.bit_length,
+      array_length: member.array_length,
     }
   }
 
@@ -251,12 +283,32 @@ impl GameInstance {
     if member.pointer {
       addr = mem.read_u32(addr)?
     }
-    Some(GameInstance::with_bitfield(
-      addr,
-      member.type_name.clone(),
-      member.bit,
-      member.bit_length,
-    ))
+    Some(GameInstance::with_member(addr, &member))
+  }
+
+  /// Stride of one element of this instance's type, in bytes. Ports the
+  /// `sizePer` rule in C++ `renderArray` / `renderVector`
+  /// (`GameObjectRenderers.cpp:433-439` / `406-411`): a struct's `size`, else
+  /// `primitive_size`. A negative schema `size` clamps to 0.
+  pub fn element_size(&self, structs: &GameStructs) -> u32 {
+    structs
+      .get_struct_by_name(&self.type_name)
+      .map(|s| s.size.max(0) as u32)
+      .unwrap_or_else(|| primitive_size(&self.type_name))
+  }
+
+  /// The `index`-th array element: a fresh instance at
+  /// `self.address + index * element_size`, same `type_name`, with `bit` /
+  /// `bit_length` / `array_length` all cleared. Ports the C++ `renderArray`
+  /// step (`GameObjectRenderers.cpp:442-448`) — pure address arithmetic, no
+  /// bounds check against `array_length` (callers own that, matching C++).
+  pub fn element(&self, structs: &GameStructs, index: u32) -> GameInstance {
+    GameInstance::new(
+      self
+        .address
+        .wrapping_add(index.wrapping_mul(self.element_size(structs))),
+      self.type_name.clone(),
+    )
   }
 
   /// Ports C++ `GameMember::read_*` (`GameDefinitions.cpp:246-283`). Integer
@@ -317,9 +369,18 @@ mod tests {
   }
 
   fn game_struct(name: &str, extends: &[&str], members: &[GameMember]) -> GameStruct {
+    game_struct_sized(name, 0, extends, members)
+  }
+
+  fn game_struct_sized(
+    name: &str,
+    size: i64,
+    extends: &[&str],
+    members: &[GameMember],
+  ) -> GameStruct {
     let mut s = GameStruct {
       name: name.to_string(),
-      size: 0,
+      size,
       vtable_address: None,
       extends: extends.iter().map(|it| it.to_string()).collect(),
       members_by_offset: BTreeMap::new(),
@@ -466,6 +527,75 @@ mod tests {
     let field = root.get_member(&structs, &mem, "flags").unwrap();
     assert_eq!(field.bit, Some(2));
     assert_eq!(field.bit_length, Some(3));
+  }
+
+  #[test]
+  fn primitive_size_table() {
+    assert_eq!(primitive_size("u8"), 1);
+    assert_eq!(primitive_size("i8"), 1);
+    assert_eq!(primitive_size("bool"), 1);
+    assert_eq!(primitive_size("u16"), 2);
+    assert_eq!(primitive_size("i16"), 2);
+    assert_eq!(primitive_size("u32"), 4);
+    assert_eq!(primitive_size("i32"), 4);
+    assert_eq!(primitive_size("f32"), 4);
+    assert_eq!(primitive_size("f64"), 8);
+    // C++ has no u64/i64 case — falls through to the default 4.
+    assert_eq!(primitive_size("u64"), 4);
+    assert_eq!(primitive_size("i64"), 4);
+    // unknown type name -> default 4.
+    assert_eq!(primitive_size("CVector3f"), 4);
+  }
+
+  #[test]
+  fn element_indexing_stride_and_field_clearing() {
+    let mut structs = GameStructs::new_empty();
+    structs.insert_struct(&game_struct_sized("Foo", 12, &[], &[]));
+    let mut prims = member("prims", "u32", 0x10);
+    prims.array_length = Some(8);
+    let mut foos = member("foos", "Foo", 0x40);
+    foos.array_length = Some(4);
+    structs.insert_struct(&game_struct("Container", &[], &[prims, foos]));
+
+    let mem = GameMemory::new();
+    let root = GameInstance::new(0x8000_0000, "Container".to_string());
+
+    let prim_arr = root.get_member(&structs, &mem, "prims").unwrap();
+    assert_eq!(prim_arr.array_length, Some(8));
+    assert_eq!(prim_arr.element_size(&structs), 4);
+    let p3 = prim_arr.element(&structs, 3);
+    assert_eq!(p3.address, 0x8000_0000 + 0x10 + 3 * 4);
+    assert_eq!(p3.array_length, None);
+    assert_eq!(p3.bit, None);
+    assert_eq!(p3.bit_length, None);
+    assert_eq!(p3.type_name, "u32");
+
+    let foo_arr = root.get_member(&structs, &mem, "foos").unwrap();
+    assert_eq!(foo_arr.array_length, Some(4));
+    assert_eq!(foo_arr.element_size(&structs), 12);
+    let f3 = foo_arr.element(&structs, 3);
+    assert_eq!(f3.address, 0x8000_0000 + 0x40 + 3 * 12);
+    assert_eq!(f3.array_length, None);
+    assert_eq!(f3.type_name, "Foo");
+  }
+
+  #[test]
+  fn element_reads_match_raw_memory() {
+    let Some(mem) = load_mem1() else { return };
+
+    let mut structs = GameStructs::new_empty();
+    let mut words = member("words", "u32", 0x0);
+    words.array_length = Some(6);
+    structs.insert_struct(&game_struct("Header", &[], &[words]));
+
+    let base = 0x8000_0000;
+    let root = GameInstance::new(base, "Header".to_string());
+    let arr = root.get_member(&structs, &mem, "words").unwrap();
+    for n in 0..6u32 {
+      let el = arr.element(&structs, n);
+      assert_eq!(el.address, base + n * 4);
+      assert_eq!(el.read_u32(&mem), mem.read_u32(base + n * 4));
+    }
   }
 
   #[test]
