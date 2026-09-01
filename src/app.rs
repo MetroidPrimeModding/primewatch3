@@ -4,6 +4,7 @@
 //! (`initAndCreateWindow`, `initGlAndImgui`, `mainLoop`, `doFrame`, `framebuffer_size_cb`).
 //! Game-specific pieces (memory attach, world renderer, inspector) belong to later phases.
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -13,10 +14,12 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::window::{Window, WindowId};
 
+use crate::ctx::Ctx;
 use crate::mem::dolphin_memory::DolphinMemoryAccess;
 use crate::mem::game_memory::GameMemory;
+use crate::mem::game_object_utils::{TUniqueID, get_all_objects};
 use crate::scene::SpikeScene;
-use crate::structs::prime_structs::GameStructs;
+use crate::structs::prime_structs::{GameInstance, GameStructs};
 
 /// Build the event loop and run the app. Mirrors `main()` in the C++ entrypoint.
 pub fn run() -> Result<(), Box<dyn Error>> {
@@ -33,8 +36,11 @@ struct App {
   mem: GameMemory,
   /// Live Dolphin process attachment (P2 / P3.2).
   dolphin: DolphinMemoryAccess,
-  #[allow(dead_code)] // consumed by the inspector in Phase 7
   structs: GameStructs,
+  /// Live object list, walked off `g_stateManager` once per frame (C++
+  /// `PrimeWatch::doMemoryParse` -> `GameObjectUtils::getAllObjects`).
+  #[allow(dead_code)] // consumed by the inspector / world renderer in Phase 7+
+  objects: HashMap<TUniqueID, GameInstance>,
   /// Whether the `.bs` definitions loaded — drives which egui window is shown,
   /// mirroring `GameDefinitions::isLoaded()` in C++ `doFrame`.
   defs_loaded: bool,
@@ -95,6 +101,7 @@ impl App {
       mem,
       dolphin,
       structs,
+      objects: HashMap::new(),
       defs_loaded,
       status_text,
       window: None,
@@ -136,13 +143,15 @@ impl ApplicationHandler for App {
       WindowEvent::Resized(size) => window.resize(size),
       WindowEvent::ScaleFactorChanged { .. } => window.window.request_redraw(),
       WindowEvent::RedrawRequested => {
-        // Per-frame snapshot refresh (C++ `PrimeWatch::doMemoryParse`,
-        // `PrimeWatch.cpp:483-488`): gated on the defs being loaded; a no-op
-        // while detached.
-        // TODO(P9.1): the entities parse (`GameObjectUtils`) slots in right here,
-        // and input -> parse -> ui -> render gets its real ordering.
+        // Per-frame memory parse (C++ `PrimeWatch::doMemoryParse`,
+        // `PrimeWatch.cpp:483-488`): refresh the snapshot, then walk the live
+        // object list off `g_stateManager`. Gated on the defs being loaded; the
+        // dolphin refresh is a no-op while detached.
+        // TODO(P9.1): input -> parse -> ui -> render still needs its real ordering.
         if self.defs_loaded {
           self.mem.update_from_dolphin(&self.dolphin);
+          let ctx = Ctx::new(&self.structs, &self.mem);
+          self.objects = get_all_objects(&ctx);
         }
         window.render(self.defs_loaded, &self.status_text);
       }

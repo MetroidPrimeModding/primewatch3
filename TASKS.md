@@ -130,8 +130,12 @@ Phase 5 complete.
 
 ## Phase 6 — GameObjectUtils (ports `src/utils/GameObjectUtils.cpp`; rewrites `src/mem/area_utils.rs`)
 
-- [ ] **P6.1** Walk `CObjectList` off `g_stateManager` into `HashMap<TUniqueID, GameInstance>`,
-  refreshed once per frame. — `TODO`
+- [x] **P6.1** Walk `CObjectList` off `g_stateManager` into `HashMap<TUniqueID, GameInstance>`, refreshed once per frame — `DONE` · full detail: [`completed_tasks/P6.1.md`](completed_tasks/P6.1.md)
+  - New `src/mem/game_object_utils.rs` (`pub mod` in `mem/mod.rs`): `pub type TUniqueID = u16`, `get_all_objects(&Ctx) -> HashMap<TUniqueID, GameInstance>` (walks the intrusive `SObjectListEntry` slot list off `g_stateManager["allObjects"]`, retypes each `entity` by vtable when `vtable_class_name` maps it AND the name is a real `.bs` struct), `get_object_by_entity_id(&Ctx, u16) -> Option<GameInstance>` (`eid & 0x3FF` slot lookup, no retype — for P8 `WorldRenderer` camera).
+  - `App` (`src/app.rs`) gains `objects: HashMap<TUniqueID, GameInstance>`, refreshed once per frame in the `RedrawRequested` arm right after `update_from_dolphin`, inside `if self.defs_loaded`, via `Ctx::new(&self.structs, &self.mem)`. Field is `#[allow(dead_code)]` until P7 consumes it.
+  - Deviations from C++ (per P4.2/P5.1 `Option`-not-total convention): a mid-walk `None` on any structural/value read stops the walk and returns what was gathered (C++ reads are total, OOB→0; never triggers on a valid snapshot). `get_object_by_entity_id` returns `Option` rather than a always-valid handle.
+  - `get_object_by_entity_id` is dead code until P8 wires it (expected warning). `area_utils.rs` still carries pre-existing unused-import warnings — P6.2 rewrites it.
+
 - [ ] **P6.2** Rewrite `area_utils.rs` — port `AreaUtils::getAreas`. — `TODO`
 
 ## Phase 7 — Inspector rendering (ports `src/defs/GameObjectRenderers.cpp`)
