@@ -271,6 +271,11 @@ impl GameInstance {
     structs.get_struct_by_name(&self.type_name)
   }
 
+  /// Fallible member lookup: the `Option` form of [`GameInstance::member`], for
+  /// call sites where a missing member is a legitimate outcome (optional field,
+  /// speculative probe). Auto-derefs pointer members. See
+  /// `GameDefinitions.cpp:286-290` (`GameMember::operator[]`) for the C++
+  /// contract — `operator[]` is this plus a throw on `nullopt`.
   pub fn get_member(
     &self,
     game_structs: &GameStructs,
@@ -284,6 +289,26 @@ impl GameInstance {
       addr = mem.read_u32(addr)?
     }
     Some(GameInstance::with_member(addr, &member))
+  }
+
+  /// C++ `GameMember::operator[]` (`GameDefinitions.cpp:286-290`,
+  /// `GameDefinitions.hpp:35` — "WARNING: this will crash if it doesn't exit").
+  /// Panicking-on-absence is the *documented, intended* behavior: a missing
+  /// member here means a typo in a `.bs` file or a call site, i.e. a bug, so it
+  /// mirrors the C++ `throw std::invalid_argument`. Use [`GameInstance::get_member`]
+  /// when a miss is legitimate.
+  ///
+  /// The C++ message is `"Unknown member {type} {name}.{subName}"`; the Rust
+  /// `GameInstance` carries no member-name of its own, so the honest equivalent
+  /// drops the `{name}` segment: `"Unknown member {type_name}.{name}"`.
+  ///
+  // P4.5: an ergonomic `x["a"]["b"]` chain is recovered via a `Ctx`-based helper
+  // (single context arg wrapping `&GameStructs` + `&GameMemory`) — this method is
+  // the panicking primitive it will build on.
+  pub fn member(&self, game_structs: &GameStructs, mem: &GameMemory, name: &str) -> GameInstance {
+    self
+      .get_member(game_structs, mem, name)
+      .unwrap_or_else(|| panic!("Unknown member {}.{}", self.type_name, name))
   }
 
   /// Stride of one element of this instance's type, in bytes. Ports the
@@ -611,5 +636,47 @@ mod tests {
     let m = derived.get_member_by_name(&structs, "val").unwrap();
     assert_eq!(m.offset, 0x20);
     assert_eq!(m.type_name, "float");
+  }
+
+  /// `member` (C++ `operator[]`) resolves to exactly what `get_member` returns
+  /// for a present member.
+  #[test]
+  fn member_matches_get_member_when_present() {
+    let structs = chain();
+    let mem = GameMemory::new();
+    let root = GameInstance::new(0x8000_0000, "C".to_string());
+
+    let via_get = root.get_member(&structs, &mem, "b_field").unwrap();
+    let via_member = root.member(&structs, &mem, "b_field");
+    assert_eq!(via_member.address, via_get.address);
+    assert_eq!(via_member.type_name, via_get.type_name);
+  }
+
+  /// A typo'd member name panics with the C++-style `"Unknown member ..."`.
+  #[test]
+  #[should_panic(expected = "Unknown member")]
+  fn member_panics_on_typo() {
+    let structs = chain();
+    let mem = GameMemory::new();
+    let root = GameInstance::new(0x8000_0000, "C".to_string());
+    root.member(&structs, &mem, "b_feild");
+  }
+
+  /// `.member(..).member(..)` composes — proves the panicking form chains.
+  #[test]
+  fn member_chains_two_levels() {
+    let mut structs = GameStructs::new_empty();
+    structs.insert_struct(&game_struct("Leaf", &[], &[member("c", "u32", 0x4)]));
+    structs.insert_struct(&game_struct("Mid", &[], &[member("b", "Leaf", 0x8)]));
+    structs.insert_struct(&game_struct("Top", &[], &[member("a", "Mid", 0x10)]));
+
+    let mem = GameMemory::new();
+    let root = GameInstance::new(0x8000_0000, "Top".to_string());
+    let leaf = root
+      .member(&structs, &mem, "a")
+      .member(&structs, &mem, "b")
+      .member(&structs, &mem, "c");
+    assert_eq!(leaf.address, 0x8000_0000 + 0x10 + 0x8 + 0x4);
+    assert_eq!(leaf.type_name, "u32");
   }
 }

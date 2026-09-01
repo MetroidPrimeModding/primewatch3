@@ -94,8 +94,11 @@ here in full until they clear.
   - `src/structs/prime_structs.rs`: free `pub fn primitive_size(type_name: &str) -> u32` (exact port of C++ `GameDefinitions::primitiveSize`; `u64`/`i64` deliberately fall through to the `_ => 4` default). `GameInstance` gains `array_length: Option<i64>` + private `with_member(addr, &GameMember)` ctor; `get_member` now carries `bit`/`bit_length`/`array_length` through it. `new` / `with_bitfield` signatures unchanged (globals.rs roots untouched).
   - `GameInstance::element_size(&self, &GameStructs) -> u32` = struct `size` (`.max(0) as u32`) else `primitive_size`. `GameInstance::element(&self, &GameStructs, index: u32) -> GameInstance` = fresh instance at `address.wrapping_add(index.wrapping_mul(element_size))`, same `type_name`, all of `bit`/`bit_length`/`array_length` cleared. No bounds check on `index` — P4.4/P6/P7 own clamp/panic policy against `array_length`.
   - `primitive_size` is unused until P6/P7 wire it (dead-code warning, left unsuppressed to match the rest of the not-yet-wired defs layer).
-- [ ] **P4.4** Settle the `operator[]` equivalent: keep `get_member(name)` + add an `Index<&str>`
-  impl that panics on absence (matching the documented C++ behavior). — `TODO`
+- [x] **P4.4** `operator[]` equivalent on `GameInstance` — `DONE` · full detail: [`completed_tasks/P4.4.md`](completed_tasks/P4.4.md)
+  - `GameInstance::member(&self, &GameStructs, &GameMemory, &str) -> GameInstance` in `src/structs/prime_structs.rs`: a thin `get_member(...).unwrap_or_else(|| panic!("Unknown member {type_name}.{name}"))` — the panicking C++ `GameMember::operator[]` analogue. `get_member` stays the fallible `Option` form (unchanged).
+  - **Decision (recorded): no `std::ops::Index` impl.** Member resolution needs `&GameMemory` and returns an owned `GameInstance`, fitting neither `Index::index`'s arg list nor its `&Output` return. `member` is the panicking primitive instead.
+  - **P4.5 forward-dependency:** the ergonomic `x["a"]["b"]` chain is deferred to a `Ctx`-based helper built on `member`; a `// P4.5:` hook comment marks the spot.
+
 - [ ] **P4.5** Introduce `Ctx<'a> { structs: &GameStructs, mem: &GameMemory }` and thread it. — `TODO`
 
 ## Phase 5 — GameOffsets / GameVtables (ports `GameOffsets.hpp`, `GameVtables.hpp`)
