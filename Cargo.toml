@@ -4,13 +4,18 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = "0.15.2"
-bevy_egui = "0.33.0"
 sysinfo = "0.33.1"
 log = { version = "*", features = ["max_level_debug", "release_max_level_warn"] }
 bstruct = { path = "bstruct" }
 walkdir = "2.5.0"
 bimap = "0.6.3"
+egui = "0.36"
+egui-wgpu = { version = "0.36", features = ["winit"] }
+egui-winit = "0.36"
+glam = "0.33"
+pollster = "1.0"
+wgpu = "30"
+winit = "0.30"
 
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]

@@ -14,13 +14,13 @@ use crate::structs::prime_structs::{GameInstance, GameStructs};
 //     return vec![];
 //   }
 //   let areas = areas.unwrap();
-// 
+//
 //   // loop thru the vector
 //   let end = areas.get_member(game_structs, mem, "end").unwrap().read_u32(mem).unwrap();
 //   //    let size = areas.member_by_name("size").read_u32();
-// 
+//
 //   let mut result = Vec::new();
-// 
+//
 //   let first = areas["first"];
 //   let size_per = GameDefinitions::struct_by_name(&first.r#type).size;
 //   for i in 0..end {

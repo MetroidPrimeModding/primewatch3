@@ -1,5 +1,4 @@
 use crate::mem::game_memory::GameMemory;
-use bevy::prelude::Resource;
 use bimap::BiBTreeMap;
 use bstruct::bstruct_link::{BEnum, BStruct, BStructMember};
 use bstruct::{CompileError, build_directory};
@@ -9,7 +8,7 @@ type TypeName = String;
 type MemberName = String;
 type EnumName = String;
 
-#[derive(Resource, Debug)]
+#[derive(Debug)]
 pub struct GameStructs {
   pub structs: BTreeMap<TypeName, GameStruct>,
   pub enums: BTreeMap<EnumName, GameEnum>,
@@ -219,7 +218,7 @@ impl GameInstance {
     }
     Some(GameInstance::new(addr, member.type_name.clone()))
   }
-  
+
   // this makes it cleaner to use
   pub fn read_u32(&self, mem: &GameMemory) -> Option<u32> {
     mem.read_u32(self.address)

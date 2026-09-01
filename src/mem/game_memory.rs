@@ -1,10 +1,8 @@
-use bevy::prelude::Resource;
 use std::fs;
 use std::io::Read;
 
 const DOLPHIN_MEMORY_SIZE: u32 = 0x1800000u32;
 
-#[derive(Resource)]
 pub struct GameMemory {
   pub data: [u8; DOLPHIN_MEMORY_SIZE as usize],
 }
@@ -15,7 +13,7 @@ impl GameMemory {
       data: [0; DOLPHIN_MEMORY_SIZE as usize],
     }
   }
-  
+
   pub fn load_from_file(&mut self, path: &str) -> Result<(), std::io::Error> {
     let file = fs::File::open(path)?;
     let mut reader = std::io::BufReader::new(file);
@@ -43,32 +41,27 @@ impl GameMemory {
 
   pub fn read_u16(&self, address: u32) -> Option<u16> {
     let offset = GameMemory::address_to_offset(address);
-    self.data[offset..]
-      .try_into().ok().map(u16::from_be_bytes)
+    self.data[offset..].try_into().ok().map(u16::from_be_bytes)
   }
 
   pub fn read_u32(&self, address: u32) -> Option<u32> {
     let offset = GameMemory::address_to_offset(address);
-    self.data[offset..]
-      .try_into().ok().map(u32::from_be_bytes)
+    self.data[offset..].try_into().ok().map(u32::from_be_bytes)
   }
 
   pub fn read_u64(&self, address: u32) -> Option<u64> {
     let offset = GameMemory::address_to_offset(address);
-    self.data[offset..]
-      .try_into().ok().map(u64::from_be_bytes)
+    self.data[offset..].try_into().ok().map(u64::from_be_bytes)
   }
 
   pub fn read_f32(&self, address: u32) -> Option<f32> {
     let offset = GameMemory::address_to_offset(address);
-    self.data[offset..]
-      .try_into().ok().map(f32::from_be_bytes)
+    self.data[offset..].try_into().ok().map(f32::from_be_bytes)
   }
 
   pub fn read_f64(&self, address: u32) -> Option<f64> {
     let offset = GameMemory::address_to_offset(address);
-    self.data[offset..]
-      .try_into().ok().map(f64::from_be_bytes)
+    self.data[offset..].try_into().ok().map(f64::from_be_bytes)
   }
 }
 
