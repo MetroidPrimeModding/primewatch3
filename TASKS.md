@@ -117,7 +117,16 @@ here in full until they clear.
   - Deviation (sanctioned, matches P3.1/P4.2): the deref is fallible — OOB/unreadable → `None`; a
     zero pointer still derefs to address 0. **P7 render callsites own** the `.unwrap_or`/skip policy.
 
-- [ ] **P5.2** Port the vtable `address → class name` map. — `TODO`
+- [x] **P5.2** Port the vtable `address → class name` map. — `DONE` · full detail: [`completed_tasks/P5.2.md`](completed_tasks/P5.2.md)
+  - New `src/mem/vtables.rs` (`pub mod vtables;` in `mem/mod.rs`): `MP1_VTABLES:
+    LazyLock<HashMap<u32, &'static str>>` — all 142 `GameVtables.cpp` entries verbatim (incl. the
+    `0x803d9ce0 → "0x803d9e30"` alias) — plus `vtable_class_name(u32) -> Option<&'static str>`
+    (the C++ `.count()?[]` point lookup). Both `pub`; P9's "unknown vtables" UI can iterate the map.
+  - **P6.1 forward-note:** C++ retypes an object only when `MP1_VTABLES.count(v) && structByName(name)`
+    — the `CObjectList` walk must still confirm the mapped name is a known `.bs` struct before
+    retyping the `GameInstance`.
+
+Phase 5 complete.
 
 ## Phase 6 — GameObjectUtils (ports `src/utils/GameObjectUtils.cpp`; rewrites `src/mem/area_utils.rs`)
 

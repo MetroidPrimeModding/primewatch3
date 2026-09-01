@@ -1,0 +1,196 @@
+//! Ports `../primewatch2/src/defs/GameVtables.{hpp,cpp}` — the MP1
+//! `vtable address → class name` table.
+//!
+//! An object's C++ class is identified at runtime by the vtable pointer at its
+//! `+0x0`. `CObjectList` entries only store the base `CEntity`; the walk in
+//! `GameObjectUtils` (P6.1) reads `entity["vtable"]` and, if it is in this
+//! table and names a known `.bs` struct, retypes the handle to the concrete
+//! class. C++ uses this map for point lookups only (`.count(v)` / `map[v]`).
+
+use std::collections::HashMap;
+use std::sync::LazyLock;
+
+/// `address → class name`. A handful of values are themselves hex-address
+/// strings (unresolved aliases) — kept verbatim from the C++ table.
+pub static MP1_VTABLES: LazyLock<HashMap<u32, &'static str>> = LazyLock::new(|| {
+  HashMap::from([
+    (0x803d9660, "CFirstPersonCamera"),
+    (0x803d96e8, "CPlayer"),
+    (0x803da450, "CScriptActor"),
+    (0x803da4d8, "CScriptTrigger"),
+    (0x803da558, "CScriptWaypoint"),
+    (0x803daa78, "CScriptDoor"),
+    (0x803dab90, "CBallCamera"),
+    (0x803dac38, "CScriptEffect"),
+    (0x803dadd8, "CScriptTimer"),
+    (0x803df128, "CScriptSound"),
+    (0x803df220, "CScriptPlatform"),
+    (0x803df328, "CScriptGenerator"),
+    (0x803df348, "CScriptCameraWaypoint"),
+    (0x803df3b8, "CGameLight"),
+    (0x803df4f8, "CScriptPickup"),
+    (0x803df580, "CScriptDock"),
+    (0x803df688, "CScriptCameraHint"),
+    (0x803df830, "CScriptRelay"),
+    (0x803df850, "CScriptSpawnPoint"),
+    (0x803df890, "CBeetle"),
+    (0x803dfbf0, "CScriptHUDMemo"),
+    (0x803dfd08, "CScriptDamageableTrigger"),
+    (0x803dfd78, "CScriptDebris"),
+    (0x803e02c8, "CScriptSpiderBallWaypoint"),
+    (0x803e0bf8, "CScriptCoverPoint"),
+    (0x803e0c68, "CPathCamera"),
+    (0x803e0d70, "CHUDBillboardEffect"),
+    (0x803e2b68, "CScriptSpecialFunction"),
+    (0x803e3004, "CParasite"),
+    (0x803e32d8, "CScriptPlayerHint"),
+    (0x803e3618, "CScriptPickupGenerator"),
+    (0x803e3638, "CScriptPointOfInterest"),
+    (0x803e4708, "CScriptRoomAcoustics"),
+    (0x803e4b18, "CCollisionActor"),
+    (0x803e7068, "CScriptStreamedMusic"),
+    (0x803e8558, "CTeamAiMgr"),
+    (0x803e86e8, "CScriptMemoryRelay"),
+    (0x803e9d80, "CInterpolationCamera"),
+    (0x803dadf8, "CCinematicCamera"),
+    (0x803daef0, "CScriptCounter"),
+    (0x803dfc80, "CScriptCameraFilterKeyframe"),
+    (0x803dfca0, "CScriptCameraBlurKeyframe"),
+    (0x803dfe00, "CScriptCameraShaker"),
+    (0x803dfe20, "CScriptActorKeyframe"),
+    (0x803dfe70, "CScriptWater"),
+    (0x803e27b0, "CScriptDistanceFog"),
+    (0x803e2d28, "CSpankWeed"),
+    (0x803e3e80, "CScriptBallTrigger"),
+    (0x803e4be0, "CScriptPlayerActor"),
+    (0x803e4d08, "CFlaahgraRenderer"),
+    (0x803e4e88, "CFlaahgra"),
+    (0x803e52f8, "CScriptAreaAttributes"),
+    (0x803e5830, "CScriptVisorFlare"),
+    (0x803e5c40, "CScriptSwitch"),
+    (0x803e6408, "CFlaahgraTentacle"),
+    (0x803e8578, "CSnakeWeedSwarm"),
+    (0x803e8670, "CScriptSpindleCamera"),
+    (0x803d9ce0, "0x803d9e30"),
+    (0x803d9e30, "CEntity"),
+    (0x803d9eb0, "CActor"),
+    (0x803da0a8, "CExplosion"),
+    (0x803da5c8, "CPatterned"),
+    (0x803dacc0, "CBomb"),
+    (0x803df870, "CScriptRandomRelay"),
+    (0x803e0800, "CSpacePirate"),
+    (0x803e0d00, "CScriptGrapplePoint"),
+    (0x803e2808, "CPowerBomb"),
+    (0x803e2d08, "CScriptActorRotate"),
+    (0x803e3da8, "CScriptSteam"),
+    (0x803e3e28, "CScriptRipple"),
+    (0x803e3f00, "CPlasmaProjectile"),
+    (0x803e4018, "CNewIntroBoss"),
+    (0x803e4330, "CScriptTargetingPoint"),
+    (0x803e51e8, "CIceImpact"),
+    (0x803e5318, "CWaveBuster"),
+    (0x803e5758, "CFishCloud"),
+    (0x803e58a0, "CScriptWorldTeleporter"),
+    (0x803e58c0, "CScriptVisorGoo"),
+    (0x803e5c20, "CScriptControllerAction"),
+    (0x803e6308, "CWallCrawlerSwarm"),
+    (0x803e6bb0, "CScriptColorModulate"),
+    (0x803e7048, "CScriptMidi"),
+    (0x803e7158, "CEnergyProjectile"),
+    (0x803e71ec, "CScriptGunTurret"),
+    (0x803e7a70, "CScriptCameraPitchVolume"),
+    (0x803e8c40, "CScriptCameraHintTrigger"),
+    (0x803e9d10, "CNewFlameThrower"),
+    (0x803dff90, "CWarWasp"),
+    (0x803e1918, "CChozoGhost"),
+    (0x803e5154, "CFlaahgraProjectile"),
+    (0x803e88a8, "CAtomicAlpha"),
+    (0x803e8cb0, "CAmbientAI"),
+    (0x803e9258, "CRidley"),
+    (0x803e96c0, "CPuffer"),
+    (0x803e9e10, "CSeedling"),
+    // also possibly CAnimSourceReader or CAnimTreeNode or CFBStreamedAnimReader
+    (0x803ed508, "IAnimReader"),
+    (0x803e1c88, "CFireFlea"),
+    (0x803e2878, "CMetaree"),
+    (0x803e3348, "CRipper"),
+    (0x803e3ad8, "CMetroid"),
+    (0x803e45d8, "CFlameThrower"),
+    (0x803e4728, "CIceSheegoth"),
+    (0x803e57c4, "CFishCloudModifier"),
+    (0x803e5954, "CJellyZap"),
+    (0x803e5ce0, "CThardus"),
+    (0x803e6074, "CDestroyableRock"),
+    (0x803e6398, "CScriptAiJumpPoint"),
+    (0x803e685c, "CFlyingPirate"),
+    (0x803e6be0, "CThardusRockProjectile"),
+    (0x803e70e8, "CRepulsor"),
+    (0x803e7350, "CBabygoth"),
+    (0x803e774c, "CEyeBall"),
+    (0x803e80c0, "CRipperControlledPlatform"),
+    (0x803e8240, "CMagdolite"),
+    (0x803e8e4c, "CAtomicBeta"),
+    (0x803e9118, "CElectricBeamProjectile"),
+    (0x803e9990, "CFire"),
+    (0x803e9a40, "CTryclops"),
+    (0x803ea7c4, "CBurrower"),
+    (0x803d9b8c, "CPOINode"), // TODO: check this one
+    (0x803e36a8, "CDrone"),
+    (0x803e3a58, "CDroneLaser"),
+    (0x803e4400, "CScriptEMPulse"),
+    (0x803e5388, "CMetroidBeta"),
+    (0x803e5cc0, "CScriptPlayerStateChange"),
+    (0x803e6778, "CIceAttackProjectile"),
+    (0x803e7ae0, "CElitePirate"),
+    (0x803e7f58, "CGrenadeLauncher"),
+    (0x803e8050, "CShockWave"),
+    (0x803ead54, "CMetroidPrimeExo"),
+    (0x803eb0fc, "CMetroidPrimeExoPhysicsDummy"),
+    (0x803eb180, "CScriptBeam"),
+    (0x803eb244, "CMetroidPrimeEssence"),
+    (0x803eb638, "CMetroidPrimeRelay"),
+    (0x803eb658, "CScriptMazeNode"),
+    (0x803eb6c8, "CFlash"),
+    (0x803eb868, "COmegaPirate"),
+    (0x803ebb48, "CPhazonPool"),
+    (0x803ebc70, "CPhazonHealingNodule"),
+    (0x803ec030, "CScriptShadowProjector"),
+    (0x803ec0a0, "CEnergyBall"),
+    // also possibly CParticleSwoosh or CParticleElectric
+    (0x803edd08, "CElementGen"),
+  ])
+});
+
+/// Point lookup — C++ `MP1_VTABLES.count(v) ? MP1_VTABLES[v] : <none>`.
+pub fn vtable_class_name(address: u32) -> Option<&'static str> {
+  MP1_VTABLES.get(&address).copied()
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  #[test]
+  fn known_entries_resolve() {
+    assert_eq!(vtable_class_name(0x803d96e8), Some("CPlayer"));
+    assert_eq!(vtable_class_name(0x803da4d8), Some("CScriptTrigger"));
+    assert_eq!(vtable_class_name(0x803edd08), Some("CElementGen"));
+    // the unresolved-alias entry is carried verbatim
+    assert_eq!(vtable_class_name(0x803d9ce0), Some("0x803d9e30"));
+  }
+
+  #[test]
+  fn unknown_address_is_none() {
+    assert_eq!(vtable_class_name(0), None);
+    assert_eq!(vtable_class_name(0x80000000), None);
+    assert_eq!(vtable_class_name(0x803d96e9), None);
+  }
+
+  /// The C++ `GameVtables.cpp` initializer has 142 distinct braced pairs. Guard
+  /// the count so a bad transcription (dropped or duplicated line) is caught —
+  /// a duplicate key would silently shrink the `HashMap`.
+  #[test]
+  fn table_size_matches_cpp() {
+    assert_eq!(MP1_VTABLES.len(), 142);
+  }
+}
