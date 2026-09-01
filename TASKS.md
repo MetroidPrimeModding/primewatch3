@@ -158,7 +158,21 @@ Phase 5 complete.
 
 ## Phase 8 — 3D world rendering (ports `src/world/*`, `src/gl/*`)
 
-- [ ] **P8.1** `CollisionMesh` loading. — `TODO`
+- [x] **P8.1** `CollisionMesh` loading — `DONE` · full detail: [`completed_tasks/P8.1.md`](completed_tasks/P8.1.md)
+  - New `src/world/` module tree: `mod.rs` (`#[repr(C)] pub struct Vert { pos/color/normal/barycentric }`,
+    ports `gl/OpenGLMesh.hpp` `Vert`) + `collision_mesh.rs`. `mod world;` in `main.rs`.
+  - `ECollisionMaterial(pub u32)` bitflag newtype (33 consts, `REDUNDANT_EDGE`/`FLIPPED_TRI` both `0x2000000`)
+    + `contains` (C++ `!!(a & b)`). `CollisionMesh` struct (`raw_*` arrays + `min`/`max`/`materials`/`verts`).
+  - `load_mesh(ctx, area) -> Option<CollisionMesh>` ports `WorldRenderer::loadMesh`: walks
+    `area->postConstructed->collision["value"]` (`*CAreaOctTree`), copies material/vert/edge/poly arrays
+    from game memory off the auto-deref'd pointer `.address`es, records the area AABB, runs `build_vertices`.
+    Preserves the C++ quirk: per-vertex materials read from the `polyEdges` pointer, not `vertMats`.
+  - `CollisionMesh::build_vertices` ports `initGlMesh`: 3-edge→index resolution, `FLIPPED_TRI` i1/i3 swap,
+    normal, verbatim colour ladder (incl. dead `|| n.z > 0.85`); fills `verts: Vec<Vert>` (no GPU).
+  - Deviations (sanctioned): memory-derived indices use checked `.get(..).unwrap_or_default()` not C++
+    unchecked `operator[]`; `?`-bail on structural misses, `.unwrap_or` on bulk reads; 50000 count cap.
+  - **Forward:** all symbols are dead code until P8.4 wires `load_mesh` into the `mesh_by_mrea` cache /
+    `updateAreas`; P8.2 adds the `wgpu::VertexBufferLayout` for `Vert` and the GPU upload.
 - [ ] **P8.2** `OpenGLShader` → wgpu pipelines; `ImmediateModeBuffer` → wgpu dynamic vertex buffer. — `TODO`
 - [ ] **P8.3** `ShapeGenerator` procedural meshes. — `TODO`
 - [ ] **P8.4** `WorldRenderer`: camera modes, culling, per-category draw fns + visibility toggles. — `TODO`
