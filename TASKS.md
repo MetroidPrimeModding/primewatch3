@@ -173,7 +173,11 @@ Phase 5 complete.
     unchecked `operator[]`; `?`-bail on structural misses, `.unwrap_or` on bulk reads; 50000 count cap.
   - **Forward:** all symbols are dead code until P8.4 wires `load_mesh` into the `mesh_by_mrea` cache /
     `updateAreas`; P8.2 adds the `wgpu::VertexBufferLayout` for `Vert` and the GPU upload.
-- [ ] **P8.2** `OpenGLShader` → wgpu pipelines; `ImmediateModeBuffer` → wgpu dynamic vertex buffer. — `TODO`
+- [x] **P8.2** `OpenGLShader` → wgpu pipelines; `ImmediateModeBuffer` → wgpu dynamic vertex buffer — `DONE` · full detail: [`completed_tasks/P8.2.md`](completed_tasks/P8.2.md)
+  - New `src/gl/` module tree (`mod gl;` in `main.rs`): `Vert` moved here from `src/world/mod.rs` (+ `Vert::LAYOUT` wgpu vertex layout, stride 52), `WORLD_COLOR_FORMAT` (`Rgba8Unorm`) / `WORLD_DEPTH_FORMAT` (`Depth32Float`) consts, `pub(crate) as_bytes`, `Topology {Lines,Triangles}`. `src/world/collision_mesh.rs` now `use crate::gl::Vert;`.
+  - `gl::mesh::DynamicMesh` (grow-on-demand `VERTEX|COPY_DST` buffer, `new`/`upload`/`draw`; non-indexed). `gl::shader`: `WorldUniforms` (`#[repr(C)]`, 288 B, `from_matrices` fills CPU `normal_matrix` = inverse-transpose of model — sanctioned deviation, WGSL has no `inverse()`), `WORLD_SHADER_WGSL`, `WorldPipelines` (4 pipelines: mesh/line × opaque/translucent; `front_face: Cw`, `cull_mode: None`). `gl::immediate::ImmediateModeBuffer` (CPU-only: accumulates `Vec<Vert>`, `tri_verts()`/`line_verts()` accessors; P8.4 owns the GPU upload).
+  - **Sanctioned deviation:** `linear_to_srgb` applied to every shader output (NEW vs C++) to satisfy the P1.3 linear→sRGB contract for the linear `Rgba8Unorm` egui composite target — isolated in one WGSL helper, flag-commented. **P8.4 must verify compositing does not double-encode** and revisit there if so.
+  - **P8.4 forward-deps:** `cull_mode: None` on all 4 pipelines — P8.4 owns `CullType` BACK/FRONT/NONE → variant choice (marked `// P8.4:`); MSAA still single-sample; caller normalizes `light_dir` before `set_uniforms`; P8.4 unifies `scene.rs`'s private `COLOR_FORMAT`/`DEPTH_FORMAT` with the `gl` consts. All `gl` symbols dead until P8.4 (expected dead-code warnings, no `#[allow]`).
 - [ ] **P8.3** `ShapeGenerator` procedural meshes. — `TODO`
 - [ ] **P8.4** `WorldRenderer`: camera modes, culling, per-category draw fns + visibility toggles. — `TODO`
 

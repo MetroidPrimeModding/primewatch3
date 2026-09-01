@@ -8,8 +8,8 @@
 use glam::Vec3;
 
 use crate::ctx::Ctx;
+use crate::gl::Vert;
 use crate::structs::prime_structs::GameInstance;
-use crate::world::Vert;
 
 /// Collision-surface material bitflags — ports `world/CollisionMesh.hpp:8-55`
 /// (mirrored by `enum CollisionMaterial` in
