@@ -22,8 +22,6 @@ here in full until they clear.
 - [x] **P0.1** Sync `prime_defs/` from primewatch2 — `DONE` · full detail: [`completed_tasks/P0.1.md`](completed_tasks/P0.1.md)
   - Replaced `prime_defs/prime1/` wholesale with primewatch2's authoritative copy (4 modified, 5 added `.bs`, 0 deleted; no `.rs` touched). Offline `bstruct::build_directory` links `Ok` at structs=211 / enums=36 (was 192 / 36). Fixed carried-over wrong offsets: `CPlayerState` `CPowerUp[41] items 0x14`, `CPlayerGun` `bombFuseTime 0x354`, `rstl::vector2<T>`, `CGameState` `worldStates 0x88`. Commit `d96d981`.
 
-- [ ] **P0.2 (optional) Rename crate** to `primewatch2` — `TODO` — low priority, do last if at all.
-
 ## Phase 1 — Scaffold (winit + wgpu + egui)
 
 - [x] **P1.1** Strip `bevy`/`bevy_egui`; add winit/wgpu/egui stack — `DONE` · full detail: [`completed_tasks/P1.1.md`](completed_tasks/P1.1.md)
