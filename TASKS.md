@@ -136,7 +136,11 @@ Phase 5 complete.
   - Deviations from C++ (per P4.2/P5.1 `Option`-not-total convention): a mid-walk `None` on any structural/value read stops the walk and returns what was gathered (C++ reads are total, OOB→0; never triggers on a valid snapshot). `get_object_by_entity_id` returns `Option` rather than a always-valid handle.
   - `get_object_by_entity_id` is dead code until P8 wires it (expected warning). `area_utils.rs` still carries pre-existing unused-import warnings — P6.2 rewrites it.
 
-- [ ] **P6.2** Rewrite `area_utils.rs` — port `AreaUtils::getAreas`. — `TODO`
+- [x] **P6.2** Rewrite `area_utils.rs` — port `AreaUtils::getAreas` — `DONE` · full detail: [`completed_tasks/P6.2.md`](completed_tasks/P6.2.md)
+  - `src/mem/area_utils.rs` rewritten end-to-end: `pub fn get_areas(ctx: &Ctx) -> Vec<GameInstance>` walks `g_stateManager`→`world`→`areas` (`rstl::vector<rstl::autoptr<CGameArea>>`), reads `areas["end"]` as the element count, strides `first` by the monomorphized `rstl::autoptr<CGameArea>` size (0x8), and collects each `["value"]` as a `CGameArea` handle in area-index order.
+  - Deviations from C++ (sanctioned): no `name` field on `GameInstance` — the `Vec` index is the label (P7 formats it); `const AREA_CAP: u32 = 1024` bounds the loop (C++ has no failsafe on `end`); `Option` reads bail early with what was gathered instead of fabricating 0.
+  - Not yet wired — consumer is P8 `WorldRenderer` (`get_areas` / `AREA_CAP` are expected dead code until then, no `#[allow]`, no speculative `app.rs` call).
+  - Phase 6 complete.
 
 ## Phase 7 — Inspector rendering (ports `src/defs/GameObjectRenderers.cpp`)
 
