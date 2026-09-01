@@ -1,4 +1,4 @@
-use crate::mem::game_memory::GameMemory;
+use crate::ctx::Ctx;
 use bimap::BiBTreeMap;
 use bstruct::bstruct_link::{BEnum, BStruct, BStructMember};
 use bstruct::{CompileError, build_directory};
@@ -267,8 +267,8 @@ impl GameInstance {
     self.bit_length.unwrap_or(0).max(0) as u32
   }
 
-  pub fn get_type(&self, structs: &GameStructs) -> Option<GameStruct> {
-    structs.get_struct_by_name(&self.type_name)
+  pub fn get_type(&self, ctx: &Ctx) -> Option<GameStruct> {
+    ctx.structs.get_struct_by_name(&self.type_name)
   }
 
   /// Fallible member lookup: the `Option` form of [`GameInstance::member`], for
@@ -276,17 +276,12 @@ impl GameInstance {
   /// speculative probe). Auto-derefs pointer members. See
   /// `GameDefinitions.cpp:286-290` (`GameMember::operator[]`) for the C++
   /// contract — `operator[]` is this plus a throw on `nullopt`.
-  pub fn get_member(
-    &self,
-    game_structs: &GameStructs,
-    mem: &GameMemory,
-    name: &str,
-  ) -> Option<GameInstance> {
-    let struct_ = self.get_type(game_structs)?;
-    let member = struct_.get_member_by_name(game_structs, name)?;
+  pub fn get_member(&self, ctx: &Ctx, name: &str) -> Option<GameInstance> {
+    let struct_ = self.get_type(ctx)?;
+    let member = struct_.get_member_by_name(ctx.structs, name)?;
     let mut addr = self.address + member.offset as u32;
     if member.pointer {
-      addr = mem.read_u32(addr)?
+      addr = ctx.mem.read_u32(addr)?
     }
     Some(GameInstance::with_member(addr, &member))
   }
@@ -302,12 +297,13 @@ impl GameInstance {
   /// `GameInstance` carries no member-name of its own, so the honest equivalent
   /// drops the `{name}` segment: `"Unknown member {type_name}.{name}"`.
   ///
-  // P4.5: an ergonomic `x["a"]["b"]` chain is recovered via a `Ctx`-based helper
-  // (single context arg wrapping `&GameStructs` + `&GameMemory`) — this method is
-  // the panicking primitive it will build on.
-  pub fn member(&self, game_structs: &GameStructs, mem: &GameMemory, name: &str) -> GameInstance {
+  // P4.5: one-arg threading achieved via `&Ctx` — `member` takes a single `&Ctx`
+  // (wrapping `&GameStructs` + `&GameMemory`), so `x.member(ctx, "a").member(ctx,
+  // "b").read_u32(ctx)` chains without re-passing two borrows. `Ctx` is `Copy`,
+  // so call sites aren't fighting the borrow checker. No builder / macro needed.
+  pub fn member(&self, ctx: &Ctx, name: &str) -> GameInstance {
     self
-      .get_member(game_structs, mem, name)
+      .get_member(ctx, name)
       .unwrap_or_else(|| panic!("Unknown member {}.{}", self.type_name, name))
   }
 
@@ -315,8 +311,9 @@ impl GameInstance {
   /// `sizePer` rule in C++ `renderArray` / `renderVector`
   /// (`GameObjectRenderers.cpp:433-439` / `406-411`): a struct's `size`, else
   /// `primitive_size`. A negative schema `size` clamps to 0.
-  pub fn element_size(&self, structs: &GameStructs) -> u32 {
-    structs
+  pub fn element_size(&self, ctx: &Ctx) -> u32 {
+    ctx
+      .structs
       .get_struct_by_name(&self.type_name)
       .map(|s| s.size.max(0) as u32)
       .unwrap_or_else(|| primitive_size(&self.type_name))
@@ -327,11 +324,11 @@ impl GameInstance {
   /// `bit_length` / `array_length` all cleared. Ports the C++ `renderArray`
   /// step (`GameObjectRenderers.cpp:442-448`) — pure address arithmetic, no
   /// bounds check against `array_length` (callers own that, matching C++).
-  pub fn element(&self, structs: &GameStructs, index: u32) -> GameInstance {
+  pub fn element(&self, ctx: &Ctx, index: u32) -> GameInstance {
     GameInstance::new(
       self
         .address
-        .wrapping_add(index.wrapping_mul(self.element_size(structs))),
+        .wrapping_add(index.wrapping_mul(self.element_size(ctx))),
       self.type_name.clone(),
     )
   }
@@ -344,42 +341,51 @@ impl GameInstance {
   /// These return `Option` and do **not** substitute a default — defaulting is
   /// deferred to the P7 render callsites so the inspector can tell "unreadable"
   /// from "zero" and the reads compose with `?`.
-  pub fn read_u8(&self, mem: &GameMemory) -> Option<u8> {
-    mem.read_u8_bits(self.address, self.bit_u32(), self.bit_length_u32())
+  pub fn read_u8(&self, ctx: &Ctx) -> Option<u8> {
+    ctx
+      .mem
+      .read_u8_bits(self.address, self.bit_u32(), self.bit_length_u32())
   }
 
-  pub fn read_u16(&self, mem: &GameMemory) -> Option<u16> {
-    mem.read_u16_bits(self.address, self.bit_u32(), self.bit_length_u32())
+  pub fn read_u16(&self, ctx: &Ctx) -> Option<u16> {
+    ctx
+      .mem
+      .read_u16_bits(self.address, self.bit_u32(), self.bit_length_u32())
   }
 
-  pub fn read_u32(&self, mem: &GameMemory) -> Option<u32> {
-    mem.read_u32_bits(self.address, self.bit_u32(), self.bit_length_u32())
+  pub fn read_u32(&self, ctx: &Ctx) -> Option<u32> {
+    ctx
+      .mem
+      .read_u32_bits(self.address, self.bit_u32(), self.bit_length_u32())
   }
 
-  pub fn read_u64(&self, mem: &GameMemory) -> Option<u64> {
-    mem.read_u64_bits(self.address, self.bit_u32(), self.bit_length_u32())
+  pub fn read_u64(&self, ctx: &Ctx) -> Option<u64> {
+    ctx
+      .mem
+      .read_u64_bits(self.address, self.bit_u32(), self.bit_length_u32())
   }
 
-  pub fn read_bool(&self, mem: &GameMemory) -> Option<bool> {
-    self.read_u8(mem).map(|v| v != 0)
+  pub fn read_bool(&self, ctx: &Ctx) -> Option<bool> {
+    self.read_u8(ctx).map(|v| v != 0)
   }
 
-  pub fn read_f32(&self, mem: &GameMemory) -> Option<f32> {
-    mem.read_f32(self.address)
+  pub fn read_f32(&self, ctx: &Ctx) -> Option<f32> {
+    ctx.mem.read_f32(self.address)
   }
 
-  pub fn read_f64(&self, mem: &GameMemory) -> Option<f64> {
-    mem.read_f64(self.address)
+  pub fn read_f64(&self, ctx: &Ctx) -> Option<f64> {
+    ctx.mem.read_f64(self.address)
   }
 
-  pub fn read_string(&self, mem: &GameMemory) -> Option<String> {
-    mem.read_string(self.address)
+  pub fn read_string(&self, ctx: &Ctx) -> Option<String> {
+    ctx.mem.read_string(self.address)
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::mem::game_memory::GameMemory;
 
   fn member(name: &str, type_name: &str, offset: i64) -> GameMember {
     GameMember {
@@ -491,52 +497,58 @@ mod tests {
   #[test]
   fn game_instance_reads_match_raw_memory() {
     let Some(mem) = load_mem1() else { return };
+    let structs = GameStructs::new_empty();
+    let ctx = Ctx::new(&structs, &mem);
 
     // A plain (non-bitfield) instance at the disc header.
     let inst = GameInstance::new(0x8000_0000, "uint".to_string());
-    assert_eq!(inst.read_u32(&mem), mem.read_u32(0x8000_0000));
-    assert_eq!(inst.read_u16(&mem), mem.read_u16(0x8000_0000));
-    assert_eq!(inst.read_u8(&mem), mem.read_u8(0x8000_0000));
-    assert_eq!(inst.read_u64(&mem), mem.read_u64(0x8000_0000));
-    assert_eq!(inst.read_bool(&mem), Some(true));
-    assert_eq!(inst.read_string(&mem), Some("GM8E01".to_string()));
+    assert_eq!(inst.read_u32(&ctx), mem.read_u32(0x8000_0000));
+    assert_eq!(inst.read_u16(&ctx), mem.read_u16(0x8000_0000));
+    assert_eq!(inst.read_u8(&ctx), mem.read_u8(0x8000_0000));
+    assert_eq!(inst.read_u64(&ctx), mem.read_u64(0x8000_0000));
+    assert_eq!(inst.read_bool(&ctx), Some(true));
+    assert_eq!(inst.read_string(&ctx), Some("GM8E01".to_string()));
 
     let fp = GameInstance::new(0x8000_001C, "float".to_string());
-    assert_eq!(fp.read_f32(&mem), mem.read_f32(0x8000_001C));
-    assert_eq!(fp.read_f64(&mem), mem.read_f64(0x8000_001C));
+    assert_eq!(fp.read_f32(&ctx), mem.read_f32(0x8000_001C));
+    assert_eq!(fp.read_f64(&ctx), mem.read_f64(0x8000_001C));
   }
 
   #[test]
   fn game_instance_bitfield_masking() {
     let Some(mem) = load_mem1() else { return };
+    let structs = GameStructs::new_empty();
+    let ctx = Ctx::new(&structs, &mem);
 
     // u32 @ 0x8000_001C == 0xC233_9F3D; (v >> 4) & 0xF == 0x3, (v >> 0) & 0xFF == 0x3D.
     let bf = GameInstance::with_bitfield(0x8000_001C, "uint".to_string(), Some(4), Some(4));
-    assert_eq!(bf.read_u32(&mem), mem.read_u32_bits(0x8000_001C, 4, 4));
-    assert_eq!(bf.read_u32(&mem), Some(0x3));
+    assert_eq!(bf.read_u32(&ctx), mem.read_u32_bits(0x8000_001C, 4, 4));
+    assert_eq!(bf.read_u32(&ctx), Some(0x3));
 
     let bf2 = GameInstance::with_bitfield(0x8000_001C, "uint".to_string(), Some(0), Some(8));
-    assert_eq!(bf2.read_u32(&mem), Some(0x3D));
+    assert_eq!(bf2.read_u32(&ctx), Some(0x3D));
 
     // Negative bit / length from a malformed schema clamp to 0 (whole value).
     let bad = GameInstance::with_bitfield(0x8000_001C, "uint".to_string(), Some(-3), Some(-1));
-    assert_eq!(bad.read_u32(&mem), mem.read_u32(0x8000_001C));
+    assert_eq!(bad.read_u32(&ctx), mem.read_u32(0x8000_001C));
 
     // f32 ignores bit fields entirely (matches C++).
     let bf_f = GameInstance::with_bitfield(0x8000_001C, "float".to_string(), Some(4), Some(4));
-    assert_eq!(bf_f.read_f32(&mem), mem.read_f32(0x8000_001C));
+    assert_eq!(bf_f.read_f32(&ctx), mem.read_f32(0x8000_001C));
   }
 
   #[test]
   fn game_instance_oob_reads_are_none() {
     let Some(mem) = load_mem1() else { return };
+    let structs = GameStructs::new_empty();
+    let ctx = Ctx::new(&structs, &mem);
     let oob = GameInstance::new(0x8190_0000, "uint".to_string());
-    assert_eq!(oob.read_u8(&mem), None);
-    assert_eq!(oob.read_u32(&mem), None);
-    assert_eq!(oob.read_u64(&mem), None);
-    assert_eq!(oob.read_bool(&mem), None);
-    assert_eq!(oob.read_f32(&mem), None);
-    assert_eq!(oob.read_string(&mem), None);
+    assert_eq!(oob.read_u8(&ctx), None);
+    assert_eq!(oob.read_u32(&ctx), None);
+    assert_eq!(oob.read_u64(&ctx), None);
+    assert_eq!(oob.read_bool(&ctx), None);
+    assert_eq!(oob.read_f32(&ctx), None);
+    assert_eq!(oob.read_string(&ctx), None);
   }
 
   #[test]
@@ -548,8 +560,9 @@ mod tests {
     structs.insert_struct(&game_struct("S", &[], &[m]));
 
     let mem = GameMemory::new();
+    let ctx = Ctx::new(&structs, &mem);
     let root = GameInstance::new(0x8000_0000, "S".to_string());
-    let field = root.get_member(&structs, &mem, "flags").unwrap();
+    let field = root.get_member(&ctx, "flags").unwrap();
     assert_eq!(field.bit, Some(2));
     assert_eq!(field.bit_length, Some(3));
   }
@@ -583,22 +596,23 @@ mod tests {
     structs.insert_struct(&game_struct("Container", &[], &[prims, foos]));
 
     let mem = GameMemory::new();
+    let ctx = Ctx::new(&structs, &mem);
     let root = GameInstance::new(0x8000_0000, "Container".to_string());
 
-    let prim_arr = root.get_member(&structs, &mem, "prims").unwrap();
+    let prim_arr = root.get_member(&ctx, "prims").unwrap();
     assert_eq!(prim_arr.array_length, Some(8));
-    assert_eq!(prim_arr.element_size(&structs), 4);
-    let p3 = prim_arr.element(&structs, 3);
+    assert_eq!(prim_arr.element_size(&ctx), 4);
+    let p3 = prim_arr.element(&ctx, 3);
     assert_eq!(p3.address, 0x8000_0000 + 0x10 + 3 * 4);
     assert_eq!(p3.array_length, None);
     assert_eq!(p3.bit, None);
     assert_eq!(p3.bit_length, None);
     assert_eq!(p3.type_name, "u32");
 
-    let foo_arr = root.get_member(&structs, &mem, "foos").unwrap();
+    let foo_arr = root.get_member(&ctx, "foos").unwrap();
     assert_eq!(foo_arr.array_length, Some(4));
-    assert_eq!(foo_arr.element_size(&structs), 12);
-    let f3 = foo_arr.element(&structs, 3);
+    assert_eq!(foo_arr.element_size(&ctx), 12);
+    let f3 = foo_arr.element(&ctx, 3);
     assert_eq!(f3.address, 0x8000_0000 + 0x40 + 3 * 12);
     assert_eq!(f3.array_length, None);
     assert_eq!(f3.type_name, "Foo");
@@ -613,13 +627,14 @@ mod tests {
     words.array_length = Some(6);
     structs.insert_struct(&game_struct("Header", &[], &[words]));
 
+    let ctx = Ctx::new(&structs, &mem);
     let base = 0x8000_0000;
     let root = GameInstance::new(base, "Header".to_string());
-    let arr = root.get_member(&structs, &mem, "words").unwrap();
+    let arr = root.get_member(&ctx, "words").unwrap();
     for n in 0..6u32 {
-      let el = arr.element(&structs, n);
+      let el = arr.element(&ctx, n);
       assert_eq!(el.address, base + n * 4);
-      assert_eq!(el.read_u32(&mem), mem.read_u32(base + n * 4));
+      assert_eq!(el.read_u32(&ctx), mem.read_u32(base + n * 4));
     }
   }
 
@@ -644,10 +659,11 @@ mod tests {
   fn member_matches_get_member_when_present() {
     let structs = chain();
     let mem = GameMemory::new();
+    let ctx = Ctx::new(&structs, &mem);
     let root = GameInstance::new(0x8000_0000, "C".to_string());
 
-    let via_get = root.get_member(&structs, &mem, "b_field").unwrap();
-    let via_member = root.member(&structs, &mem, "b_field");
+    let via_get = root.get_member(&ctx, "b_field").unwrap();
+    let via_member = root.member(&ctx, "b_field");
     assert_eq!(via_member.address, via_get.address);
     assert_eq!(via_member.type_name, via_get.type_name);
   }
@@ -658,8 +674,9 @@ mod tests {
   fn member_panics_on_typo() {
     let structs = chain();
     let mem = GameMemory::new();
+    let ctx = Ctx::new(&structs, &mem);
     let root = GameInstance::new(0x8000_0000, "C".to_string());
-    root.member(&structs, &mem, "b_feild");
+    root.member(&ctx, "b_feild");
   }
 
   /// `.member(..).member(..)` composes — proves the panicking form chains.
@@ -671,11 +688,9 @@ mod tests {
     structs.insert_struct(&game_struct("Top", &[], &[member("a", "Mid", 0x10)]));
 
     let mem = GameMemory::new();
+    let ctx = Ctx::new(&structs, &mem);
     let root = GameInstance::new(0x8000_0000, "Top".to_string());
-    let leaf = root
-      .member(&structs, &mem, "a")
-      .member(&structs, &mem, "b")
-      .member(&structs, &mem, "c");
+    let leaf = root.member(&ctx, "a").member(&ctx, "b").member(&ctx, "c");
     assert_eq!(leaf.address, 0x8000_0000 + 0x10 + 0x8 + 0x4);
     assert_eq!(leaf.type_name, "u32");
   }

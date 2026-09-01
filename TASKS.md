@@ -99,7 +99,11 @@ here in full until they clear.
   - **Decision (recorded): no `std::ops::Index` impl.** Member resolution needs `&GameMemory` and returns an owned `GameInstance`, fitting neither `Index::index`'s arg list nor its `&Output` return. `member` is the panicking primitive instead.
   - **P4.5 forward-dependency:** the ergonomic `x["a"]["b"]` chain is deferred to a `Ctx`-based helper built on `member`; a `// P4.5:` hook comment marks the spot.
 
-- [ ] **P4.5** Introduce `Ctx<'a> { structs: &GameStructs, mem: &GameMemory }` and thread it. — `TODO`
+- [x] **P4.5** Introduce `Ctx<'a>` and thread it through the live-handle layer — `DONE` · full detail: [`completed_tasks/P4.5.md`](completed_tasks/P4.5.md)
+  - New `src/ctx.rs`: `#[derive(Clone, Copy)] pub struct Ctx<'a> { pub structs: &GameStructs, pub mem: &GameMemory }` + `Ctx::new`; `mod ctx;` in `main.rs`. Imports only `game_memory` + `prime_structs`.
+  - **Layer split (decision):** the `GameInstance` live methods (`get_type`, `get_member`, `member`, `element_size`, `element`, `read_u8/u16/u32/u64/f32/f64/bool/string`) now take `&Ctx`; the pure defs layer (`GameStruct::{get_member_by_name,extends}`, `GameMember::get_type`, `GameEnum::*`, `GameStructs::*`) and the `GameInstance` ctors (`new`/`with_bitfield`/`with_member`) stay `&GameStructs` / context-free. `globals.rs` roots unchanged.
+  - Signatures-only, no behavior change. `a.member(ctx,"b").member(ctx,"c").read_u32(ctx)` chains on one `Copy` arg — no helper/macro. `Ctx` is unconstructed in the bin until P6/P7 wire call sites (expected dead-code warning).
+  - Completes Phase 4.
 
 ## Phase 5 — GameOffsets / GameVtables (ports `GameOffsets.hpp`, `GameVtables.hpp`)
 
