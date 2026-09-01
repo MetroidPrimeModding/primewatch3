@@ -107,8 +107,16 @@ here in full until they clear.
 
 ## Phase 5 — GameOffsets / GameVtables (ports `GameOffsets.hpp`, `GameVtables.hpp`)
 
-- [ ] **P5.1** Extend `src/mem/globals.rs` with the remaining globals (`gp_MemoryCard`,
-  `gp_TweakPlayer`, ...). — `TODO`
+- [x] **P5.1** Extend `src/mem/globals.rs` with the remaining globals (`gp_MemoryCard`,
+  `gp_TweakPlayer`). — `DONE` · full detail: [`completed_tasks/P5.1.md`](completed_tasks/P5.1.md)
+  - `src/mem/globals.rs`: `get_state_manager()` / `get_main()` unchanged (context-free, `GameInstance`).
+    New `get_memory_card(&Ctx)` / `get_tweak_player(&Ctx)` → `Option<GameInstance>`: read the `u32`
+    pointer at the fixed address (`0x805A8C44` / `0x805A8CD8`), hand back a handle at that address
+    (`CMemoryCardSys` / `CTweakPlayer`). Ports the `GameOffsets.hpp` pointer globals + the
+    `GameObjectRenderers.cpp:34-42` deref.
+  - Deviation (sanctioned, matches P3.1/P4.2): the deref is fallible — OOB/unreadable → `None`; a
+    zero pointer still derefs to address 0. **P7 render callsites own** the `.unwrap_or`/skip policy.
+
 - [ ] **P5.2** Port the vtable `address → class name` map. — `TODO`
 
 ## Phase 6 — GameObjectUtils (ports `src/utils/GameObjectUtils.cpp`; rewrites `src/mem/area_utils.rs`)
