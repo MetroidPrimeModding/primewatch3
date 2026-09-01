@@ -85,8 +85,11 @@ here in full until they clear.
   - `GameStruct::get_member_by_name` confirmed already correct (local map first, then parents with unchanged name; no cycle guard — schema is a DAG). No change made.
   - Added `#[cfg(test)] mod tests` in `prime_structs.rs`: hand-built in-memory `GameStructs` (no `.bs`/`mem1.raw`) covering transitive extends, negatives, inherited member lookup, local override.
   - Both carried-over bugs from CLAUDE.md "Known carried-over bugs" are now resolved.
-- [ ] **P4.2** Add typed reads on `GameInstance`: `read_u8/u16/u64/f32/f64/bool/string` + bitfield
-  masking (`bit` / `bit_length`). — `TODO`
+- [x] **P4.2** Typed reads on `GameInstance` + bitfield masking — `DONE` · full detail: [`completed_tasks/P4.2.md`](completed_tasks/P4.2.md)
+  - `GameInstance` (`src/structs/prime_structs.rs`) gains `bit: Option<i64>` / `bit_length: Option<i64>` fields (both `None` from `new`, so `globals.rs` roots unchanged), a `with_bitfield(addr, type_name, bit, bit_length)` ctor, and typed reads `read_u8/u16/u32/u64/f32/f64/bool/string` (`&self, mem: &GameMemory) -> Option<T>`). Integer reads route through `GameMemory::read_u*_bits` with the `Option<i64>`→`u32` clamp (`unwrap_or(0).max(0)`) done at the boundary; `f32/f64/string` take no masking; `read_bool` = `read_u8 != 0`. Ports C++ `GameMember::read_*`.
+  - `get_member` now carries `member.bit` / `member.bit_length` into the returned instance (pointer auto-deref path unchanged).
+  - **Deviation (orchestrator-sanctioned, overrides the P3.1 forward-note):** reads return `Option` with NO default substitution; defaulting deferred to P7 render callsites (`.unwrap_or_default()`), so reads compose with `?` and the inspector can distinguish "unreadable" from "zero".
+  - No `read_i*` variants (not in the C++ `GameMember` surface). Pre-existing `collapsible_if` lints in P4.1 `get_member_by_name`/`extends` remain — optional cleanup for a later P4 task.
 - [ ] **P4.3** Array-element indexing on `GameMember`/`GameInstance`. — `TODO`
 - [ ] **P4.4** Settle the `operator[]` equivalent: keep `get_member(name)` + add an `Index<&str>`
   impl that panics on absence (matching the documented C++ behavior). — `TODO`

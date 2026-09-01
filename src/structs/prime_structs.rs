@@ -193,11 +193,46 @@ impl GameMember {
 pub struct GameInstance {
   pub address: u32,
   pub type_name: String,
+  /// Bitfield start bit / length carried from the `GameMember` this instance was
+  /// resolved from (C++ `GameMember::bit` / `GameMember::bitLength`). `None` for
+  /// struct roots and any non-bitfield member; only the integer `read_u*` reads
+  /// consult them. See C++ `GameDefinitions::getBits`.
+  pub bit: Option<i64>,
+  pub bit_length: Option<i64>,
 }
 
 impl GameInstance {
   pub fn new(address: u32, type_name: String) -> Self {
-    Self { address, type_name }
+    Self {
+      address,
+      type_name,
+      bit: None,
+      bit_length: None,
+    }
+  }
+
+  pub fn with_bitfield(
+    address: u32,
+    type_name: String,
+    bit: Option<i64>,
+    bit_length: Option<i64>,
+  ) -> Self {
+    Self {
+      address,
+      type_name,
+      bit,
+      bit_length,
+    }
+  }
+
+  /// C++ `getBits` takes `optional<uint32_t>` and calls `.value_or(0)`; a
+  /// malformed `.bs` could hand us a negative value, so clamp before the cast.
+  fn bit_u32(&self) -> u32 {
+    self.bit.unwrap_or(0).max(0) as u32
+  }
+
+  fn bit_length_u32(&self) -> u32 {
+    self.bit_length.unwrap_or(0).max(0) as u32
   }
 
   pub fn get_type(&self, structs: &GameStructs) -> Option<GameStruct> {
@@ -216,12 +251,52 @@ impl GameInstance {
     if member.pointer {
       addr = mem.read_u32(addr)?
     }
-    Some(GameInstance::new(addr, member.type_name.clone()))
+    Some(GameInstance::with_bitfield(
+      addr,
+      member.type_name.clone(),
+      member.bit,
+      member.bit_length,
+    ))
   }
 
-  // this makes it cleaner to use
+  /// Ports C++ `GameMember::read_*` (`GameDefinitions.cpp:246-283`). Integer
+  /// reads route through `GameMemory::read_u*_bits` (C++ `getBits`); `f32`/`f64`/
+  /// `string` take no bit masking, matching the C++.
+  ///
+  /// Deviation from C++: C++ reads are total (`getRealPtr` clamps OOB to 0).
+  /// These return `Option` and do **not** substitute a default — defaulting is
+  /// deferred to the P7 render callsites so the inspector can tell "unreadable"
+  /// from "zero" and the reads compose with `?`.
+  pub fn read_u8(&self, mem: &GameMemory) -> Option<u8> {
+    mem.read_u8_bits(self.address, self.bit_u32(), self.bit_length_u32())
+  }
+
+  pub fn read_u16(&self, mem: &GameMemory) -> Option<u16> {
+    mem.read_u16_bits(self.address, self.bit_u32(), self.bit_length_u32())
+  }
+
   pub fn read_u32(&self, mem: &GameMemory) -> Option<u32> {
-    mem.read_u32(self.address)
+    mem.read_u32_bits(self.address, self.bit_u32(), self.bit_length_u32())
+  }
+
+  pub fn read_u64(&self, mem: &GameMemory) -> Option<u64> {
+    mem.read_u64_bits(self.address, self.bit_u32(), self.bit_length_u32())
+  }
+
+  pub fn read_bool(&self, mem: &GameMemory) -> Option<bool> {
+    self.read_u8(mem).map(|v| v != 0)
+  }
+
+  pub fn read_f32(&self, mem: &GameMemory) -> Option<f32> {
+    mem.read_f32(self.address)
+  }
+
+  pub fn read_f64(&self, mem: &GameMemory) -> Option<f64> {
+    mem.read_f64(self.address)
+  }
+
+  pub fn read_string(&self, mem: &GameMemory) -> Option<String> {
+    mem.read_string(self.address)
   }
 }
 
@@ -311,6 +386,86 @@ mod tests {
     );
     // absent everywhere
     assert!(c.get_member_by_name(&structs, "missing").is_none());
+  }
+
+  /// Skip-if-absent loader for the offline BE dump — same contract as the
+  /// `game_memory.rs` tests.
+  fn load_mem1() -> Option<GameMemory> {
+    let path = std::env::var("PRIMEWATCH_MEM1_RAW")
+      .unwrap_or_else(|_| format!("{}/../primewatch2/mem1.raw", env!("CARGO_MANIFEST_DIR")));
+    if !std::path::Path::new(&path).exists() {
+      eprintln!("skipping prime_structs mem1.raw tests: {path} not found");
+      return None;
+    }
+    let mut mem = GameMemory::new();
+    mem.load_from_file(&path).expect("read mem1.raw");
+    Some(mem)
+  }
+
+  #[test]
+  fn game_instance_reads_match_raw_memory() {
+    let Some(mem) = load_mem1() else { return };
+
+    // A plain (non-bitfield) instance at the disc header.
+    let inst = GameInstance::new(0x8000_0000, "uint".to_string());
+    assert_eq!(inst.read_u32(&mem), mem.read_u32(0x8000_0000));
+    assert_eq!(inst.read_u16(&mem), mem.read_u16(0x8000_0000));
+    assert_eq!(inst.read_u8(&mem), mem.read_u8(0x8000_0000));
+    assert_eq!(inst.read_u64(&mem), mem.read_u64(0x8000_0000));
+    assert_eq!(inst.read_bool(&mem), Some(true));
+    assert_eq!(inst.read_string(&mem), Some("GM8E01".to_string()));
+
+    let fp = GameInstance::new(0x8000_001C, "float".to_string());
+    assert_eq!(fp.read_f32(&mem), mem.read_f32(0x8000_001C));
+    assert_eq!(fp.read_f64(&mem), mem.read_f64(0x8000_001C));
+  }
+
+  #[test]
+  fn game_instance_bitfield_masking() {
+    let Some(mem) = load_mem1() else { return };
+
+    // u32 @ 0x8000_001C == 0xC233_9F3D; (v >> 4) & 0xF == 0x3, (v >> 0) & 0xFF == 0x3D.
+    let bf = GameInstance::with_bitfield(0x8000_001C, "uint".to_string(), Some(4), Some(4));
+    assert_eq!(bf.read_u32(&mem), mem.read_u32_bits(0x8000_001C, 4, 4));
+    assert_eq!(bf.read_u32(&mem), Some(0x3));
+
+    let bf2 = GameInstance::with_bitfield(0x8000_001C, "uint".to_string(), Some(0), Some(8));
+    assert_eq!(bf2.read_u32(&mem), Some(0x3D));
+
+    // Negative bit / length from a malformed schema clamp to 0 (whole value).
+    let bad = GameInstance::with_bitfield(0x8000_001C, "uint".to_string(), Some(-3), Some(-1));
+    assert_eq!(bad.read_u32(&mem), mem.read_u32(0x8000_001C));
+
+    // f32 ignores bit fields entirely (matches C++).
+    let bf_f = GameInstance::with_bitfield(0x8000_001C, "float".to_string(), Some(4), Some(4));
+    assert_eq!(bf_f.read_f32(&mem), mem.read_f32(0x8000_001C));
+  }
+
+  #[test]
+  fn game_instance_oob_reads_are_none() {
+    let Some(mem) = load_mem1() else { return };
+    let oob = GameInstance::new(0x8190_0000, "uint".to_string());
+    assert_eq!(oob.read_u8(&mem), None);
+    assert_eq!(oob.read_u32(&mem), None);
+    assert_eq!(oob.read_u64(&mem), None);
+    assert_eq!(oob.read_bool(&mem), None);
+    assert_eq!(oob.read_f32(&mem), None);
+    assert_eq!(oob.read_string(&mem), None);
+  }
+
+  #[test]
+  fn get_member_carries_bitfield() {
+    let mut structs = GameStructs::new_empty();
+    let mut m = member("flags", "uint", 0x0);
+    m.bit = Some(2);
+    m.bit_length = Some(3);
+    structs.insert_struct(&game_struct("S", &[], &[m]));
+
+    let mem = GameMemory::new();
+    let root = GameInstance::new(0x8000_0000, "S".to_string());
+    let field = root.get_member(&structs, &mem, "flags").unwrap();
+    assert_eq!(field.bit, Some(2));
+    assert_eq!(field.bit_length, Some(3));
   }
 
   #[test]
