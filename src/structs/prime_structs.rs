@@ -281,6 +281,21 @@ impl GameInstance {
     ctx.structs.get_struct_by_name(&self.type_name)
   }
 
+  /// C++ `GameMember::extendsClass` (`GameDefinitions.cpp:227-232`): true if this
+  /// instance's own type *is* `class_name`, or its type transitively extends it.
+  /// A type name with no matching `.bs` struct only matches on the identity
+  /// check (mirrors the C++ `structByName(...).has_value()` guard). Delegates to
+  /// the already-fixed [`GameStruct::extends`] for the recursion.
+  pub fn extends_class(&self, ctx: &Ctx, class_name: &str) -> bool {
+    if self.type_name == class_name {
+      return true;
+    }
+    match self.get_type(ctx) {
+      Some(s) => s.extends(ctx.structs, class_name),
+      None => false,
+    }
+  }
+
   /// Fallible member lookup: the `Option` form of [`GameInstance::member`], for
   /// call sites where a missing member is a legitimate outcome (optional field,
   /// speculative probe). Auto-derefs pointer members. See
@@ -718,6 +733,31 @@ mod tests {
     let ctx = Ctx::new(&structs, &mem);
     let root = GameInstance::new(0x8000_0000, "C".to_string());
     root.member(&ctx, "b_feild");
+  }
+
+  /// `GameInstance::extends_class` (C++ `GameMember::extendsClass`): identity,
+  /// transitive parents, and the unknown-type fall-through.
+  #[test]
+  fn extends_class_resolves_transitive_inheritance() {
+    let structs = chain();
+    let mem = GameMemory::new();
+    let ctx = Ctx::new(&structs, &mem);
+
+    let c = GameInstance::new(0x8000_0000, "C".to_string());
+    // identity
+    assert!(c.extends_class(&ctx, "C"));
+    // direct parent
+    assert!(c.extends_class(&ctx, "B"));
+    // grandparent (transitive)
+    assert!(c.extends_class(&ctx, "A"));
+    // unrelated
+    assert!(!c.extends_class(&ctx, "X"));
+    assert!(!c.extends_class(&ctx, "D"));
+
+    // A type name with no `.bs` struct: only the identity check can match.
+    let unknown = GameInstance::new(0x8000_0000, "CGameCamera".to_string());
+    assert!(unknown.extends_class(&ctx, "CGameCamera"));
+    assert!(!unknown.extends_class(&ctx, "A"));
   }
 
   /// `.member(..).member(..)` composes — proves the panicking form chains.

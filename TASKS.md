@@ -193,7 +193,22 @@ Phase 5 complete.
     `emit_sphere_band` factors the shared quad loop (C++ open-codes it twice).
   - All symbols dead until P8.4 wires them into `WorldRenderer` (expected dead-code warnings, no `#[allow]`).
 
-- [ ] **P8.4** `WorldRenderer`: camera modes, culling, per-category draw fns + visibility toggles. — `TODO`
+### P8.4 — WorldRenderer
+
+- [x] **P8.4.1** Port `MathUtils` + `GameInstance::extends_class` — `DONE` · full detail: [`completed_tasks/P8.4.1.md`](completed_tasks/P8.4.1.md)
+  - New `src/mem/math_utils.rs` (`pub mod math_utils;` in `src/mem/mod.rs`): free fns `read_as_vec3` / `read_as_quat` / `read_as_matrix4f` / `read_as_transform`, each `(ctx: &Ctx, member: &GameInstance) -> Option<glam>` — port of `MathUtils.cpp`. Quat is `(x,y,z,w)` order; matrix readers resolve `member["matrix"]` / `member["m0"]` `.address` then read per-cell f32s at `base + (r + c*4)*4` and feed them in C++ arg order to `Mat4::from_cols_array` (both column-major → identical byte layout). `read_as_transform` hardcodes col0-2 4th elem `0.0`, col3 `w` `1.0`.
+  - `GameInstance::extends_class(&self, ctx: &Ctx, class_name: &str) -> bool` in `src/structs/prime_structs.rs` — exact port of C++ `GameMember::extendsClass`: identity check on own type, else delegate to `GameStruct::extends` (P4.1-fixed recursion); unknown type matches identity-only.
+  - **Deviation (sanctioned):** all readers are fallible — missing sub-member or OOB address → `None`, no `unwrap_or_default`/panic. P8.4.2+ call sites own the defaulting policy. The 4 readers are dead code until P8.4.2 wires them.
+
+- [ ] **P8.4.2** `WorldRenderer` skeleton + camera modes + `updateAreas` + collision-mesh GPU upload. — `TODO` · ports `WorldRenderer.cpp:115-310`: `init`, `update` camera setup, `updateAreas` with `mesh_by_mrea` cache, area AABB line drawing, no entities yet.
+
+- [ ] **P8.4.3** `renderEntities` dispatch + player/trigger/dock/actor/physicsActor draw fns (geometry only). — `TODO` · ports `WorldRenderer.cpp:336-739`: entity walk, per-class dispatch via `extends_class`, draw fn signatures.
+
+- [ ] **P8.4.4** Projectile/bomb/powerBomb/ai/pickup/chozoGhost/collisionActor draw fns. — `TODO` · ports `WorldRenderer.cpp:775-1023`: specialized geometry + velocity vectors, no text overlays yet.
+
+- [ ] **P8.4.5** Screen-space text overlays (`getScreenspacePosFor*`, `drawBomb`/`drawAi`/`drawPickup` labels) + `renderImGui` status windows. — `TODO` · ports `WorldRenderer.cpp:408-529` + text overlay lines from draw fns; couples to egui `Painter` background layer.
+
+- [ ] **P8.4.6** Visibility-toggle UI: `TriggerRenderConfig` / `ActorRenderConfig` / `CameraMode` egui widgets. — `TODO` · finalize menu / preferences panel.
 
 ## Phase 9 — App shell (ports `PrimeWatch.cpp`, `PrimeWatchInput.cpp`; replaces `main.rs`)
 
