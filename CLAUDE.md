@@ -82,10 +82,17 @@ subagents in `.claude/agents/`:
    above, gets `cargo build` + `cargo clippy` clean.
 3. **`port-reviewer`** — checks the implementation against the C++ source of truth and the
    conventions, runs build/clippy/test, reports pass or a fix list.
-4. **Commit** — once the reviewer marks the task `DONE`, commit that task's work (code + the
-   `TASKS.md` status change) as one self-contained commit before starting the next task. The
-   reviewer does this as its last step. Never carry uncommitted work from one task into the next —
-   each loop iteration starts from a clean working tree so a bad task is a single `git revert`.
+4. **Archive + commit** — once the reviewer marks the task `DONE` it:
+   - moves the task's full entry (Steps, Port from, Watch for, Implementation notes, Review, manual
+     checklists) out of `TASKS.md` into `completed_tasks/<task id>.md`, and replaces it in `TASKS.md`
+     with a short `DONE` summary — the forward-relevant facts only: what shipped, what APIs/decisions
+     now exist, and any deviation or forward-dependency a later task must respect. This keeps
+     `TASKS.md` lightweight and scoped to current/future work. `BLOCKED` manual-verification tasks
+     stay in `TASKS.md` in full until they clear.
+   - commits that task's work (code + the `TASKS.md` summary + the new `completed_tasks/` file) as
+     one self-contained commit before starting the next task. Never carry uncommitted work from one
+     task into the next — each loop iteration starts from a clean working tree so a bad task is a
+     single `git revert`.
 
 Commit message form: `port(P4.2): <what>` — the task ID, then a one-line summary, then a short body
 noting the C++ source ported and any deviation. End with the standard Claude Code trailers.

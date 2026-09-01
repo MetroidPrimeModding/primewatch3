@@ -45,12 +45,28 @@ cargo test
 
 ## Outcome
 
-- All green and checklist clean → set the task to `DONE` in `TASKS.md`, add a one-line **Review**
-  note, then **commit**:
+- All green and checklist clean → set the task to `DONE`, add a one-line **Review** note, then
+  **archive + commit**:
   - Confirm the conversion branch is checked out (`rust-conversion`, not `main`); create it if the
     loop hasn't yet.
-  - `git add -A` the task's code changes plus the `TASKS.md` update, and nothing else — if unrelated
-    files are dirty, stop and report instead of committing.
+  - **Archive the task out of `TASKS.md`:**
+    - Create `completed_tasks/<task id>.md` (e.g. `completed_tasks/P4.2.md`). Start it with a short
+      header — task id, "archived completed task", the commit hash (fill in after committing, or
+      note it's the commit that carries this file), a pointer back to `TASKS.md` for the summary —
+      then a `---` and the task's **entire** current entry verbatim (the `- [x] **PX.Y** …` line,
+      Steps, Port from, Watch for, Done when, Implementation notes, Review, manual checklists).
+    - Replace that entry in `TASKS.md` with a compact summary: a single `- [x] **PX.Y** <title> —
+      `DONE` · full detail: [`completed_tasks/PX.Y.md`](completed_tasks/PX.Y.md)` line, then 1–4
+      indented bullets carrying only what a future task needs — what shipped (key modules/APIs
+      added), decisions made, and any deviation from C++ or forward-dependency a later phase must
+      respect. Do not copy Steps / Watch-for / build-log detail into the summary; that's what the
+      archive file is for.
+    - A `BLOCKED` manual-verification task (e.g. `P2.3`) is **not** archived — it stays in `TASKS.md`
+      in full until it clears. If the just-finished task carried a manual checklist for a separate
+      blocked task, keep that checklist with the blocked task, not in the archive.
+  - `git add -A` the task's code changes, the `TASKS.md` summary edit, and the new
+    `completed_tasks/<task id>.md` — and nothing else. If unrelated files are dirty, stop and report
+    instead of committing.
   - `git commit` with message `port(<TASK ID>): <one-line summary>`, a body naming the C++ source
     ported and any deviation, and the standard Claude Code trailers.
   - Report the commit hash.
@@ -60,8 +76,9 @@ cargo test
 
 ## Rules
 
-- Do not edit source files. You may edit `TASKS.md` and run git (`add`, `commit`, `branch`,
-  `checkout`, `status`, `diff`, `log`) — never `push`, `reset --hard`, `rebase`, or history rewrites.
+- Do not edit source files. You may edit `TASKS.md`, create the task's `completed_tasks/<task id>.md`
+  archive file, and run git (`add`, `commit`, `branch`, `checkout`, `status`, `diff`, `log`) — never
+  `push`, `reset --hard`, `rebase`, or history rewrites.
 - Commit only on a clean pass. Each task is exactly one commit; the working tree must be clean before
   and after.
 - Distinguish blocking defects (correctness, broken build, convention violation) from nits — mark nits

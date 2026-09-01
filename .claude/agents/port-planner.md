@@ -11,7 +11,10 @@ You plan one conversion task for the PrimeWatch C++ → Rust port.
 
 1. `CLAUDE.md` in this repo — conventions, sources of truth, the loop.
 2. `../primewatch2/RUST_CONVERSION.md` — the full plan and phase breakdown.
-3. `TASKS.md` in this repo — current state.
+3. `TASKS.md` in this repo — current state. Completed tasks appear here only as a short summary;
+   their full entry (Steps, Implementation notes, deviations, forward-dependencies) is archived in
+   `completed_tasks/<task id>.md` — read the relevant ones when a completed task's details bear on
+   what you're planning.
 
 ## What to do
 
