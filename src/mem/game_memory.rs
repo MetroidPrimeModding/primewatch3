@@ -1,29 +1,61 @@
 use std::fs;
 use std::io::Read;
 
-const DOLPHIN_MEMORY_SIZE: u32 = 0x1800000u32;
+use crate::mem::dolphin_memory::{DOLPHIN_MEMORY_SIZE, DolphinMemoryAccess};
+
+/// The MEM1 snapshot size, as a `usize`. Single source of truth is
+/// `dolphin_memory::DOLPHIN_MEMORY_SIZE` (C++ `MemoryAccess.hpp:7`); this alias
+/// keeps the array-length spelling readable.
+const SNAPSHOT_LEN: usize = DOLPHIN_MEMORY_SIZE;
 
 pub struct GameMemory {
-  pub data: [u8; DOLPHIN_MEMORY_SIZE as usize],
+  /// Local mirror of Dolphin's emulated MEM1 (~24 MiB). Heap-allocated: `App`
+  /// holds a `GameMemory` by value next to the wgpu device/surface, and an inline
+  /// `[u8; 0x1800000]` here would overflow the main thread stack on construction.
+  pub data: Box<[u8; SNAPSHOT_LEN]>,
 }
 
 impl GameMemory {
   pub fn new() -> Self {
-    GameMemory {
-      data: [0; DOLPHIN_MEMORY_SIZE as usize],
-    }
+    // Build the zeroed buffer without ever placing a full array on the stack
+    // (`Box::new([0; N])` would). `vec!` allocates straight on the heap.
+    let data = vec![0u8; SNAPSHOT_LEN]
+      .into_boxed_slice()
+      .try_into()
+      .expect("vec is exactly SNAPSHOT_LEN bytes");
+    GameMemory { data }
   }
 
+  /// Ports C++ `GameMemory::loadFromPath` (`GameMemory.cpp:23-27`): read up to
+  /// `SNAPSHOT_LEN` bytes from `path` into the snapshot, in place. A file shorter
+  /// than the snapshot is not an error — the remaining bytes keep their previous
+  /// value, matching the C++ `ifstream::read` behaviour.
   pub fn load_from_file(&mut self, path: &str) -> Result<(), std::io::Error> {
     let file = fs::File::open(path)?;
     let mut reader = std::io::BufReader::new(file);
 
-    // could use read_exact(&mut self.data), but this is safer, since it won't override the existing data
-    let mut contents = vec![0; DOLPHIN_MEMORY_SIZE as usize];
-    reader.read_exact(&mut contents)?;
-    self.data = contents.try_into().unwrap();
+    let mut filled = 0usize;
+    loop {
+      match reader.read(&mut self.data[filled..]) {
+        Ok(0) => break,
+        Ok(n) => filled += n,
+        Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+        Err(e) => return Err(e),
+      }
+    }
+    println!("Read {filled:#x} bytes");
 
     Ok(())
+  }
+
+  /// Ports C++ `GameMemory::updateFromDolphin` (`GameMemory.cpp:17-21`): when a
+  /// live process is attached, copy its MEM1 over the snapshot; when detached
+  /// (`get_attached_pid()` returns `-1`), do nothing and leave whatever was last
+  /// loaded (e.g. a `./mem1.raw` dump) untouched.
+  pub fn update_from_dolphin(&mut self, dolphin: &DolphinMemoryAccess) {
+    if dolphin.get_attached_pid() > 0 {
+      dolphin.dolphin_memcpy(&mut self.data[..], 0, DOLPHIN_MEMORY_SIZE);
+    }
   }
 }
 
@@ -154,30 +186,23 @@ trait MemoryAccess {}
 mod tests {
   use super::*;
 
-  /// `GameMemory` is ~24 MiB; build it directly on the heap so tests don't blow
-  /// the (2 MiB) test-thread stack that `GameMemory::new()`'s inline array would.
-  fn blank() -> Box<GameMemory> {
-    // SAFETY: `GameMemory` is a single `[u8; N]` field, for which all-zero is a
-    // valid bit pattern.
-    unsafe { Box::<GameMemory>::new_zeroed().assume_init() }
+  /// `GameMemory::new()` already heap-allocates its ~24 MiB buffer, so this is
+  /// just an alias kept for the test call sites.
+  fn blank() -> GameMemory {
+    GameMemory::new()
   }
 
   /// Skip-if-absent loader for the offline BE dump. Honours `PRIMEWATCH_MEM1_RAW`,
   /// else looks next to the crate at `../primewatch2/mem1.raw`.
-  fn load_mem1() -> Option<Box<GameMemory>> {
+  fn load_mem1() -> Option<GameMemory> {
     let path = std::env::var("PRIMEWATCH_MEM1_RAW")
       .unwrap_or_else(|_| format!("{}/../primewatch2/mem1.raw", env!("CARGO_MANIFEST_DIR")));
     if !std::path::Path::new(&path).exists() {
       eprintln!("skipping game_memory mem1.raw tests: {path} not found");
       return None;
     }
-    // Read straight into the heap-allocated snapshot. (`GameMemory::load_from_file`
-    // materialises a ~24 MiB array on the stack via `Vec::try_into` and would
-    // overflow the test-thread stack — see the TODO in TASKS.md.)
-    let bytes = std::fs::read(&path).expect("read mem1.raw");
     let mut mem = blank();
-    let n = bytes.len().min(mem.data.len());
-    mem.data[..n].copy_from_slice(&bytes[..n]);
+    mem.load_from_file(&path).expect("read mem1.raw");
     Some(mem)
   }
 

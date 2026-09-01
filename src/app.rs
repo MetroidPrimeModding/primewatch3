@@ -29,9 +29,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 /// Owns the long-lived game state plus the render state that only exists while the
 /// window is active. No globals — everything is threaded explicitly (CLAUDE.md).
 struct App {
-  #[allow(dead_code)] // wired up in Phase 3 (per-frame snapshot refresh)
+  /// Local MEM1 snapshot, refreshed each frame from `dolphin` (P3.2).
   mem: GameMemory,
-  #[allow(dead_code)] // wired up in Phase 2/3 (live Dolphin attach)
+  /// Live Dolphin process attachment (P2 / P3.2).
   dolphin: DolphinMemoryAccess,
   #[allow(dead_code)] // consumed by the inspector in Phase 7
   structs: GameStructs,
@@ -46,8 +46,8 @@ struct App {
 
 impl App {
   fn new() -> Self {
-    let mem = GameMemory::new();
-    let dolphin = DolphinMemoryAccess::new();
+    let mut mem = GameMemory::new();
+    let mut dolphin = DolphinMemoryAccess::new();
 
     let mut structs = GameStructs::new_empty();
     let load_result = structs.load_from_dir("prime_defs");
@@ -66,6 +66,30 @@ impl App {
         (false, err)
       }
     };
+
+    // Offline dump path (C++ `PrimeWatch::initGlAndImgui`, `PrimeWatch.cpp:99-103`):
+    // auto-load `./mem1.raw` when it sits next to the binary. A later live memcpy
+    // simply overwrites it; a missing/short file is not fatal.
+    if std::path::Path::new("./mem1.raw").exists() {
+      match mem.load_from_file("./mem1.raw") {
+        Ok(()) => println!("Loaded ./mem1.raw"),
+        Err(err) => eprintln!("Failed to load ./mem1.raw: {err}"),
+      }
+    }
+
+    // Auto-attach only when exactly one Dolphin is running (C++
+    // `PrimeWatch::initAndCreateWindow`, `PrimeWatch.cpp:66-70`).
+    let pids = dolphin.get_dolphin_pids();
+    if pids.len() == 1 {
+      let pid = pids[0].as_u32() as i32;
+      if dolphin.attach_to_process(pid) {
+        println!("Attached to Dolphin pid {pid}");
+      } else {
+        eprintln!("Failed to attach to Dolphin pid {pid}");
+      }
+    } else if pids.len() > 1 {
+      println!("{} Dolphin processes found; not auto-attaching", pids.len());
+    }
 
     Self {
       mem,
@@ -111,7 +135,17 @@ impl ApplicationHandler for App {
       WindowEvent::CloseRequested => event_loop.exit(),
       WindowEvent::Resized(size) => window.resize(size),
       WindowEvent::ScaleFactorChanged { .. } => window.window.request_redraw(),
-      WindowEvent::RedrawRequested => window.render(self.defs_loaded, &self.status_text),
+      WindowEvent::RedrawRequested => {
+        // Per-frame snapshot refresh (C++ `PrimeWatch::doMemoryParse`,
+        // `PrimeWatch.cpp:483-488`): gated on the defs being loaded; a no-op
+        // while detached.
+        // TODO(P9.1): the entities parse (`GameObjectUtils`) slots in right here,
+        // and input -> parse -> ui -> render gets its real ordering.
+        if self.defs_loaded {
+          self.mem.update_from_dolphin(&self.dolphin);
+        }
+        window.render(self.defs_loaded, &self.status_text);
+      }
       _ => {}
     }
   }
