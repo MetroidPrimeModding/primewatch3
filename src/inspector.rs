@@ -1,11 +1,10 @@
 //! Generic egui tree view over any [`GameInstance`].
 //!
-//! Ports the *generic* half of `../primewatch2/src/defs/GameObjectRenderers.cpp`
-//! — the recursive primitive / enum / array / nested-struct / `rstl::vector`
-//! walk plus the pure `fmt::format` string helpers. The special-type table
-//! (`CVector3f` / `CQuaternion` / `CTransform` / `CMatrix4f` / `SObjectTag`) is
-//! P7.2; this module only leaves the [`SPECIAL_TYPES`] const and a `TODO(P7.2)`
-//! dispatch hook for it.
+//! Ports `../primewatch2/src/defs/GameObjectRenderers.cpp` — the recursive
+//! primitive / enum / array / nested-struct / `rstl::vector` walk plus the pure
+//! `fmt::format` string helpers, and the special-type table (`CVector3f` /
+//! `CQuaternion` / `CTransform` / `CMatrix4f` / `SObjectTag`) dispatched behind
+//! the [`SPECIAL_TYPES`] guard.
 //!
 //! No call site yet — Phase 9 wires this into the watch windows.
 //!
@@ -28,6 +27,7 @@
 //!   `array_length` from a bad `.bs`.
 
 use crate::ctx::Ctx;
+use crate::mem::game_object_utils::object_tag_to_string;
 use crate::structs::prime_structs::GameInstance;
 
 /// Primitive leaf types — C++ `specialRenderers` maps each of these to
@@ -37,8 +37,9 @@ const PRIMITIVE_TYPES: &[&str] = &[
 ];
 
 /// Types with a bespoke renderer in C++ `specialRenderers`
-/// (`GameObjectRenderers.cpp:26-30`). Ported in P7.2; until then the dispatch
-/// falls through to the generic struct walk.
+/// (`GameObjectRenderers.cpp:26-30`), dispatched from [`Inspector::render`] to
+/// the `render_*` methods below. Kept as an explicit guard so P9's unknown-type
+/// UI can still tell "handled specially" from "generic struct".
 pub const SPECIAL_TYPES: &[&str] = &[
   "CVector3f",
   "CQuaternion",
@@ -168,6 +169,60 @@ pub fn format_enum(ctx: &Ctx, name: &str, inst: &GameInstance) -> String {
   format!("{name} {ename} ({value}/{value:#x}/{value:#b})")
 }
 
+/// Ports `CVector3fRenderer` (`GameObjectRenderers.cpp:247-275`). Three `f32` at
+/// `inst.address + {0, 4, 8}`; an unreadable component defaults to `0.0` here.
+/// 8dp when `exact` else 3dp — matches the C++ `{:0.8f}` / `{:0.3f}`.
+pub fn format_vec3(ctx: &Ctx, name: &str, inst: &GameInstance, exact: bool) -> String {
+  let a = inst.address;
+  let x = ctx.mem.read_f32(a).unwrap_or(0.0);
+  let y = ctx.mem.read_f32(a.wrapping_add(4)).unwrap_or(0.0);
+  let z = ctx.mem.read_f32(a.wrapping_add(8)).unwrap_or(0.0);
+  if exact {
+    format!("{name} [{x:.8}, {y:.8}, {z:.8}]")
+  } else {
+    format!("{name} [{x:.3}, {y:.3}, {z:.3}]")
+  }
+}
+
+/// Ports `CQuaternionRenderer` (`GameObjectRenderers.cpp:277-307`). Four `f32` at
+/// `inst.address + {0, 4, 8, 12}` rendered `[x, y, z, w]`.
+pub fn format_quat(ctx: &Ctx, name: &str, inst: &GameInstance, exact: bool) -> String {
+  let a = inst.address;
+  let x = ctx.mem.read_f32(a).unwrap_or(0.0);
+  let y = ctx.mem.read_f32(a.wrapping_add(4)).unwrap_or(0.0);
+  let z = ctx.mem.read_f32(a.wrapping_add(8)).unwrap_or(0.0);
+  let w = ctx.mem.read_f32(a.wrapping_add(12)).unwrap_or(0.0);
+  if exact {
+    format!("{name} [{x:.8}, {y:.8}, {z:.8}, {w:.8}]")
+  } else {
+    format!("{name} [{x:.3}, {y:.3}, {z:.3}, {w:.3}]")
+  }
+}
+
+/// The inner cell loop shared by `CTransformRenderer` (`:309-341`, `cols = 3`)
+/// and `CMatrix4fRenderer` (`:343-375`, `cols = 4`): for row `r`, reads a `f32`
+/// per column at `base + (c * 4 + r) * 4` and appends `"{v}, "` — 8dp when
+/// `exact` else 2dp. The **trailing `", "`** is emitted on every cell verbatim,
+/// exactly as the C++ does (no join / trim).
+///
+/// The offset arithmetic `(c * 4 + r) * 4` is ported literally: for `CTransform`
+/// (`c in 0..3`, `r in 0..4`) it reaches byte 44 (`posZ`), so the header column
+/// reads the translation components — this is the C++ behavior, not a bug.
+pub fn format_matrix_row(ctx: &Ctx, base: u32, cols: u32, r: u32, exact: bool) -> String {
+  use std::fmt::Write as _;
+  let mut row = String::new();
+  for c in 0..cols {
+    let off = (c * 4 + r) * 4;
+    let v = ctx.mem.read_f32(base.wrapping_add(off)).unwrap_or(0.0);
+    if exact {
+      let _ = write!(row, "{v:.8}, ");
+    } else {
+      let _ = write!(row, "{v:.2}, ");
+    }
+  }
+  row
+}
+
 /// Ports `hoverTooltip` (`GameObjectRenderers.cpp:63-81`): optional `*`, the
 /// type name, optional `[{array_length}]`, ` {address:#08x}`, and an optional
 /// `[bit {bit}; len {bit_length}]` when either is set. (C++ never uses the
@@ -231,9 +286,19 @@ impl Inspector {
     }
 
     if SPECIAL_TYPES.contains(&typ) {
-      // TODO(P7.2): dispatch to the special-type renderers (CVector3f /
-      // CQuaternion / CTransform / CMatrix4f / SObjectTag). Until P7.2 lands,
-      // fall through to the generic enum/struct walk.
+      // Mirrors C++ `specialRenderers.count(typeName)` winning over the
+      // `rstl::vector<` / enum-struct branches.
+      match typ {
+        "CVector3f" => self.render_vec3(ui, ctx, name, inst),
+        "CQuaternion" => self.render_quat(ui, ctx, name, inst),
+        "CTransform" => self.render_transform(ui, ctx, name, inst),
+        "CMatrix4f" => self.render_matrix4f(ui, ctx, name, inst),
+        "SObjectTag" => self.render_object_tag(ui, ctx, name, inst),
+        // Unreachable (every `SPECIAL_TYPES` entry has an arm) — fall through to
+        // the generic walk rather than panic if the const gains an entry.
+        _ => self.render_enum_or_struct(ui, ctx, name, inst, add_tree),
+      }
+      return;
     }
 
     if typ.starts_with("rstl::vector<") || typ.starts_with("rstl::vector2<") {
@@ -356,6 +421,57 @@ impl Inspector {
       });
     resp.header_response.on_hover_text(hover_text(inst));
   }
+
+  /// Ports `CVector3fRenderer` (`GameObjectRenderers.cpp:247-275`).
+  fn render_vec3(&self, ui: &mut egui::Ui, ctx: &Ctx, name: &str, inst: &GameInstance) {
+    let text = format_vec3(ctx, name, inst, self.exact_values);
+    copyable_label(ui, &text).on_hover_text(hover_text(inst));
+  }
+
+  /// Ports `CQuaternionRenderer` (`GameObjectRenderers.cpp:277-307`).
+  fn render_quat(&self, ui: &mut egui::Ui, ctx: &Ctx, name: &str, inst: &GameInstance) {
+    let text = format_quat(ctx, name, inst, self.exact_values);
+    copyable_label(ui, &text).on_hover_text(hover_text(inst));
+  }
+
+  /// Ports `CTransformRenderer` (`GameObjectRenderers.cpp:309-341`) — 4 rows x 3
+  /// columns.
+  fn render_transform(&self, ui: &mut egui::Ui, ctx: &Ctx, name: &str, inst: &GameInstance) {
+    self.render_matrix_rows(ui, ctx, name, inst, 3);
+  }
+
+  /// Ports `CMatrix4fRenderer` (`GameObjectRenderers.cpp:343-375`) — 4 rows x 4
+  /// columns.
+  fn render_matrix4f(&self, ui: &mut egui::Ui, ctx: &Ctx, name: &str, inst: &GameInstance) {
+    self.render_matrix_rows(ui, ctx, name, inst, 4);
+  }
+
+  /// Shared body of the transform / matrix renderers: a `CollapsingHeader` whose
+  /// body is 4 clickable rows built by [`format_matrix_row`].
+  fn render_matrix_rows(
+    &self,
+    ui: &mut egui::Ui,
+    ctx: &Ctx,
+    name: &str,
+    inst: &GameInstance,
+    cols: u32,
+  ) {
+    let resp = egui::CollapsingHeader::new(name)
+      .id_salt((name, inst.address))
+      .show(ui, |ui| {
+        for r in 0..4 {
+          let row = format_matrix_row(ctx, inst.address, cols, r, self.exact_values);
+          copyable_label(ui, &row);
+        }
+      });
+    resp.header_response.on_hover_text(hover_text(inst));
+  }
+
+  /// Ports `SObjectTagRenderer` (`GameObjectRenderers.cpp:453-464`).
+  fn render_object_tag(&self, ui: &mut egui::Ui, ctx: &Ctx, name: &str, inst: &GameInstance) {
+    let text = format!("{name} {}", object_tag_to_string(ctx, inst));
+    copyable_label(ui, &text).on_hover_text(hover_text(inst));
+  }
 }
 
 #[cfg(test)]
@@ -476,6 +592,71 @@ mod tests {
     assert_eq!(
       format_enum(&ctx, "dir", &unknown_enum),
       "Unknown enum ENope"
+    );
+  }
+
+  #[test]
+  fn format_vec3_exact_and_not() {
+    let structs = GameStructs::new_empty();
+    let mem = mem_with(&[
+      (0, &1.0f32.to_be_bytes()),
+      (4, &(-2.5f32).to_be_bytes()),
+      (8, &3.25f32.to_be_bytes()),
+    ]);
+    let ctx = Ctx::new(&structs, &mem);
+    let inst = GameInstance::new(0x8000_0000, "CVector3f".to_string());
+    assert_eq!(
+      format_vec3(&ctx, "v", &inst, false),
+      "v [1.000, -2.500, 3.250]"
+    );
+    assert_eq!(
+      format_vec3(&ctx, "v", &inst, true),
+      "v [1.00000000, -2.50000000, 3.25000000]"
+    );
+  }
+
+  #[test]
+  fn format_quat_non_exact() {
+    let structs = GameStructs::new_empty();
+    let mem = mem_with(&[
+      (0, &0.0f32.to_be_bytes()),
+      (4, &0.0f32.to_be_bytes()),
+      (8, &0.0f32.to_be_bytes()),
+      (12, &1.0f32.to_be_bytes()),
+    ]);
+    let ctx = Ctx::new(&structs, &mem);
+    let inst = GameInstance::new(0x8000_0000, "CQuaternion".to_string());
+    assert_eq!(
+      format_quat(&ctx, "q", &inst, false),
+      "q [0.000, 0.000, 0.000, 1.000]"
+    );
+  }
+
+  #[test]
+  fn format_matrix_row_cols3_and_cols4_keep_trailing_comma() {
+    let structs = GameStructs::new_empty();
+    // Column stride is 16 bytes (`(c*4 + r)*4`); row offset is `r*4`.
+    let mem = mem_with(&[
+      (0, &1.0f32.to_be_bytes()),
+      (16, &2.0f32.to_be_bytes()),
+      (32, &3.0f32.to_be_bytes()),
+      (4, &4.0f32.to_be_bytes()),
+      (20, &5.0f32.to_be_bytes()),
+      (36, &6.0f32.to_be_bytes()),
+      (52, &7.0f32.to_be_bytes()),
+    ]);
+    let ctx = Ctx::new(&structs, &mem);
+    assert_eq!(
+      format_matrix_row(&ctx, 0x8000_0000, 3, 0, false),
+      "1.00, 2.00, 3.00, "
+    );
+    assert_eq!(
+      format_matrix_row(&ctx, 0x8000_0000, 4, 1, false),
+      "4.00, 5.00, 6.00, 7.00, "
+    );
+    assert_eq!(
+      format_matrix_row(&ctx, 0x8000_0000, 3, 0, true),
+      "1.00000000, 2.00000000, 3.00000000, "
     );
   }
 

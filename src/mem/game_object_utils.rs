@@ -2,10 +2,10 @@
 //! `CObjectList` hanging off `g_stateManager` into a `TUniqueID -> GameInstance`
 //! map, refreshed once per frame by the app shell.
 //!
-//! Only `getAllObjects` / `getObjectByEntityID` are ported here. The resource
-//! browser helpers (`getAllCObjectReferences` / `getAllLoadingDatas`) and the
-//! renderer string helpers (`objectTagToString` / `fourCCToString`) belong to
-//! later phases (P7 / P8).
+//! `getAllObjects` / `getObjectByEntityID` and the renderer string helpers
+//! (`objectTagToString` / `fourCCToString`, landed in P7.2) are ported here. The
+//! resource browser helpers (`getAllCObjectReferences` / `getAllLoadingDatas`)
+//! belong to a later phase (P8).
 
 use std::collections::HashMap;
 
@@ -115,11 +115,42 @@ pub fn get_object_by_entity_id(ctx: &Ctx, eid: u16) -> Option<GameInstance> {
     .get_member(ctx, "entity")
 }
 
+/// Ports `GameObjectUtils::fourCCToString` (`GameObjectUtils.cpp:98-105`).
+///
+/// The four bytes of `cc`, most-significant first, each mapped 1:1 to a `char`
+/// (`char::from(u8)` — the Latin-1 mapping for 0x80-0xFF). C++ overwrites a
+/// 4-space `std::string` with the raw bytes; NUL / control bytes land in the
+/// result verbatim and are *not* sanitized here (the game's tags are ASCII; a
+/// clean display is P9's concern).
+pub fn four_cc_to_string(cc: u32) -> String {
+  (0..4)
+    .map(|i| char::from((cc >> ((3 - i) * 8)) as u8))
+    .collect()
+}
+
+/// Ports `GameObjectUtils::objectTagToString` (`GameObjectUtils.cpp:88-96`):
+/// `"{id:08x}.{fourCC}"`.
+///
+/// `id` / `fourCC` are read as `u32` from the `SObjectTag` members; an
+/// unreadable member defaults to `0` at this callsite (the P7.1 total-read
+/// convention — C++ uses the panicking `operator[]` on a well-formed `.bs`).
+pub fn object_tag_to_string(ctx: &Ctx, inst: &GameInstance) -> String {
+  let id = inst
+    .get_member(ctx, "id")
+    .and_then(|m| m.read_u32(ctx))
+    .unwrap_or(0);
+  let four_cc = inst
+    .get_member(ctx, "fourCC")
+    .and_then(|m| m.read_u32(ctx))
+    .unwrap_or(0);
+  format!("{id:08x}.{}", four_cc_to_string(four_cc))
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
   use crate::mem::game_memory::GameMemory;
-  use crate::structs::prime_structs::GameStructs;
+  use crate::structs::prime_structs::{GameMember, GameStruct, GameStructs};
 
   /// Real `.bs` schema from this crate's `prime_defs/`.
   fn load_defs() -> GameStructs {
@@ -198,5 +229,46 @@ mod tests {
     let mem = GameMemory::new();
     let ctx = Ctx::new(&structs, &mem);
     let _ = get_all_objects(&ctx);
+  }
+
+  #[test]
+  fn four_cc_to_string_mrea() {
+    assert_eq!(four_cc_to_string(0x4D52_4541), "MREA");
+    // Trailing NUL bytes are preserved verbatim (C++ parity).
+    assert_eq!(four_cc_to_string(0x0000_0000), "\0\0\0\0");
+  }
+
+  #[test]
+  fn object_tag_to_string_hand_built() {
+    let member = |type_name: &str, name: &str, offset: i64| GameMember {
+      type_name: type_name.to_string(),
+      name: name.to_string(),
+      offset,
+      bit: None,
+      bit_length: None,
+      array_length: None,
+      pointer: false,
+    };
+    let mut tag = GameStruct {
+      name: "SObjectTag".to_string(),
+      size: 8,
+      vtable_address: None,
+      extends: vec![],
+      members_by_offset: std::collections::BTreeMap::new(),
+      members_by_name: std::collections::BTreeMap::new(),
+    };
+    tag.insert_member(&member("u32", "fourCC", 0));
+    tag.insert_member(&member("u32", "id", 4));
+
+    let mut structs = GameStructs::new_empty();
+    structs.insert_struct(&tag);
+
+    let mut mem = GameMemory::new();
+    mem.data[0..4].copy_from_slice(&0x4D52_4541u32.to_be_bytes()); // "MREA"
+    mem.data[4..8].copy_from_slice(&0x0001_2345u32.to_be_bytes());
+    let ctx = Ctx::new(&structs, &mem);
+
+    let inst = GameInstance::new(0x8000_0000, "SObjectTag".to_string());
+    assert_eq!(object_tag_to_string(&ctx, &inst), "00012345.MREA");
   }
 }

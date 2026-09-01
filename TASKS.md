@@ -150,8 +150,11 @@ Phase 5 complete.
   - `GameInstance` gains `pub pointer: bool` (`prime_structs.rs`): `new` / `with_bitfield` / `element` leave it `false`, only `with_member` sets it from `member.pointer`. Used for the `*name` prefix, `address == 0` → "null", and `u8*` → C-string.
   - Deviations (all sanctioned): `render` drops the top-level `derefPointer` branch (instances arrive already-deref'd); `CollapsingHeader::id_salt((name, address))` not address-only; `*`-prefix applied to pointer struct/enum labels too; `ARRAY_CAP = 4096` on array loops; struct body iterates `members_by_offset` (no active bitfields in the schema, so no same-offset collision today — revisit `GameStruct` member ordering if `.bs` bitfields are re-enabled). No call site yet (Phase 9).
 
-- [ ] **P7.2** `name → render-fn` table for special types (`CVector3f`, `CTransform`,
-  `CQuaternion`, `SObjectTag`, ...). — `TODO`
+- [x] **P7.2** `name → render-fn` table for special types — `DONE` · full detail: [`completed_tasks/P7.2.md`](completed_tasks/P7.2.md)
+  - `src/inspector.rs` special-renderer surface: pure `format_vec3` / `format_quat` / `format_matrix_row` (C++ `{:.8}`/`{:.3}`/`{:.2}` specifiers, literal `(c*4 + r)*4` cell arithmetic, trailing `", "` kept) + `impl Inspector` egui methods `render_vec3` / `render_quat` / `render_transform` (cols 3) / `render_matrix4f` (cols 4) / `render_object_tag`, dispatched from `Inspector::render` behind the `SPECIAL_TYPES` guard (precedence: primitive → special → `rstl::vector<` → enum/struct).
+  - `src/mem/game_object_utils.rs`: `pub fn four_cc_to_string(u32) -> String` (MSB-first, raw `char::from(u8)`, no sanitizing) and `pub fn object_tag_to_string(&Ctx, &GameInstance) -> String` (`"{id:08x}.{fourCC}"`, members read as u32 with `.unwrap_or(0)`) — P8 `WorldRenderer` reuses `object_tag_to_string`.
+  - Deviations (P7.1 precedent, sanctioned): no click-to-copy `clip` hex-bits variants (label text is copied); CollapsingHeader id is `(name, address)` salt not `name###name offset`; address math uses `wrapping_add`.
+  - No call site yet (Phase 9). Phase 7 complete.
 
 ## Phase 8 — 3D world rendering (ports `src/world/*`, `src/gl/*`)
 
