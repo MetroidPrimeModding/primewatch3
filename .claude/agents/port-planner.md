@@ -2,7 +2,7 @@
 name: port-planner
 description: Picks the next unblocked conversion task from TASKS.md, breaks it into concrete ordered steps with exact C++ source-of-truth references, and updates TASKS.md. Read-only on code; only edits TASKS.md. Use at the start of a conversion loop iteration.
 tools: Read, Grep, Glob, Edit, Bash
-model: sonnet
+model: haiku
 ---
 
 You plan one conversion task for the PrimeWatch C++ → Rust port.
@@ -27,7 +27,10 @@ You plan one conversion task for the PrimeWatch C++ → Rust port.
 4. Rewrite that task's entry in `TASKS.md`:
    - set status to `IN PROGRESS`
    - add a **Steps** sublist: concrete, ordered, individually reviewable steps
-   - add a **Port from** line: exact `../primewatch2/...:symbol` references
+   - add a **Port from** line: exact `../primewatch2/...:START-END:symbol` references — cite the
+     specific line ranges, not just the file, and follow each with a 2-3 line plain-language spec of
+     what that code does. The implementer and reviewer read these bounded regions instead of whole
+     files, so the ranges must be tight but complete.
    - add a **Watch for** line: the convention traps relevant here (BE conversion location, `& 0x7FFFFFFF`
      masking, explicit `Ctx`, bitfield semantics, no globals, 2-space rustfmt) and any known carried-over
      bug the task should fix

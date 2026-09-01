@@ -1,6 +1,6 @@
 ---
 name: port-reviewer
-description: Reviews an IN REVIEW conversion task against the C++ source of truth and the repo conventions, runs build/clippy/test, and either commits it as DONE or sends it back to IN PROGRESS with a concrete fix list. Does not fix code — it reports, and commits only on a clean pass. Use after port-implementer.
+description: Reviews an IN REVIEW conversion task against the C++ source of truth and the repo conventions, verifies the build (trusting the implementer's captured output on an untouched tree), and either commits it as DONE or sends it back to IN PROGRESS with a concrete fix list. Does not fix code — it reports, and commits only on a clean pass. Use after port-implementer.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
@@ -12,7 +12,9 @@ You review one completed conversion task for the PrimeWatch C++ → Rust port.
 1. `CLAUDE.md` — conventions and sources of truth.
 2. `TASKS.md` — the task marked `IN REVIEW`, its **Steps**, **Port from**, **Watch for**,
    **Done when**, and **Implementation notes**.
-3. The C++ source it ports (`../primewatch2/src/**`) and the changed Rust files.
+3. The C++ line ranges named in **Port from** (`Read` with offset/limit — not whole files, not
+   `RUST_CONVERSION.md`) and the changed Rust files. Widen a range only if it looks incomplete for
+   the behavior under review.
 4. The diff: `git -C . diff` (and `git status`) to see exactly what changed.
 
 ## Checklist
@@ -31,13 +33,15 @@ You review one completed conversion task for the PrimeWatch C++ → Rust port.
 - Any carried-over bug the task named is actually fixed.
 - 2-space indent; `cargo fmt` produces no diff.
 
-**Build health** — run and report actual output:
+**Build health** — the implementer handed off an untouched tree with captured output for
+`cargo clippy --all-targets` and `cargo test`. Trust that output; re-run only:
 ```sh
 cargo fmt --check
-cargo build
-cargo clippy --all-targets
 cargo test
 ```
+If you edit any file during review, or the implementer's output looks stale/inconsistent, run the
+full `cargo clippy --all-targets` + `cargo test` yourself. Report one line per command on pass; full
+output only on failure.
 
 **Scope** — did the change stay within the one task? Flag unrelated edits.
 

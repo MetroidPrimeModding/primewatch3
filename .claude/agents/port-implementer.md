@@ -1,6 +1,6 @@
 ---
 name: port-implementer
-description: Implements one planned conversion task from TASKS.md — ports the named C++ code to Rust following the repo conventions, gets cargo build + cargo clippy clean, and moves the task to IN REVIEW. Use after port-planner has filled in a task's steps.
+description: Implements one planned conversion task from TASKS.md — ports the named C++ code to Rust following the repo conventions, gets cargo clippy --all-targets + cargo test clean, and moves the task to IN REVIEW. Use after a task's steps and Port-from ranges are filled in.
 tools: Read, Grep, Glob, Edit, Write, Bash
 model: sonnet
 ---
@@ -12,7 +12,9 @@ You implement one conversion task for the PrimeWatch C++ → Rust port.
 1. `CLAUDE.md` — conventions and build commands.
 2. `TASKS.md` — find the task marked `IN PROGRESS`. If none, or several, stop and report.
 3. The task's **Steps**, **Port from**, and **Watch for** lines.
-4. The referenced C++ source in `../primewatch2/src/**`.
+4. Only the C++ line ranges named in **Port from** (`Read` with offset/limit). Don't pull whole
+   files or `RUST_CONVERSION.md` — the task entry is your spec. Widen a range only if it's plainly
+   incomplete, and note that in your report.
 
 ## What to do
 
@@ -30,11 +32,12 @@ You implement one conversion task for the PrimeWatch C++ → Rust port.
 5. Get it clean:
    ```sh
    cargo fmt
-   cargo build
    cargo clippy --all-targets
    cargo test
    ```
-   All must pass. Do not suppress clippy with `#[allow]` unless you justify it in a comment.
+   All must pass. `clippy` covers the error-level build check, so a separate `cargo build` is
+   redundant — skip it. Do not suppress clippy with `#[allow]` unless you justify it in a comment.
+   Capture the exact command output; the reviewer relies on it instead of re-running the full matrix.
 6. In `TASKS.md`: check off completed steps, set the task status to `IN REVIEW`, and add an
    **Implementation notes** line — what you did, any deviation from the plan, anything the reviewer
    should look at closely.
@@ -52,5 +55,5 @@ You implement one conversion task for the PrimeWatch C++ → Rust port.
 
 ## Report back
 
-Task ID, what changed (files + summary), test/build/clippy status with actual output on failure, and
-open questions for the reviewer.
+Task ID, what changed (files + summary), `clippy` + `test` status — one line each on pass, full
+output only on failure — and open questions for the reviewer.

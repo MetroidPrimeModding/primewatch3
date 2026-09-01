@@ -4,9 +4,10 @@ Shared state for the plan → implement → review loop. Full context: `../prime
 
 Status legend: `TODO` · `IN PROGRESS` · `IN REVIEW` · `DONE` · `BLOCKED (reason)`
 
-One task is worked per loop iteration. `port-planner` promotes the next `TODO` and fills in its
-steps; `port-implementer` moves it to `IN REVIEW`; `port-reviewer` moves it to `DONE` or back to
-`IN PROGRESS` with a fix list.
+One task is worked per loop iteration. The orchestrator promotes the next `TODO` and fills in its
+Steps / Port-from ranges (or spawns `port-planner` if the task is ambiguous); `port-implementer`
+moves it to `IN REVIEW`; `port-reviewer` moves it to `DONE` or back to `IN PROGRESS` with a fix
+list.
 
 **Archival:** when `port-reviewer` marks a task `DONE`, it moves the task's full entry (Steps, Port
 from, Watch for, Implementation notes, Review, manual checklists) to `completed_tasks/<task id>.md`

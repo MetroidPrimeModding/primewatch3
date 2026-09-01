@@ -16,8 +16,9 @@ The crate is currently named `primewatch3` for historical reasons; treat "primew
 ## The conversion
 
 We are porting the C++ app at `../primewatch2` to Rust, in place, in this project. The full plan,
-rationale, and phased task breakdown live in **`../primewatch2/RUST_CONVERSION.md`** — read it before
-starting any conversion work. Current task state is tracked in **`TASKS.md`** in this repo.
+rationale, and phased task breakdown live in **`../primewatch2/RUST_CONVERSION.md`**. Only planning
+work (the orchestrator or `port-planner`) needs the full plan; the implementer and reviewer work from
+the promoted task entry in **`TASKS.md`**, which is the current task state and the shared loop state.
 
 ### Sources of truth
 
@@ -73,15 +74,19 @@ Memory-access code that needs a live process must be manually verified by the us
 
 ## The implementation loop
 
-Conversion work runs as a plan → implement → review → **commit** loop over `TASKS.md`, using three
-subagents in `.claude/agents/`:
+Conversion work runs as a plan → implement → review → **commit** loop over `TASKS.md`:
 
-1. **`port-planner`** — picks the next unblocked task from `TASKS.md`, breaks it into concrete steps
-   with the exact C++ source references, updates `TASKS.md`.
+1. **Plan** — normally done inline by the orchestrator: pick the next unblocked task from `TASKS.md`,
+   promote it to `IN PROGRESS`, and fill in its **Steps** / **Port from** / **Watch for** /
+   **Done when**. `Port from` must cite exact C++ line ranges (`MemoryAccess.cpp:120-180:symbol`) plus
+   a 2-3 line behavioral spec, so the implementer and reviewer read bounded regions, not whole files.
+   Spawn the **`port-planner`** subagent only when the next task is genuinely ambiguous or
+   under-specified in the plan and needs its own research pass.
 2. **`port-implementer`** — implements one task: ports the named C++ code, follows the conventions
-   above, gets `cargo build` + `cargo clippy` clean.
+   above, gets `cargo clippy --all-targets` + `cargo test` clean.
 3. **`port-reviewer`** — checks the implementation against the C++ source of truth and the
-   conventions, runs build/clippy/test, reports pass or a fix list.
+   conventions; on an untouched handoff tree it trusts the implementer's pasted command output and
+   re-runs only `cargo test`, reporting pass or a fix list.
 4. **Archive + commit** — once the reviewer marks the task `DONE` it:
    - moves the task's full entry (Steps, Port from, Watch for, Implementation notes, Review, manual
      checklists) out of `TASKS.md` into `completed_tasks/<task id>.md`, and replaces it in `TASKS.md`
@@ -100,5 +105,6 @@ noting the C++ source ported and any deviation. End with the standard Claude Cod
 Do the conversion on a dedicated branch (e.g. `rust-conversion`), not `main` — create it before the
 first task if it doesn't exist.
 
-Spawn the subagents only when asked. One task per loop iteration. Keep `TASKS.md` current — it is the
-shared state between iterations.
+Spawn subagents only when asked, and only `port-implementer` / `port-reviewer` by default (plus
+`port-planner` for an ambiguous task). One task per loop iteration. Keep `TASKS.md` current — it is
+the shared state between iterations.
