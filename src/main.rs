@@ -1,5 +1,6 @@
 mod app;
 mod ctx;
+mod inspector;
 mod mem;
 mod scene;
 mod structs;

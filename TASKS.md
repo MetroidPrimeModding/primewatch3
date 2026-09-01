@@ -144,7 +144,12 @@ Phase 5 complete.
 
 ## Phase 7 — Inspector rendering (ports `src/defs/GameObjectRenderers.cpp`)
 
-- [ ] **P7.1** Generic egui tree view over any `GameInstance`. — `TODO`
+- [x] **P7.1** Generic egui tree view over any `GameInstance` — `DONE` · full detail: [`completed_tasks/P7.1.md`](completed_tasks/P7.1.md)
+  - `src/inspector.rs`: `Inspector { exact_values }` (+ `new`/`Default`) with `render(&self, ui, &Ctx, name, &GameInstance, add_tree)` — the recursive egui walk ported from the generic half of `GameObjectRenderers.cpp` (array → primitive → special-hook → `rstl::vector` → enum/struct). Pure `pub` helpers `format_primitive` / `format_enum` / `hover_text` (+ `c_hex_i64` sign-magnitude hex) match the C++ `fmt` strings and are unit-tested.
+  - `pub const SPECIAL_TYPES: &[&str]` (`CVector3f` / `CQuaternion` / `CTransform` / `CMatrix4f` / `SObjectTag`) + a `TODO(P7.2)` fall-through in `render` — P7.2 fills in the per-type renderers behind that hook.
+  - `GameInstance` gains `pub pointer: bool` (`prime_structs.rs`): `new` / `with_bitfield` / `element` leave it `false`, only `with_member` sets it from `member.pointer`. Used for the `*name` prefix, `address == 0` → "null", and `u8*` → C-string.
+  - Deviations (all sanctioned): `render` drops the top-level `derefPointer` branch (instances arrive already-deref'd); `CollapsingHeader::id_salt((name, address))` not address-only; `*`-prefix applied to pointer struct/enum labels too; `ARRAY_CAP = 4096` on array loops; struct body iterates `members_by_offset` (no active bitfields in the schema, so no same-offset collision today — revisit `GameStruct` member ordering if `.bs` bitfields are re-enabled). No call site yet (Phase 9).
+
 - [ ] **P7.2** `name → render-fn` table for special types (`CVector3f`, `CTransform`,
   `CQuaternion`, `SObjectTag`, ...). — `TODO`
 

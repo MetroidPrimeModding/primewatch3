@@ -216,6 +216,13 @@ pub struct GameInstance {
   /// (C++ `GameMember::arrayLength`). `None` for struct roots, non-array
   /// members, and every instance produced by [`GameInstance::element`].
   pub array_length: Option<i64>,
+  /// Whether the `GameMember` this instance was resolved from was a pointer
+  /// member (C++ `GameMember::pointer`). The C++ recursion keeps this bit set
+  /// *after* the deref so the leaf renderer can still show the `*name` prefix,
+  /// treat `address == 0` as "null", and render a `u8*` as a C string. `false`
+  /// for struct roots ([`GameInstance::new`] / [`GameInstance::with_bitfield`])
+  /// and every instance produced by [`GameInstance::element`].
+  pub pointer: bool,
 }
 
 impl GameInstance {
@@ -226,6 +233,7 @@ impl GameInstance {
       bit: None,
       bit_length: None,
       array_length: None,
+      pointer: false,
     }
   }
 
@@ -241,6 +249,7 @@ impl GameInstance {
       bit,
       bit_length,
       array_length: None,
+      pointer: false,
     }
   }
 
@@ -254,6 +263,7 @@ impl GameInstance {
       bit: member.bit,
       bit_length: member.bit_length,
       array_length: member.array_length,
+      pointer: member.pointer,
     }
   }
 
@@ -565,6 +575,37 @@ mod tests {
     let field = root.get_member(&ctx, "flags").unwrap();
     assert_eq!(field.bit, Some(2));
     assert_eq!(field.bit_length, Some(3));
+  }
+
+  #[test]
+  fn get_member_carries_pointer() {
+    let mut structs = GameStructs::new_empty();
+    let mut ptr = member("target", "Target", 0x4);
+    ptr.pointer = true;
+    structs.insert_struct(&game_struct(
+      "Owner",
+      &[],
+      &[ptr, member("plain", "u32", 0x0)],
+    ));
+    structs.insert_struct(&game_struct("Target", &[], &[]));
+
+    let mut mem = GameMemory::new();
+    // Pointer slot at 0x8000_0004 -> 0x8000_1000.
+    mem.data[0x4..0x8].copy_from_slice(&0x8000_1000u32.to_be_bytes());
+    let ctx = Ctx::new(&structs, &mem);
+    let root = GameInstance::new(0x8000_0000, "Owner".to_string());
+
+    let via_ptr = root.get_member(&ctx, "target").unwrap();
+    assert!(via_ptr.pointer, "pointer bit must survive the deref");
+    assert_eq!(via_ptr.address, 0x8000_1000);
+
+    let plain = root.get_member(&ctx, "plain").unwrap();
+    assert!(!plain.pointer);
+
+    // Ctors / element() never set it.
+    assert!(!GameInstance::new(0x8000_0000, "u32".to_string()).pointer);
+    assert!(!GameInstance::with_bitfield(0x8000_0000, "u32".to_string(), Some(0), Some(4)).pointer);
+    assert!(!via_ptr.element(&ctx, 1).pointer);
   }
 
   #[test]
