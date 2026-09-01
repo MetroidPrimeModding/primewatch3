@@ -2017,6 +2017,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "glam",
+ "libc",
  "log",
  "pollster",
  "sysinfo",
