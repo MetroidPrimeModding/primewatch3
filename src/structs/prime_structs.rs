@@ -151,7 +151,7 @@ impl GameStruct {
         return true;
       }
       if let Some(parent) = game_structs.get_struct_by_name(parent_name) {
-        if parent.extends(game_structs, parent_name) {
+        if parent.extends(game_structs, type_name) {
           return true;
         }
       }
@@ -222,5 +222,109 @@ impl GameInstance {
   // this makes it cleaner to use
   pub fn read_u32(&self, mem: &GameMemory) -> Option<u32> {
     mem.read_u32(self.address)
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn member(name: &str, type_name: &str, offset: i64) -> GameMember {
+    GameMember {
+      type_name: type_name.to_string(),
+      name: name.to_string(),
+      offset,
+      bit: None,
+      bit_length: None,
+      array_length: None,
+      pointer: false,
+    }
+  }
+
+  fn game_struct(name: &str, extends: &[&str], members: &[GameMember]) -> GameStruct {
+    let mut s = GameStruct {
+      name: name.to_string(),
+      size: 0,
+      vtable_address: None,
+      extends: extends.iter().map(|it| it.to_string()).collect(),
+      members_by_offset: BTreeMap::new(),
+      members_by_name: BTreeMap::new(),
+    };
+    for m in members {
+      s.insert_member(m);
+    }
+    s
+  }
+
+  /// `C : B : A`, plus an unrelated `D : A` and a bare `X`.
+  fn chain() -> GameStructs {
+    let mut structs = GameStructs::new_empty();
+    structs.insert_struct(&game_struct("A", &[], &[member("a_field", "uint", 0x0)]));
+    structs.insert_struct(&game_struct("B", &["A"], &[member("b_field", "uint", 0x4)]));
+    structs.insert_struct(&game_struct("C", &["B"], &[member("c_field", "uint", 0x8)]));
+    structs.insert_struct(&game_struct("D", &["A"], &[]));
+    structs.insert_struct(&game_struct("X", &[], &[]));
+    structs
+  }
+
+  #[test]
+  fn extends_is_transitive() {
+    let structs = chain();
+    let c = structs.get_struct_by_name("C").unwrap();
+    // direct parent
+    assert!(c.extends(&structs, "B"));
+    // grandparent — the bug: only found when recursion passes the original target
+    assert!(c.extends(&structs, "A"));
+  }
+
+  #[test]
+  fn extends_negative_cases() {
+    let structs = chain();
+    let c = structs.get_struct_by_name("C").unwrap();
+    assert!(!c.extends(&structs, "X"));
+    assert!(!c.extends(&structs, "D"));
+    assert!(!c.extends(&structs, "C"));
+    // sibling branch: D extends A but not B or C
+    let d = structs.get_struct_by_name("D").unwrap();
+    assert!(d.extends(&structs, "A"));
+    assert!(!d.extends(&structs, "B"));
+  }
+
+  #[test]
+  fn get_member_by_name_resolves_through_chain() {
+    let structs = chain();
+    let c = structs.get_struct_by_name("C").unwrap();
+    // declared on C
+    assert_eq!(
+      c.get_member_by_name(&structs, "c_field").unwrap().offset,
+      0x8
+    );
+    // declared on B
+    assert_eq!(
+      c.get_member_by_name(&structs, "b_field").unwrap().offset,
+      0x4
+    );
+    // declared on grandparent A
+    assert_eq!(
+      c.get_member_by_name(&structs, "a_field").unwrap().offset,
+      0x0
+    );
+    // absent everywhere
+    assert!(c.get_member_by_name(&structs, "missing").is_none());
+  }
+
+  #[test]
+  fn get_member_by_name_prefers_local_override() {
+    let mut structs = GameStructs::new_empty();
+    structs.insert_struct(&game_struct("Base", &[], &[member("val", "uint", 0x10)]));
+    structs.insert_struct(&game_struct(
+      "Derived",
+      &["Base"],
+      &[member("val", "float", 0x20)],
+    ));
+    let derived = structs.get_struct_by_name("Derived").unwrap();
+    let m = derived.get_member_by_name(&structs, "val").unwrap();
+    assert_eq!(m.offset, 0x20);
+    assert_eq!(m.type_name, "float");
   }
 }

@@ -80,7 +80,11 @@ here in full until they clear.
 
 ## Phase 4 — GameDefinitions / GameMember / GameInstance (extends `src/structs/prime_structs.rs`)
 
-- [ ] **P4.1** Fix `GameStruct::extends` recursion bug (`parent_name` → `type_name`). — `TODO`
+- [x] **P4.1** Fix `GameStruct::extends` recursion bug (`parent_name` → `type_name`) — `DONE` · full detail: [`completed_tasks/P4.1.md`](completed_tasks/P4.1.md)
+  - `GameStruct::extends` (`src/structs/prime_structs.rs`) now recurses with the original `type_name`, not the intermediate parent's name — transitive `extends` (`C : B : A`) works. Matches C++ `GameStruct::extendsClass`.
+  - `GameStruct::get_member_by_name` confirmed already correct (local map first, then parents with unchanged name; no cycle guard — schema is a DAG). No change made.
+  - Added `#[cfg(test)] mod tests` in `prime_structs.rs`: hand-built in-memory `GameStructs` (no `.bs`/`mem1.raw`) covering transitive extends, negatives, inherited member lookup, local override.
+  - Both carried-over bugs from CLAUDE.md "Known carried-over bugs" are now resolved.
 - [ ] **P4.2** Add typed reads on `GameInstance`: `read_u8/u16/u64/f32/f64/bool/string` + bitfield
   masking (`bit` / `bit_length`). — `TODO`
 - [ ] **P4.3** Array-element indexing on `GameMember`/`GameInstance`. — `TODO`
