@@ -178,7 +178,21 @@ Phase 5 complete.
   - `gl::mesh::DynamicMesh` (grow-on-demand `VERTEX|COPY_DST` buffer, `new`/`upload`/`draw`; non-indexed). `gl::shader`: `WorldUniforms` (`#[repr(C)]`, 288 B, `from_matrices` fills CPU `normal_matrix` = inverse-transpose of model — sanctioned deviation, WGSL has no `inverse()`), `WORLD_SHADER_WGSL`, `WorldPipelines` (4 pipelines: mesh/line × opaque/translucent; `front_face: Cw`, `cull_mode: None`). `gl::immediate::ImmediateModeBuffer` (CPU-only: accumulates `Vec<Vert>`, `tri_verts()`/`line_verts()` accessors; P8.4 owns the GPU upload).
   - **Sanctioned deviation:** `linear_to_srgb` applied to every shader output (NEW vs C++) to satisfy the P1.3 linear→sRGB contract for the linear `Rgba8Unorm` egui composite target — isolated in one WGSL helper, flag-commented. **P8.4 must verify compositing does not double-encode** and revisit there if so.
   - **P8.4 forward-deps:** `cull_mode: None` on all 4 pipelines — P8.4 owns `CullType` BACK/FRONT/NONE → variant choice (marked `// P8.4:`); MSAA still single-sample; caller normalizes `light_dir` before `set_uniforms`; P8.4 unifies `scene.rs`'s private `COLOR_FORMAT`/`DEPTH_FORMAT` with the `gl` consts. All `gl` symbols dead until P8.4 (expected dead-code warnings, no `#[allow]`).
-- [ ] **P8.3** `ShapeGenerator` procedural meshes. — `TODO`
+- [x] **P8.3** `ShapeGenerator` procedural meshes — `DONE` · full detail: [`completed_tasks/P8.3.md`](completed_tasks/P8.3.md)
+  - New `src/gl/shapes.rs` (`pub mod shapes;` in `src/gl/mod.rs`): six CPU-only procedural vertex
+    generators returning `Vec<Vert>`, ports `ShapeGenerator.cpp` whole file —
+    `generate_cube(min: Vec3, max: Vec3, color: Vec4)`,
+    `generate_cube_from_center(center: Vec3, size: Vec3, color: Vec4)`,
+    `generate_cube_lines(min: Vec3, max: Vec3, color: Vec4)`,
+    `generate_sphere(center: Vec3, radius: f32, color: Vec4)`,
+    `generate_truncated_sphere(center: Vec3, radius: f32, bottom_distance: f32, color: Vec4)`,
+    `generate_camera_line_segments(perspective: Mat4, transform: Mat4, center_line_length: f32)`.
+  - Deviations: truncated-sphere apex is `center + Vec3::new(0,0,bottom_latitude_z_dist)` — verbatim
+    from `ShapeGenerator.cpp:252`, IS center-offset (the P8.3 planning note that said otherwise was
+    wrong). `invert_helper` returns `Vec3` not C++ `vec4` (safe: w==1 after perspective divide).
+    `emit_sphere_band` factors the shared quad loop (C++ open-codes it twice).
+  - All symbols dead until P8.4 wires them into `WorldRenderer` (expected dead-code warnings, no `#[allow]`).
+
 - [ ] **P8.4** `WorldRenderer`: camera modes, culling, per-category draw fns + visibility toggles. — `TODO`
 
 ## Phase 9 — App shell (ports `PrimeWatch.cpp`, `PrimeWatchInput.cpp`; replaces `main.rs`)

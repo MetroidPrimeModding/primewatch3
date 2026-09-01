@@ -1,5 +1,4 @@
-//! Reusable wgpu building blocks — ports `../primewatch2/src/gl/*` (everything
-//! except `ShapeGenerator`, which is P8.3).
+//! Reusable wgpu building blocks — ports `../primewatch2/src/gl/*`.
 //!
 //! - [`Vert`] + its [`wgpu::VertexBufferLayout`] — ports `gl/OpenGLMesh.hpp` +
 //!   the four `glVertexAttribPointer` calls in `gl/OpenGLMesh.cpp:14-21`.
@@ -7,12 +6,14 @@
 //! - [`shader::WorldPipelines`] / [`shader::WorldUniforms`] — ports
 //!   `OpenGLShader` + the three GLSL shader strings in `WorldRenderer.cpp:31-113`.
 //! - [`immediate::ImmediateModeBuffer`] — ports `ImmediateModeBuffer` (CPU-only).
+//! - [`shapes`] — ports `ShapeGenerator` (CPU-only procedural geometry).
 //!
 //! Everything here is library code: dead until P8.4 (`WorldRenderer`) wires it.
 
 pub mod immediate;
 pub mod mesh;
 pub mod shader;
+pub mod shapes;
 
 /// Packed interleaved vertex — ports `gl/OpenGLMesh.hpp:12-17` `Vert`.
 ///
