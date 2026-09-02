@@ -10,7 +10,7 @@
 //! consumed at the top of `RedrawRequested` (the polling model the C++ used via
 //! ImGui IO state).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::error::Error;
 use std::sync::Arc;
 
@@ -30,6 +30,8 @@ use crate::mem::dolphin_memory::DolphinMemoryAccess;
 use crate::mem::game_memory::GameMemory;
 use crate::mem::game_object_utils::{TUniqueID, get_all_objects};
 use crate::mem::globals::{get_main, get_memory_card, get_state_manager, get_tweak_player};
+use crate::mem::vtables::vtable_class_name;
+use crate::object_filter::ObjectFilter;
 use crate::structs::prime_structs::{GameInstance, GameStructs};
 use crate::world::renderer::{CameraMode, WorldInput, WorldRenderer};
 
@@ -49,6 +51,16 @@ const GHOST_KEYS: [KeyCode; 5] = [
   KeyCode::Digit4,
   KeyCode::Digit5,
 ];
+
+/// One entry in the "watch this editor ID" list — ports
+/// `../primewatch2/src/PrimeWatch.hpp:14-18` (`struct WatchedEditorId`). Clicking
+/// a row in the "Objects" entity table upserts one of these; each drives its own
+/// egui window and contributes its `last_known_uid` to the world highlight set.
+struct WatchedEditorId {
+  eid: u32,
+  last_known_uid: u16,
+  type_name: String,
+}
 
 /// Raw winit input accumulated between frames, then folded into a [`WorldInput`]
 /// (plus camera / ghost side effects) at the top of each frame. Ports the ImGui
@@ -184,6 +196,20 @@ struct FrameState<'a> {
   show_raw_data_view: &'a mut bool,
   show_demo_view: &'a mut bool,
   inspector: &'a mut Inspector,
+  /// Live object list (walked in `redraw`, borrowed read-only here). Keyed by
+  /// `TUniqueID` like the C++ `entities` `std::map`.
+  objects: &'a HashMap<TUniqueID, GameInstance>,
+  /// Per-editor-ID watch windows (C++ `editorIdsToWatch`).
+  editor_ids_to_watch: &'a mut Vec<WatchedEditorId>,
+  /// C++ `showActiveInTableOnly`.
+  show_active_in_table_only: &'a mut bool,
+  /// C++ `tableHoveredUid` — reset to `0xFFFF` each frame before the table.
+  table_hovered_uid: &'a mut u16,
+  /// C++ `objectFilter` (`ImGuiTextFilter`).
+  object_filter: &'a mut ObjectFilter,
+  /// Session-persistent set of unknown vtable addresses seen in the object list
+  /// (C++ `static set<uint32_t> unknowns` in `drawObjectsWindow`). Grows only.
+  unknown_vtables: &'a mut BTreeSet<u32>,
 }
 
 /// Owns the long-lived game state plus the render state that only exists while
@@ -212,6 +238,18 @@ struct App {
   /// Generic `GameInstance` tree view (P7) — hosts the "globals" window and the
   /// Tools-menu exact-values toggle (`GameObjectRenderers::render_exact_values`).
   inspector: Inspector,
+  /// Per-editor-ID watch windows (C++ `PrimeWatch::editorIdsToWatch`).
+  editor_ids_to_watch: Vec<WatchedEditorId>,
+  /// C++ `PrimeWatch::showActiveInTableOnly` (defaults `true`).
+  show_active_in_table_only: bool,
+  /// C++ `PrimeWatch::tableHoveredUid` — the uid the "Objects" table row cursor
+  /// is over, fed into the world highlight set. `0xFFFF` = none.
+  table_hovered_uid: u16,
+  /// C++ `PrimeWatch::objectFilter`.
+  object_filter: ObjectFilter,
+  /// C++ `static set<uint32_t> unknowns` in `drawObjectsWindow` — session log of
+  /// every unrecognised vtable address. Never shrinks.
+  unknown_vtables: BTreeSet<u32>,
   /// Input accumulated between frames.
   input: InputState,
   /// Render state — `None` until `resumed` (Wayland/macOS require deferred creation).
@@ -276,6 +314,11 @@ impl App {
       show_raw_data_view: false,
       show_demo_view: false,
       inspector: Inspector::new(),
+      editor_ids_to_watch: Vec::new(),
+      show_active_in_table_only: true,
+      table_hovered_uid: 0xFFFF,
+      object_filter: ObjectFilter::default(),
+      unknown_vtables: BTreeSet::new(),
       input: InputState::default(),
       window: None,
     }
@@ -297,6 +340,11 @@ impl App {
       show_raw_data_view,
       show_demo_view,
       inspector,
+      editor_ids_to_watch,
+      show_active_in_table_only,
+      table_hovered_uid,
+      object_filter,
+      unknown_vtables,
       input,
     } = self;
     let Some(window) = window.as_mut() else {
@@ -340,17 +388,29 @@ impl App {
       let ctx = Ctx::new(structs, mem);
       *objects = get_all_objects(&ctx);
       let viewport = window.world_view_px;
-      // TODO(P9.2): real highlight state (per-object watch selection).
-      let highlighted: HashSet<u16> = HashSet::new();
+      // The world highlight set (C++ `doFrame:267-272`): the uid the "Objects"
+      // table row cursor is over, plus every watched editor ID's last-known uid.
+      //
+      // Deviation: `table_hovered_uid` and the `last_known_uid`s are written by
+      // the egui pass in `AppWindow::render`, which runs *after* `world.update`
+      // this frame — so the highlight reflects the previous frame's UI state
+      // (one-frame lag). This matches the existing `world_view_px` lag pattern
+      // and is imperceptible at 60fps; restructuring the frame to remove it is
+      // out of scope.
+      let mut highlighted: HashSet<u16> = HashSet::new();
+      if *table_hovered_uid != 0xFFFF {
+        highlighted.insert(*table_hovered_uid);
+      }
+      for watch in editor_ids_to_watch.iter() {
+        highlighted.insert(watch.last_known_uid);
+      }
       window
         .world
         .update(&ctx, &plan.world_input, viewport, objects, &highlighted);
     }
 
-    // `objects` is walked above and consumed by `world.update`. P9.2's object
-    // table / filter window (C++ `PrimeWatch::drawObjectsWindow`) will also need
-    // it — pass it into `FrameState` and mount that window in `AppWindow::render`
-    // next to "globals".
+    // `objects` is walked above and consumed (by `&`) by `world.update`; the
+    // "Objects" window (C++ `PrimeWatch::drawObjectsWindow`) reads it again.
     let mut fs = FrameState {
       dolphin,
       mem,
@@ -361,6 +421,12 @@ impl App {
       show_raw_data_view,
       show_demo_view,
       inspector,
+      objects: &*objects,
+      editor_ids_to_watch,
+      show_active_in_table_only,
+      table_hovered_uid,
+      object_filter,
+      unknown_vtables,
     };
     window.render(&mut fs);
   }
@@ -458,6 +524,222 @@ fn render_raw_data_view(ui: &mut egui::Ui, data: &[u8]) {
         );
       }
     });
+}
+
+/// Ports `../primewatch2/src/PrimeWatch.cpp::drawObjectsWindow` — the "Objects"
+/// window (count, vtable aggregation, "List of types" table, filter + entity
+/// table) plus the per-`WatchedEditorId` watch-window loop.
+///
+/// All state mutated here is local UI state (no memory writes), so it mutates
+/// the passed `&mut` refs directly rather than deferring like `MenuAction`.
+#[allow(clippy::too_many_arguments)]
+fn render_objects_window(
+  egui_ctx: &egui::Context,
+  ctx: &Ctx,
+  inspector: &Inspector,
+  objects: &HashMap<TUniqueID, GameInstance>,
+  editor_ids_to_watch: &mut Vec<WatchedEditorId>,
+  show_active_in_table_only: &mut bool,
+  table_hovered_uid: &mut u16,
+  object_filter: &mut ObjectFilter,
+  unknown_vtables: &mut BTreeSet<u32>,
+) {
+  // C++ `drawObjectsWindow:504-520` — build the lookup maps and vtable
+  // histogram from the live object list.
+  let mut vtables: BTreeMap<u32, (u32, u32)> = BTreeMap::new();
+  let mut eid_to_entity: HashMap<u32, &GameInstance> = HashMap::new();
+  let mut uid_to_entity: HashMap<u16, &GameInstance> = HashMap::new();
+  for entity in objects.values() {
+    let vtable = entity.member(ctx, "vtable").read_u32(ctx).unwrap_or(0);
+    let active = entity.member(ctx, "active").read_bool(ctx).unwrap_or(false);
+    let slot = vtables.entry(vtable).or_insert((0, 0));
+    if active {
+      slot.0 += 1;
+    } else {
+      slot.1 += 1;
+    }
+    let eid = entity.member(ctx, "editorID").read_u32(ctx).unwrap_or(0);
+    let uid = entity.member(ctx, "uniqueID").read_u16(ctx).unwrap_or(0);
+    eid_to_entity.insert(eid, entity);
+    uid_to_entity.insert(uid, entity);
+  }
+
+  // C++ `:525-531` — accumulate never-before-seen vtable addresses. The
+  // `> 0x80000000 && < 0x80700000` window skips the "not up to date yet"
+  // sub-0x80000000 garbage.
+  for &vtable in vtables.keys() {
+    if vtable_class_name(vtable).is_none() && vtable > 0x8000_0000 && vtable < 0x8070_0000 {
+      unknown_vtables.insert(vtable);
+    }
+  }
+
+  // Stable row order — C++ iterates a uid-keyed `std::map`; our `HashMap` is
+  // unordered, so sort by the map key (`TUniqueID`).
+  let mut ordered: Vec<(&TUniqueID, &GameInstance)> = objects.iter().collect();
+  ordered.sort_by_key(|(uid, _)| **uid);
+
+  egui::Window::new("Objects").show(egui_ctx, |ui| {
+    ui.label(format!("Current object count: {}", objects.len()));
+
+    // C++ `:533-539` — "Copy unknowns (N)".
+    if ui
+      .button(format!("Copy unknowns ({})", unknown_vtables.len()))
+      .clicked()
+    {
+      let mut clip = String::new();
+      for vt in unknown_vtables.iter() {
+        clip.push_str(&format!("{{0x{vt:08x}, \"\"}},\n"));
+      }
+      ui.ctx().copy_text(clip);
+    }
+
+    // C++ `:541-583` — "List of types" 4-col table.
+    egui::CollapsingHeader::new("List of types").show(ui, |ui| {
+      egui::Grid::new("objects_vtables")
+        .striped(true)
+        .show(ui, |ui| {
+          ui.label("address");
+          ui.label("name");
+          ui.label("active");
+          ui.label("inactive");
+          ui.end_row();
+          for (&vtable, &(active, inactive)) in &vtables {
+            if ui
+              .selectable_label(false, format!("{vtable:08x}"))
+              .clicked()
+            {
+              ui.ctx().copy_text(format!("{{0x{vtable:08x}, \"\"}},"));
+            }
+            ui.label(vtable_class_name(vtable).unwrap_or("unknown"));
+            ui.label(active.to_string());
+            ui.label(inactive.to_string());
+            ui.end_row();
+          }
+        });
+    });
+
+    // C++ `:585-588` — filter hint, filter box, "show active only".
+    ui.label("Editor ID: #38 Class: @CPlayer name: &name");
+    ui.label("(or just type what you're looking for)");
+    object_filter.ui(ui);
+    ui.checkbox(show_active_in_table_only, "Show active only");
+
+    // C++ `:590` — reset before the table; row hover sets it.
+    *table_hovered_uid = 0xFFFF;
+
+    // C++ `:592-664` — the 5-col scrolling entity table.
+    egui::ScrollArea::vertical()
+      .max_height(400.0)
+      .auto_shrink([false, false])
+      .show(ui, |ui| {
+        egui::Grid::new("objects_entities")
+          .striped(true)
+          .show(ui, |ui| {
+            ui.label("class");
+            ui.label("editorID");
+            ui.label("uniqueID");
+            ui.label("active");
+            ui.label("name");
+            ui.end_row();
+
+            for (_, entity) in &ordered {
+              let active = entity.member(ctx, "active").read_bool(ctx).unwrap_or(false);
+              if *show_active_in_table_only && !active {
+                continue;
+              }
+              let uid = entity.member(ctx, "uniqueID").read_u16(ctx).unwrap_or(0);
+              let eid = entity.member(ctx, "editorID").read_u32(ctx).unwrap_or(0);
+              let name = entity
+                .member(ctx, "name")
+                .read_string(ctx)
+                .unwrap_or_default();
+
+              // C++ `:613` — probe string; sigils `#`/`@`/`&` let a user filter
+              // by editor ID / class / name. First `{:08x}` is hex eid, second
+              // `{:08}` is decimal eid zero-padded.
+              let probe = format!("#{eid:08x}#{eid:08}@{}&{}", entity.type_name, name);
+              if !object_filter.passes(&probe) {
+                continue;
+              }
+
+              // C++ `:619-639` — a span-all-columns Selectable; egui has no
+              // equivalent flag, so a plain selectable label in the first cell.
+              let resp = ui.selectable_label(false, entity.type_name.as_str());
+              if resp.clicked() {
+                if let Some(watch) = editor_ids_to_watch.iter_mut().find(|w| w.eid == eid) {
+                  watch.last_known_uid = uid;
+                  watch.type_name = entity.type_name.clone();
+                } else {
+                  editor_ids_to_watch.push(WatchedEditorId {
+                    eid,
+                    last_known_uid: uid,
+                    type_name: entity.type_name.clone(),
+                  });
+                }
+              }
+              if resp.hovered() {
+                *table_hovered_uid = uid;
+              }
+
+              ui.label(format!("{eid:08x}"));
+              ui.label(format!("{uid:04x}"));
+              ui.label(if active { "yes" } else { "no" });
+              ui.label(name);
+              ui.end_row();
+            }
+          });
+      });
+
+    ui.label(format!("tableHoveredUid: {}", *table_hovered_uid));
+  });
+
+  // C++ `:670-704` — one window per watched editor ID. Index-based loop so a
+  // window closing (removing its entry) can't skip or panic on the next.
+  let mut i = 0;
+  while i < editor_ids_to_watch.len() {
+    let (eid, last_known_uid, type_name) = {
+      let w = &editor_ids_to_watch[i];
+      (w.eid, w.last_known_uid, w.type_name.clone())
+    };
+    let title = format!("{type_name} {eid:08x}");
+    let mut open = true;
+    let mut new_last_known: Option<u16> = None;
+
+    egui::Window::new(&title)
+      .open(&mut open)
+      .id(egui::Id::new(("watch", eid)))
+      .min_size([240.0, 200.0])
+      .show(egui_ctx, |ui| {
+        // C++ `:678-696` — resolve by last-known uid, then by editor ID, then
+        // give up.
+        let mut handled = false;
+        if let Some(entity) = uid_to_entity.get(&last_known_uid) {
+          let e_eid = entity.member(ctx, "editorID").read_u32(ctx).unwrap_or(0);
+          if e_eid == eid && entity.type_name == type_name {
+            inspector.render(ui, ctx, &type_name, entity, false);
+            handled = true;
+          }
+        }
+        if !handled && let Some(entity) = eid_to_entity.get(&eid) {
+          let uid = entity.member(ctx, "uniqueID").read_u16(ctx).unwrap_or(0);
+          new_last_known = Some(uid);
+          inspector.render(ui, ctx, &type_name, entity, false);
+          handled = true;
+        }
+        if !handled {
+          ui.label("Not loaded");
+        }
+      });
+
+    if let Some(uid) = new_last_known {
+      editor_ids_to_watch[i].last_known_uid = uid;
+    }
+    if open {
+      i += 1;
+    } else {
+      editor_ids_to_watch.remove(i);
+    }
+  }
 }
 
 impl ApplicationHandler for App {
@@ -839,6 +1121,20 @@ impl AppWindow {
           fs.inspector.render(ui, ctx, "gp_TweakPlayer", &tp, true);
         }
       });
+
+      // --- Objects window + per-editor-ID watch windows (C++
+      //     `PrimeWatch::drawObjectsWindow`) -----------------------------------
+      render_objects_window(
+        &egui_ctx,
+        ctx,
+        &*fs.inspector,
+        fs.objects,
+        &mut *fs.editor_ids_to_watch,
+        &mut *fs.show_active_in_table_only,
+        &mut *fs.table_hovered_uid,
+        &mut *fs.object_filter,
+        &mut *fs.unknown_vtables,
+      );
     }
 
     // --- Raw Data View (C++ `doImGui:340-345`) ----------------------------

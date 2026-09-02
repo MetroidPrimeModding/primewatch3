@@ -238,7 +238,11 @@ Phase 5 complete.
   - `src/world/renderer.rs` +`record_player_ghost` / `clear_player_ghost` / `move_detached_camera`. `Cargo.toml` +`rfd = "0.15"` (heavy zbus/ashpd tree; synchronous picker — revisit before P10).
   - **P9.2 must respect:** `FrameState` is the seam for the object-table / watch windows; `App.objects` is walked every frame but dropped after `world.update` — thread it into `FrameState`. `highlighted` set fed to `world.update` is currently empty (`// TODO(P9.2)`). Non-blocking gaps: Camera Controls window has no titlebar-X `.open()` bind (menu toggle only); scroll-zoom dead while hovering the World window; shell layout rough. All display/live-Dolphin manual checks still pending the human (see archive).
 
-- [ ] **P9.2** Per-object watch windows keyed by editor ID (`WatchedEditorId`). — `TODO`
+- [x] **P9.2** Per-object watch windows + Objects table/filter — `DONE` · full detail: [`completed_tasks/P9.2.md`](completed_tasks/P9.2.md)
+  - New `src/object_filter.rs`: `ObjectFilter { raw: String }` — `passes(&str) -> bool` (comma-split, `-` negation, empty = pass-all) + `ui(&mut egui::Ui)`. **Deviation:** case-sensitive and negatives always win (`"foo,-bar"` rejects `"foo bar"`) — matches the task prose, not literal ImGui's in-order short-circuit.
+  - `src/app.rs`: `struct WatchedEditorId { eid, last_known_uid, type_name }`; `App`/`FrameState` gain `editor_ids_to_watch` / `show_active_in_table_only` (true) / `table_hovered_uid` (0xFFFF) / `object_filter` / `unknown_vtables: BTreeSet<u32>` (session-persistent, grow-only). Free fn `render_objects_window(...)` ports `PrimeWatch.cpp::drawObjectsWindow:502-704` (count, vtable histogram, unknowns, "List of types", filter, uid-sorted entity table, per-`WatchedEditorId` watch-window loop with `Inspector::render(add_tree=false)`), mounted behind the `Some(ctx)` gate next to "globals".
+  - `redraw` highlight set is now `{table_hovered_uid unless 0xFFFF} ∪ {watch.last_known_uid ∀ watch}` fed to `WorldRenderer::update` (C++ `doFrame:264-273`); one-frame lag vs C++ (egui pass runs after `world.update`) is sanctioned and documented. `// TODO(P9.2)` gone.
+  - Manual checklist (display + live Dolphin) pending human — see archive. After this, `doImGui` is fully ported.
 
 ## Phase 10 — Packaging / CI
 

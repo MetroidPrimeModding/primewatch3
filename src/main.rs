@@ -4,6 +4,7 @@ mod defs;
 mod gl;
 mod inspector;
 mod mem;
+mod object_filter;
 mod structs;
 mod world;
 
