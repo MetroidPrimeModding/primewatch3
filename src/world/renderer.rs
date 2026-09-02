@@ -488,6 +488,43 @@ pub(crate) fn player_speed_color(angle: f32) -> Vec4 {
   }
 }
 
+/// Ports `drawBomb`'s fuse-frame gate (`WorldRenderer.cpp:845-847`):
+/// `ceil(fuseTimeSeconds * 60) + 1`. The draw is skipped when this is `<= 0`.
+pub(crate) fn bomb_fuse_frames(fuse_time: f32) -> i32 {
+  (fuse_time * 60.0).ceil() as i32 + 1
+}
+
+/// Ports `drawBomb`'s ball-proximity highlight recompute
+/// (`WorldRenderer.cpp:851-859`) — the passed-in highlight flag is discarded and
+/// this predicate decides. `maxDistance` is the hardcoded `1.5` tweak value.
+pub(crate) fn bomb_proximity_highlight(player_pos: Vec3, bomb_pos: Vec3) -> bool {
+  let pos_to_ball = player_pos + Vec3::new(0.0, 0.0, 0.7) - bomb_pos;
+  pos_to_ball.length() < 1.5 && pos_to_ball.z >= -0.7
+}
+
+/// Ports `drawProjectile`'s nested `CProjectileWeapon` transform chain
+/// (`WorldRenderer.cpp:811`): `localToWorldXf * (localXf * projOffset +
+/// localOffset) + worldOffset`, with each offset extended to a `w = 0` vec4 so
+/// the matrix translations only apply via `localToWorldXf` / `localXf`
+/// rotation-scale, and `worldOffset` added in world space.
+pub(crate) fn projectile_world_pos(
+  local_to_world: Mat4,
+  local_xf: Mat4,
+  proj_offset: Vec3,
+  local_offset: Vec3,
+  world_offset: Vec3,
+) -> Vec3 {
+  (local_to_world * (local_xf * proj_offset.extend(0.0) + local_offset.extend(0.0))
+    + world_offset.extend(0.0))
+  .truncate()
+}
+
+/// Ports `drawProjectile`'s velocity transform (`WorldRenderer.cpp:813`):
+/// `localToWorldXf * localXf * vec4(velocity, 0)`.
+pub(crate) fn projectile_world_vel(local_to_world: Mat4, local_xf: Mat4, velocity: Vec3) -> Vec3 {
+  (local_to_world * local_xf * velocity.extend(0.0)).truncate()
+}
+
 pub struct WorldRenderer {
   // --- camera params (`WorldRenderer.hpp:83-113` defaults) ---
   pub aspect: f32,
@@ -877,7 +914,7 @@ impl WorldRenderer {
         // player render handled by draw_player
       } else if entity.extends_class(ctx, "CChozoGhost") {
         if self.actor_render_config.render_ai {
-          self.draw_chozo_ghost(ctx, entity, is_highlighted);
+          self.draw_chozo_ghost(ctx, entity, is_highlighted, objects);
         }
       } else if entity.extends_class(ctx, "CScriptPickup") {
         if self.actor_render_config.render_pickups {
@@ -1051,16 +1088,311 @@ impl WorldRenderer {
       .add_line(Vec3::new(0.0, 0.0, -0.5), Vec3::new(0.0, 0.0, 0.5));
   }
 
-  // --- P8.4.4: specialized geometry + velocity vectors, no text overlays yet
-  // (`WorldRenderer.cpp:775-1023`). Stubbed now so the dispatch chain lands
-  // complete.
-  fn draw_projectile(&mut self, _ctx: &Ctx, _entity: &GameInstance, _is_highlighted: bool) {}
-  fn draw_bomb(&mut self, _ctx: &Ctx, _entity: &GameInstance, _is_highlighted: bool) {}
-  fn draw_power_bomb(&mut self, _ctx: &Ctx, _entity: &GameInstance, _is_highlighted: bool) {}
-  fn draw_chozo_ghost(&mut self, _ctx: &Ctx, _entity: &GameInstance, _is_highlighted: bool) {}
-  fn draw_pickup(&mut self, _ctx: &Ctx, _entity: &GameInstance, _is_highlighted: bool) {}
-  fn draw_collision_actor(&mut self, _ctx: &Ctx, _entity: &GameInstance, _is_highlighted: bool) {}
-  fn draw_ai(&mut self, _ctx: &Ctx, _entity: &GameInstance, _is_highlighted: bool) {}
+  // --- P8.4.4: specialized geometry + velocity vectors. The screen-space HP /
+  // item / fuse-frame text overlays in the C++ (`ImDrawList::AddText` /
+  // `getScreenspacePosFor*`) are deferred to P8.4.5.
+
+  /// Ports `WorldRenderer::drawProjectile` (`WorldRenderer.cpp:800-842`) minus
+  /// the dead line-821 `transform` read (never used in the C++). The
+  /// `CProjectileWeapon` at `entity["projectile"]` is inline (not a pointer).
+  fn draw_projectile(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
+    let Some(active) = entity
+      .get_member(ctx, "projectileActive")
+      .and_then(|m| m.read_bool(ctx))
+    else {
+      return;
+    };
+    if !active {
+      return;
+    }
+    let Some(projectile) = entity.get_member(ctx, "projectile") else {
+      return;
+    };
+    let Some(local_to_world) = projectile
+      .get_member(ctx, "localToWorldXf")
+      .and_then(|m| read_as_transform(ctx, &m))
+    else {
+      return;
+    };
+    let Some(local_xf) = projectile
+      .get_member(ctx, "localXf")
+      .and_then(|m| read_as_transform(ctx, &m))
+    else {
+      return;
+    };
+    let Some(proj_off) = read_vec3_member(ctx, &projectile, "projOffset") else {
+      return;
+    };
+    let Some(local_off) = read_vec3_member(ctx, &projectile, "localOffset") else {
+      return;
+    };
+    let Some(world_off) = read_vec3_member(ctx, &projectile, "worldOffset") else {
+      return;
+    };
+    let Some(scale) = read_vec3_member(ctx, &projectile, "scale") else {
+      return;
+    };
+    let Some(velocity) = read_vec3_member(ctx, &projectile, "velocity") else {
+      return;
+    };
+    let Some(extent) = entity
+      .get_member(ctx, "projExtent")
+      .and_then(|m| m.read_f32(ctx))
+    else {
+      return;
+    };
+
+    let pos = projectile_world_pos(local_to_world, local_xf, proj_off, local_off, world_off);
+    let vel = projectile_world_vel(local_to_world, local_xf, velocity);
+
+    // component-wise (glam `Vec3 * Vec3` is Hadamard, matching `glm::vec3`).
+    let size = Vec3::splat(extent) / 2.0 * scale;
+    let min = pos - size;
+    let max = pos + size;
+
+    let color = if is_highlighted {
+      Vec4::new(1.0, 0.0, 0.0, 0.5)
+    } else {
+      Vec4::new(0.8, 0.4, 0.4, 0.8)
+    };
+
+    // min/max are world-space already -> identity transform for the cube.
+    self.translucent_render_buff.set_color(color.to_array());
+    self.translucent_render_buff.set_transform(Mat4::IDENTITY);
+    self
+      .translucent_render_buff
+      .add_tris(&shapes::generate_cube(min, max, color));
+
+    if is_highlighted {
+      self.translucent_render_buff.set_color([0.8, 0.8, 0.8, 0.5]);
+      self
+        .translucent_render_buff
+        .add_line(pos, pos + vel.normalize() * 1000.0);
+    }
+    self.translucent_render_buff.set_color([1.0, 0.5, 0.5, 1.0]);
+    self
+      .translucent_render_buff
+      .add_line(pos, pos + vel.normalize() * 0.5);
+  }
+
+  /// Ports `WorldRenderer::drawBomb` (`WorldRenderer.cpp:844-871`) minus the
+  /// line-873-878 HP text. The passed-in `_is_highlighted` is intentionally
+  /// ignored — the C++ recomputes it from ball proximity.
+  fn draw_bomb(&mut self, ctx: &Ctx, entity: &GameInstance, _is_highlighted: bool) {
+    let Some(fuse_time) = entity
+      .get_member(ctx, "fuseTime")
+      .and_then(|m| m.read_f32(ctx))
+    else {
+      return;
+    };
+    if bomb_fuse_frames(fuse_time) <= 0 {
+      return;
+    }
+    let Some(transform) = entity
+      .get_member(ctx, "transform")
+      .and_then(|m| read_as_transform(ctx, &m))
+    else {
+      return;
+    };
+    let pos = transform.w_axis.truncate();
+    let is_highlighted = bomb_proximity_highlight(self.player.position, pos);
+
+    let color = if is_highlighted {
+      Vec4::new(0.8, 0.0, 0.0, 0.8)
+    } else {
+      Vec4::new(0.7, 0.5, 0.5, 0.5)
+    };
+
+    self.translucent_render_buff.set_color(color.to_array());
+    self.translucent_render_buff.set_transform(transform);
+    // maxDistance (1.5) - 0.7
+    self
+      .translucent_render_buff
+      .add_tris(&shapes::generate_truncated_sphere(
+        Vec3::ZERO,
+        1.5 - 0.7,
+        0.0,
+        color,
+      ));
+  }
+
+  /// Ports `WorldRenderer::drawPowerBomb` (`WorldRenderer.cpp:881-896`). No
+  /// highlight branch. `CPowerBomb : CWeapon`.
+  fn draw_power_bomb(&mut self, ctx: &Ctx, entity: &GameInstance, _is_highlighted: bool) {
+    let Some(cur_time) = entity
+      .get_member(ctx, "curTime")
+      .and_then(|m| m.read_f32(ctx))
+    else {
+      return;
+    };
+    if !(1.0..=4.0).contains(&cur_time) {
+      return;
+    }
+    let Some(cur_radius) = entity
+      .get_member(ctx, "curRadius")
+      .and_then(|m| m.read_f32(ctx))
+    else {
+      return;
+    };
+    let Some(transform) = entity
+      .get_member(ctx, "transform")
+      .and_then(|m| read_as_transform(ctx, &m))
+    else {
+      return;
+    };
+    let color = Vec4::new(0.8, 0.4, 0.4, 0.4);
+    self.translucent_render_buff.set_color(color.to_array());
+    self.translucent_render_buff.set_transform(transform);
+    self
+      .translucent_render_buff
+      .add_tris(&shapes::generate_sphere(Vec3::ZERO, cur_radius, color));
+  }
+
+  /// Ports `WorldRenderer::drawChozoGhost` (`WorldRenderer.cpp:775-798`) minus
+  /// the dead `spaceWarpPosition` read and the commented-out warp line. Draws
+  /// the `CAi` body then a magenta line to the ghost's cover point (resolved by
+  /// slot id `coverPoint & 0x3FF` in the object map).
+  fn draw_chozo_ghost(
+    &mut self,
+    ctx: &Ctx,
+    entity: &GameInstance,
+    is_highlighted: bool,
+    objects: &HashMap<TUniqueID, GameInstance>,
+  ) {
+    self.draw_ai(ctx, entity, is_highlighted);
+
+    let Some(ghost_pos) = entity
+      .get_member(ctx, "transform")
+      .and_then(|m| read_as_transform(ctx, &m))
+      .map(|tf| tf.w_axis.truncate())
+    else {
+      return;
+    };
+    let Some(cover_id) = entity
+      .get_member(ctx, "coverPoint")
+      .and_then(|m| m.read_u16(ctx))
+    else {
+      return;
+    };
+    let cover_id = cover_id & 0x3FF;
+    if let Some(cover) = objects.get(&cover_id) {
+      let Some(cover_pos) = cover
+        .get_member(ctx, "transform")
+        .and_then(|m| read_as_transform(ctx, &m))
+        .map(|tf| tf.w_axis.truncate())
+      else {
+        return;
+      };
+      self.translucent_render_buff.set_transform(Mat4::IDENTITY);
+      self.translucent_render_buff.set_color([1.0, 0.0, 1.0, 1.0]);
+      self.translucent_render_buff.add_line(ghost_pos, cover_pos);
+    }
+  }
+
+  /// Ports `WorldRenderer::drawPickup` (`WorldRenderer.cpp:943-973`). With the
+  /// text overlay deferred to P8.4.5 the body reduces to `drawPhysicsActor`.
+  fn draw_pickup(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
+    self.draw_physics_actor(ctx, entity, is_highlighted);
+  }
+
+  /// Ports `WorldRenderer::drawCollisionActor` (`WorldRenderer.cpp:975-1023`)
+  /// minus the dead line-977 `pos`. Axis cross on the opaque buffer, then the
+  /// aabb / sphere / obbTreeGroup primitive ladder (first non-null wins).
+  fn draw_collision_actor(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
+    let Some(transform) = entity
+      .get_member(ctx, "transform")
+      .and_then(|m| read_as_transform(ctx, &m))
+    else {
+      return;
+    };
+
+    let color = if is_highlighted {
+      Vec4::new(1.0, 0.0, 0.0, 0.5)
+    } else {
+      Vec4::new(1.0, 1.0, 1.0, 0.5)
+    };
+    let solid_color = color.with_w(1.0);
+
+    // `*Cx` members auto-deref -> `.address` is the pointee (0 if null), the
+    // Rust analogue of the C++ `primitive.offset` non-null test.
+    let aabb_addr = entity
+      .get_member(ctx, "aabbPrimitive")
+      .map_or(0, |m| m.address);
+    let sphere_addr = entity
+      .get_member(ctx, "spherePrimitive")
+      .map_or(0, |m| m.address);
+    let obb_addr = entity
+      .get_member(ctx, "obbTreeGroupPrimitive")
+      .map_or(0, |m| m.address);
+
+    // C++ lines 993-996: set colour/transform on both buffers before the ladder
+    // so branches that only push tris/lines inherit them.
+    self.translucent_render_buff.set_color(color.to_array());
+    self.translucent_render_buff.set_transform(transform);
+    self.render_buff.set_color(solid_color.to_array());
+    self.render_buff.set_transform(transform);
+
+    self
+      .render_buff
+      .add_line(Vec3::new(-0.2, 0.0, 0.0), Vec3::new(0.2, 0.0, 0.0));
+    self
+      .render_buff
+      .add_line(Vec3::new(0.0, -0.2, 0.0), Vec3::new(0.0, 0.2, 0.0));
+    self
+      .render_buff
+      .add_line(Vec3::new(0.0, 0.0, -0.2), Vec3::new(0.0, 0.0, 0.2));
+
+    if aabb_addr != 0 {
+      let Some(min) = read_vec3_at(ctx, entity, &["aabbPrimitive", "aabb", "min"]) else {
+        return;
+      };
+      let Some(max) = read_vec3_at(ctx, entity, &["aabbPrimitive", "aabb", "max"]) else {
+        return;
+      };
+      self
+        .translucent_render_buff
+        .add_tris(&shapes::generate_cube(min, max, color));
+    } else if sphere_addr != 0 {
+      let Some(center) = read_vec3_at(ctx, entity, &["spherePrimitive", "sphere", "origin"]) else {
+        return;
+      };
+      let Some(radius) = walk_member(ctx, entity, &["spherePrimitive", "sphere", "radius"])
+        .and_then(|m| m.read_f32(ctx))
+      else {
+        return;
+      };
+      self
+        .translucent_render_buff
+        .add_tris(&shapes::generate_sphere(center, radius, color));
+    } else if obb_addr != 0 {
+      let Some(min) = read_vec3_at(
+        ctx,
+        entity,
+        &["obbTreeGroupPrimitive", "container", "aabb", "min"],
+      ) else {
+        return;
+      };
+      let Some(max) = read_vec3_at(
+        ctx,
+        entity,
+        &["obbTreeGroupPrimitive", "container", "aabb", "max"],
+      ) else {
+        return;
+      };
+      self
+        .render_buff
+        .add_lines(&shapes::generate_cube_lines(min, max, color));
+    } else {
+      eprintln!("Uhoh! unknown collision actor!");
+    }
+  }
+
+  /// Ports `WorldRenderer::drawAi` (`WorldRenderer.cpp:898-910`). With the HP
+  /// text deferred to P8.4.5 the body reduces to `drawPhysicsActor`; kept as a
+  /// fn so the dispatch chain and `draw_chozo_ghost` can call it.
+  fn draw_ai(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
+    self.draw_physics_actor(ctx, entity, is_highlighted);
+  }
 
   /// Ports `WorldRenderer::updateAreas` (`WorldRenderer.cpp:153-168`).
   fn update_areas(&mut self, ctx: &Ctx) {
@@ -1410,6 +1742,91 @@ mod tests {
     let (min, max) = physics_actor_bbox(pos, degen, degen, rb);
     approx(min, rb.0);
     approx(max, rb.1);
+  }
+
+  #[test]
+  fn bomb_fuse_frames_is_ceil_times_60_plus_1() {
+    assert_eq!(bomb_fuse_frames(0.0), 1);
+    assert_eq!(bomb_fuse_frames(0.5), 31); // ceil(30) + 1
+    assert_eq!(bomb_fuse_frames(1.0), 61);
+    assert_eq!(bomb_fuse_frames(0.016), 2); // ceil(0.96) + 1
+    // a spent bomb -> non-positive -> draw skipped
+    assert!(bomb_fuse_frames(-1.0) <= 0);
+  }
+
+  #[test]
+  fn bomb_proximity_highlight_predicate() {
+    // player and bomb coincident: posToBall = (0,0,0.7), len 0.7 < 1.5, z >= -0.7
+    assert!(bomb_proximity_highlight(Vec3::ZERO, Vec3::ZERO));
+    // bomb far in the xy plane -> out of range
+    assert!(!bomb_proximity_highlight(
+      Vec3::ZERO,
+      Vec3::new(5.0, 0.0, 0.0)
+    ));
+    // bomb well above the ball -> posToBall.z = 0.7 - 2.0 = -1.3 < -0.7
+    assert!(!bomb_proximity_highlight(
+      Vec3::ZERO,
+      Vec3::new(0.0, 0.0, 2.0)
+    ));
+    // boundary: bomb at z = 1.4 -> posToBall.z = -0.7 (>= -0.7), len 0.7 < 1.5
+    assert!(bomb_proximity_highlight(
+      Vec3::ZERO,
+      Vec3::new(0.0, 0.0, 1.4)
+    ));
+    // player offset carries through
+    assert!(bomb_proximity_highlight(
+      Vec3::new(10.0, 0.0, 0.0),
+      Vec3::new(10.0, 0.5, 0.0)
+    ));
+  }
+
+  #[test]
+  fn projectile_world_pos_identity_transforms_sum_offsets() {
+    let pos = projectile_world_pos(
+      Mat4::IDENTITY,
+      Mat4::IDENTITY,
+      Vec3::new(1.0, 2.0, 3.0),
+      Vec3::new(0.5, 0.0, 0.0),
+      Vec3::new(0.0, 0.0, 10.0),
+    );
+    approx(pos, Vec3::new(1.5, 2.0, 13.0));
+  }
+
+  #[test]
+  fn projectile_world_pos_world_offset_is_added_after_local_to_world() {
+    let ltw = Mat4::from_translation(Vec3::new(100.0, 0.0, 0.0));
+    // proj/local offsets are w=0 -> localToWorldXf translation still applies to
+    // the (0,0,0) point via its 4th column since the accumulated vec4 has w=1
+    // only from... actually offsets stay w=0, so translation does NOT apply.
+    approx(
+      projectile_world_pos(ltw, Mat4::IDENTITY, Vec3::ZERO, Vec3::ZERO, Vec3::ZERO),
+      Vec3::ZERO,
+    );
+    // worldOffset is a plain world-space add.
+    approx(
+      projectile_world_pos(
+        ltw,
+        Mat4::IDENTITY,
+        Vec3::ZERO,
+        Vec3::ZERO,
+        Vec3::new(0.0, 5.0, 0.0),
+      ),
+      Vec3::new(0.0, 5.0, 0.0),
+    );
+  }
+
+  #[test]
+  fn projectile_world_vel_rotates_without_translating() {
+    let ltw = Mat4::from_translation(Vec3::new(100.0, 0.0, 0.0));
+    approx(
+      projectile_world_vel(ltw, Mat4::IDENTITY, Vec3::new(0.0, 0.0, 1.0)),
+      Vec3::new(0.0, 0.0, 1.0),
+    );
+    let rot = Mat4::from_rotation_z(std::f32::consts::FRAC_PI_2);
+    approx(
+      projectile_world_vel(rot, Mat4::IDENTITY, Vec3::new(1.0, 0.0, 0.0)),
+      Vec3::new(0.0, 1.0, 0.0),
+    );
   }
 
   #[test]
