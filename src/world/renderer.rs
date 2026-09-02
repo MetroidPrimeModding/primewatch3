@@ -22,11 +22,14 @@ use std::collections::{HashMap, HashSet};
 use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 
 use crate::ctx::Ctx;
+use crate::defs::item_types::{EItemType, item_type_to_name};
 use crate::gl::mesh::DynamicMesh;
 use crate::gl::shader::{WorldPipelines, WorldUniforms};
 use crate::gl::{Topology, Vert, WORLD_COLOR_FORMAT, WORLD_DEPTH_FORMAT, shapes};
 use crate::mem::area_utils::get_areas;
-use crate::mem::game_object_utils::{TUniqueID, get_object_by_entity_id};
+use crate::mem::game_object_utils::{
+  TUniqueID, get_all_loading_datas, get_object_by_entity_id, object_tag_to_string,
+};
 use crate::mem::globals::get_state_manager;
 use crate::mem::math_utils::{read_as_matrix4f, read_as_quat, read_as_transform, read_as_vec3};
 use crate::structs::prime_structs::GameInstance;
@@ -525,6 +528,45 @@ pub(crate) fn projectile_world_vel(local_to_world: Mat4, local_xf: Mat4, velocit
   (local_to_world * local_xf * velocity.extend(0.0)).truncate()
 }
 
+/// Ports `glm::project(obj, view, projection, viewport)` as used by
+/// `getScreenspacePosFor*` (`WorldRenderer.cpp:915` / `938`).
+///
+/// `clip = projection * view * vec4(pos, 1)`, perspective-divide to NDC, then map
+/// to the pixel viewport: `screen.xy = viewport.xy + (ndc.xy + 1) * 0.5 *
+/// viewport.zw`. `viewport` is `[x, y, width, height]` in pixels.
+///
+/// The renderer's projection matrix is glam's DirectX-convention RH perspective
+/// ([0, 1] clip depth) rather than GL's [-1, 1] — the x/y screen mapping is
+/// identical either way, and callers only consume `.x` / `.y` (the returned `.z`
+/// is the raw NDC depth and is unused).
+pub(crate) fn project(pos: Vec3, view: Mat4, projection: Mat4, viewport: [f32; 4]) -> Vec3 {
+  let clip = projection * view * pos.extend(1.0);
+  if clip.w == 0.0 {
+    return Vec3::ZERO;
+  }
+  let ndc = clip.truncate() / clip.w;
+  Vec3::new(
+    viewport[0] + (ndc.x + 1.0) * 0.5 * viewport[2],
+    viewport[1] + (ndc.y + 1.0) * 0.5 * viewport[3],
+    ndc.z,
+  )
+}
+
+/// A screen-space text label accumulated during `update` and painted by the app
+/// shell's overlay pass (P9.1). Ports the `ImDrawList::AddText` calls in the
+/// per-class draw functions (`WorldRenderer.cpp:873-878` / `900-909` /
+/// `943-973`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextOverlay {
+  pub screen_pos: Vec2,
+  pub text: String,
+}
+
+/// Nominal line height for stacking multi-line overlays (`drawPickup`'s two
+/// lines). The C++ uses `ImGui::GetTextLineHeight()`; this layer has no font
+/// system, so the P9.1 painter owns exact glyph metrics / horizontal centering.
+const OVERLAY_LINE_HEIGHT: f32 = 14.0;
+
 pub struct WorldRenderer {
   // --- camera params (`WorldRenderer.hpp:83-113` defaults) ---
   pub aspect: f32,
@@ -548,7 +590,15 @@ pub struct WorldRenderer {
   pub cam_projection: Mat4,
   pub cam_view: Mat4,
   pub cam_eye: Vec3,
+  /// Pixel-space viewport `[x, y, width, height]` for [`project`]. Ports C++
+  /// `camViewport` (`PrimeWatch.cpp:91` / `494` — `{0, 0, width, height}`); set
+  /// in [`WorldRenderer::resize`] and again each [`WorldRenderer::update`].
+  pub cam_viewport: [f32; 4],
   pub game_cam: GameCamera,
+
+  /// Screen-space labels accumulated this frame (HP / item / fuse counts).
+  /// Cleared at the top of every [`WorldRenderer::update`].
+  pub text_overlays: Vec<TextOverlay>,
 
   // --- cached per-frame player state (`WorldRenderer.hpp:109-113`) ---
   /// The live player, read from `g_stateManager["player"]` each frame. Its
@@ -601,7 +651,9 @@ impl WorldRenderer {
       cam_projection: Mat4::IDENTITY,
       cam_view: Mat4::IDENTITY,
       cam_eye: Vec3::ZERO,
+      cam_viewport: [0.0, 0.0, size.0 as f32, size.1 as f32],
       game_cam: GameCamera::default(),
+      text_overlays: Vec::new(),
       player: PlayerGhost::default(),
       player_ghosts: [PlayerGhost::default(); 5],
       last_known_non_colliding_pos: Vec3::ZERO,
@@ -633,7 +685,19 @@ impl WorldRenderer {
     self.color = color;
     self.depth = depth;
     self.size = size;
+    self.cam_viewport = [0.0, 0.0, size.0 as f32, size.1 as f32];
     true
+  }
+
+  /// Drop every accumulated screen-space label (start of frame).
+  pub fn clear_text_overlays(&mut self) {
+    self.text_overlays.clear();
+  }
+
+  /// Queue a screen-space label at `screen_pos` (pixels, Y-down — already
+  /// flipped by the `getScreenspacePosFor*` helpers).
+  pub fn add_text_overlay(&mut self, screen_pos: Vec2, text: String) {
+    self.text_overlays.push(TextOverlay { screen_pos, text });
   }
 
   /// The offscreen colour target — handed to egui as a user texture.
@@ -654,6 +718,7 @@ impl WorldRenderer {
     objects: &HashMap<TUniqueID, GameInstance>,
     highlighted: &HashSet<u16>,
   ) {
+    self.clear_text_overlays();
     self.update_areas(ctx);
 
     self.pitch += input.cam_pitch;
@@ -763,6 +828,14 @@ impl WorldRenderer {
     self.cam_view = res.view;
     self.cam_eye = res.eye;
     self.manual_camera_pos = res.manual_camera_pos;
+    // C++ sets `camViewport` from the framebuffer in `framebuffer_size_cb`; keep
+    // it in lock-step with the render target each frame (pixel space, not NDC).
+    self.cam_viewport = [
+      0.0,
+      0.0,
+      viewport_size.0 as f32,
+      viewport_size.1.max(1) as f32,
+    ];
 
     // --- CPU geometry into the immediate buffers (`WorldRenderer.cpp:321-334`) ---
     self.render_buff.clear();
@@ -1088,9 +1161,54 @@ impl WorldRenderer {
       .add_line(Vec3::new(0.0, 0.0, -0.5), Vec3::new(0.0, 0.0, 0.5));
   }
 
-  // --- P8.4.4: specialized geometry + velocity vectors. The screen-space HP /
-  // item / fuse-frame text overlays in the C++ (`ImDrawList::AddText` /
-  // `getScreenspacePosFor*`) are deferred to P8.4.5.
+  /// Ports `WorldRenderer::getScreenspacePosForActor`
+  /// (`WorldRenderer.cpp:912-918`): project the entity's transform translation
+  /// to screen pixels, then flip Y for the top-left-origin overlay space.
+  fn screenspace_pos_for_actor(&self, ctx: &Ctx, entity: &GameInstance) -> Option<Vec2> {
+    let transform = entity
+      .get_member(ctx, "transform")
+      .and_then(|m| read_as_transform(ctx, &m))?;
+    let pos = transform.w_axis.truncate();
+    let s = project(pos, self.cam_view, self.cam_projection, self.cam_viewport);
+    Some(Vec2::new(s.x, self.cam_viewport[3] - s.y))
+  }
+
+  /// Ports `WorldRenderer::getScreenspacePosForPhysicsActor`
+  /// (`WorldRenderer.cpp:920-941`): same as [`Self::screenspace_pos_for_actor`]
+  /// but offsets the projected point by the centre of the actor's bounding box,
+  /// picked from the `collisionPrimitive` -> `baseBoundingBox` -> `renderBounds`
+  /// ladder (the last one is `pos`-relative — verbatim C++ asymmetry).
+  fn screenspace_pos_for_physics_actor(&self, ctx: &Ctx, entity: &GameInstance) -> Option<Vec2> {
+    let transform = entity
+      .get_member(ctx, "transform")
+      .and_then(|m| read_as_transform(ctx, &m))?;
+    let pos = transform.w_axis.truncate();
+
+    let mut min = read_vec3_at(ctx, entity, &["collisionPrimitive", "aabb", "min"])?;
+    let mut max = read_vec3_at(ctx, entity, &["collisionPrimitive", "aabb", "max"])?;
+    if is_degenerate_bbox(min, max) {
+      min = read_vec3_at(ctx, entity, &["baseBoundingBox", "min"])?;
+      max = read_vec3_at(ctx, entity, &["baseBoundingBox", "max"])?;
+    }
+    if is_degenerate_bbox(min, max) {
+      min = read_vec3_at(ctx, entity, &["renderBounds", "min"])? - pos;
+      max = read_vec3_at(ctx, entity, &["renderBounds", "max"])? - pos;
+    }
+
+    let text_pos = (min + max) / 2.0;
+    let s = project(
+      pos + text_pos,
+      self.cam_view,
+      self.cam_projection,
+      self.cam_viewport,
+    );
+    Some(Vec2::new(s.x, self.cam_viewport[3] - s.y))
+  }
+
+  // --- P8.4.4: specialized geometry + velocity vectors. P8.4.5 adds the
+  // screen-space HP / item / fuse-frame text overlays via
+  // [`Self::add_text_overlay`] + [`project`] (`ImDrawList::AddText` /
+  // `getScreenspacePosFor*` in the C++).
 
   /// Ports `WorldRenderer::drawProjectile` (`WorldRenderer.cpp:800-842`) minus
   /// the dead line-821 `transform` read (never used in the C++). The
@@ -1175,9 +1293,10 @@ impl WorldRenderer {
       .add_line(pos, pos + vel.normalize() * 0.5);
   }
 
-  /// Ports `WorldRenderer::drawBomb` (`WorldRenderer.cpp:844-871`) minus the
-  /// line-873-878 HP text. The passed-in `_is_highlighted` is intentionally
-  /// ignored — the C++ recomputes it from ball proximity.
+  /// Ports `WorldRenderer::drawBomb` (`WorldRenderer.cpp:844-879`). The passed-in
+  /// `_is_highlighted` is intentionally ignored — the C++ recomputes it from ball
+  /// proximity. The fuse-frame count is queued as a screen-space overlay
+  /// (`WorldRenderer.cpp:873-878`).
   fn draw_bomb(&mut self, ctx: &Ctx, entity: &GameInstance, _is_highlighted: bool) {
     let Some(fuse_time) = entity
       .get_member(ctx, "fuseTime")
@@ -1214,6 +1333,11 @@ impl WorldRenderer {
         0.0,
         color,
       ));
+
+    // HP-style fuse-frame count over the bomb (`WorldRenderer.cpp:873-878`).
+    if let Some(screen) = self.screenspace_pos_for_actor(ctx, entity) {
+      self.add_text_overlay(screen, format!("{}", bomb_fuse_frames(fuse_time)));
+    }
   }
 
   /// Ports `WorldRenderer::drawPowerBomb` (`WorldRenderer.cpp:881-896`). No
@@ -1290,9 +1414,43 @@ impl WorldRenderer {
   }
 
   /// Ports `WorldRenderer::drawPickup` (`WorldRenderer.cpp:943-973`). With the
-  /// text overlay deferred to P8.4.5 the body reduces to `drawPhysicsActor`.
+  /// Ports `WorldRenderer::drawPickup` (`WorldRenderer.cpp:943-973`): the
+  /// `drawPhysicsActor` body plus two label lines — `"<item> <amount>/<capacity>"`
+  /// above and `"<curTime>/<lifeTime>"` below the projected point.
   fn draw_pickup(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
     self.draw_physics_actor(ctx, entity, is_highlighted);
+
+    let Some(screen) = self.screenspace_pos_for_physics_actor(ctx, entity) else {
+      return;
+    };
+    let Some(item_type) = entity
+      .get_member(ctx, "itemType")
+      .and_then(|m| m.read_u32(ctx))
+      .map(EItemType::from_raw)
+    else {
+      return;
+    };
+    let amount = entity
+      .get_member(ctx, "amount")
+      .and_then(|m| m.read_u32(ctx))
+      .unwrap_or(0) as i32;
+    let capacity = entity
+      .get_member(ctx, "capacity")
+      .and_then(|m| m.read_u32(ctx))
+      .unwrap_or(0) as i32;
+    let life_time = entity
+      .get_member(ctx, "lifeTime")
+      .and_then(|m| m.read_f32(ctx))
+      .unwrap_or(0.0);
+    let cur_time = entity
+      .get_member(ctx, "curTime")
+      .and_then(|m| m.read_f32(ctx))
+      .unwrap_or(0.0);
+
+    let line1 = format!("{} {}/{}", item_type_to_name(item_type), amount, capacity);
+    let line2 = format!("{cur_time:.1}/{life_time:.1}");
+    self.add_text_overlay(Vec2::new(screen.x, screen.y - OVERLAY_LINE_HEIGHT), line1);
+    self.add_text_overlay(screen, line2);
   }
 
   /// Ports `WorldRenderer::drawCollisionActor` (`WorldRenderer.cpp:975-1023`)
@@ -1387,11 +1545,17 @@ impl WorldRenderer {
     }
   }
 
-  /// Ports `WorldRenderer::drawAi` (`WorldRenderer.cpp:898-910`). With the HP
-  /// text deferred to P8.4.5 the body reduces to `drawPhysicsActor`; kept as a
-  /// fn so the dispatch chain and `draw_chozo_ghost` can call it.
+  /// Ports `WorldRenderer::drawAi` (`WorldRenderer.cpp:898-910`): the
+  /// `drawPhysicsActor` body plus a `healthInfo.health` label over the actor.
   fn draw_ai(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
     self.draw_physics_actor(ctx, entity, is_highlighted);
+
+    if let Some(screen) = self.screenspace_pos_for_physics_actor(ctx, entity)
+      && let Some(health) =
+        walk_member(ctx, entity, &["healthInfo", "health"]).and_then(|m| m.read_f32(ctx))
+    {
+      self.add_text_overlay(screen, format!("{health:.1}"));
+    }
   }
 
   /// Ports `WorldRenderer::updateAreas` (`WorldRenderer.cpp:153-168`).
@@ -1523,6 +1687,152 @@ impl WorldRenderer {
     self.translucent_tris.draw(&mut pass);
     pass.set_pipeline(&self.pipelines.line_translucent);
     self.translucent_lines.draw(&mut pass);
+  }
+
+  /// Ports `WorldRenderer::renderImGui` (`WorldRenderer.cpp:408-529`) — the
+  /// "WorldStatus" area/loading table and the "PlayerStatus" pos/vel/look
+  /// readout. egui has no free-floating windows, so both spawn off the passed
+  /// `ui`'s context (the C++ anchors them to screen corners; exact placement is
+  /// a P9.1 concern).
+  pub fn render_status_windows(&self, ctx: &Ctx, ui: &mut egui::Ui) {
+    let egui_ctx = ui.ctx().clone();
+
+    egui::Window::new("WorldStatus")
+      .resizable(false)
+      .title_bar(false)
+      .show(&egui_ctx, |ui| self.render_world_status(ctx, ui));
+
+    egui::Window::new("PlayerStatus")
+      .resizable(false)
+      .title_bar(false)
+      .show(&egui_ctx, |ui| self.render_player_status(ui));
+  }
+
+  /// The "WorldStatus" window body (`WorldRenderer.cpp:414-494`).
+  fn render_world_status(&self, ctx: &Ctx, ui: &mut egui::Ui) {
+    let e_chain = ctx.structs.get_enum_by_name("EChain");
+    let e_phase = ctx.structs.get_enum_by_name("EPhase");
+
+    egui::Grid::new("world-status-areas")
+      .striped(true)
+      .show(ui, |ui| {
+        ui.label("MREA");
+        ui.label("Chain");
+        ui.label("Phase");
+        ui.label("Occluded");
+        ui.end_row();
+
+        for area in get_areas(ctx) {
+          let chain = area
+            .get_member(ctx, "curChain")
+            .and_then(|m| m.read_u32(ctx))
+            .unwrap_or(0);
+          if chain == 1 {
+            continue; // deallocated
+          }
+          let mrea = area
+            .get_member(ctx, "mrea")
+            .and_then(|m| m.read_u32(ctx))
+            .unwrap_or(0);
+          let phase = area
+            .get_member(ctx, "phase")
+            .and_then(|m| m.read_u32(ctx))
+            .unwrap_or(0);
+
+          let chain_text = e_chain
+            .as_ref()
+            .and_then(|e| e.get_name_by_value(chain as i64))
+            .unwrap_or_else(|| chain.to_string());
+          let phase_text = e_phase
+            .as_ref()
+            .and_then(|e| e.get_name_by_value(phase as i64))
+            .unwrap_or_else(|| phase.to_string());
+
+          let mut occluded_text = "yes";
+          if area
+            .get_member(ctx, "isPostConstructed")
+            .and_then(|m| m.read_bool(ctx))
+            .unwrap_or(false)
+          {
+            let occluded = walk_member(ctx, &area, &["postConstructed", "occlusionState"])
+              .and_then(|m| m.read_u32(ctx))
+              .unwrap_or(0);
+            if occluded == 1 {
+              occluded_text = "no";
+            }
+          }
+
+          ui.label(format!("{mrea:08x}"));
+          ui.label(chain_text);
+          ui.label(phase_text);
+          ui.label(occluded_text);
+          ui.end_row();
+        }
+      });
+
+    // Resource load queue (`WorldRenderer.cpp:468-492`).
+    let loading = get_all_loading_datas(ctx);
+    if !loading.is_empty() {
+      ui.label(format!("Loading {}", loading.len()));
+      let mut shown = 0u32;
+      let mut shown_size: u32 = 0;
+      let mut rest_size: u32 = 0;
+      for ld in &loading {
+        let size = ld
+          .get_member(ctx, "resLen")
+          .and_then(|m| m.read_u32(ctx))
+          .unwrap_or(0);
+        if shown < 5 {
+          if let Some(tag) = ld.get_member(ctx, "tag") {
+            ui.label(format!("{}: {}", object_tag_to_string(ctx, &tag), size));
+          }
+          shown += 1;
+          shown_size = shown_size.saturating_add(size);
+        } else {
+          rest_size = rest_size.saturating_add(size);
+        }
+      }
+      if shown_size > 0 || rest_size > 0 {
+        ui.label(format!(
+          "+{}k = {}k",
+          rest_size / 1024,
+          (shown_size.saturating_add(rest_size)) / 1024
+        ));
+      }
+    }
+  }
+
+  /// The "PlayerStatus" window body (`WorldRenderer.cpp:506-527`).
+  fn render_player_status(&self, ui: &mut egui::Ui) {
+    let forward = self.player_look_vec;
+    let hforward = Vec2::new(forward.x, forward.y).normalize_or_zero();
+    let hvel = Vec2::new(self.player.velocity.x, self.player.velocity.y);
+
+    let p = self.player.position;
+    let v = self.player.velocity;
+    ui.label(format!("pos: {:8.3}x {:8.3}y {:8.3}z", p.x, p.y, p.z));
+    ui.label(format!(
+      "vel: {:8.3}x {:8.3}y {:8.3}z {:8.3}h",
+      v.x,
+      v.y,
+      v.z,
+      hvel.length()
+    ));
+
+    let hveldir = hvel.normalize_or_zero();
+    let forward_angle = hforward.y.atan2(hforward.x);
+    let vel_angle = hveldir.y.atan2(hveldir.x);
+    let angle = forward_angle - vel_angle;
+    ui.label(format!(
+      "look: {:6.3}x {:6.3}y {:6.1}deg | vel {:6.3}x {:6.3}y {:6.1}deg | {:6.1} deg",
+      hforward.x,
+      hforward.y,
+      forward_angle.to_degrees(),
+      hveldir.x,
+      hveldir.y,
+      vel_angle.to_degrees(),
+      angle.to_degrees()
+    ));
   }
 }
 
@@ -1827,6 +2137,54 @@ mod tests {
       projectile_world_vel(rot, Mat4::IDENTITY, Vec3::new(1.0, 0.0, 0.0)),
       Vec3::new(0.0, 1.0, 0.0),
     );
+  }
+
+  #[test]
+  fn project_maps_center_and_corners_to_pixel_viewport() {
+    let vp = [0.0, 0.0, 800.0, 600.0];
+    // With identity view+proj, the origin sits at NDC (0,0) -> viewport centre.
+    let c = project(Vec3::ZERO, Mat4::IDENTITY, Mat4::IDENTITY, vp);
+    approx(c, Vec3::new(400.0, 300.0, 0.0));
+    // NDC (1,1) -> far corner (before the caller's Y flip).
+    let corner = project(Vec3::new(1.0, 1.0, 0.0), Mat4::IDENTITY, Mat4::IDENTITY, vp);
+    approx(corner, Vec3::new(800.0, 600.0, 0.0));
+    // NDC (-1,-1) -> origin corner.
+    let origin = project(
+      Vec3::new(-1.0, -1.0, 0.0),
+      Mat4::IDENTITY,
+      Mat4::IDENTITY,
+      vp,
+    );
+    approx(origin, Vec3::new(0.0, 0.0, 0.0));
+  }
+
+  #[test]
+  fn project_perspective_divides_by_w() {
+    // A projection that scales w by the point's z; a point at z=2 halves x/y.
+    let proj = Mat4::from_cols(
+      glam::Vec4::new(1.0, 0.0, 0.0, 0.0),
+      glam::Vec4::new(0.0, 1.0, 0.0, 0.0),
+      glam::Vec4::new(0.0, 0.0, 1.0, 1.0),
+      glam::Vec4::new(0.0, 0.0, 0.0, 0.0),
+    );
+    let vp = [0.0, 0.0, 200.0, 200.0];
+    let s = project(Vec3::new(1.0, 0.0, 2.0), Mat4::IDENTITY, proj, vp);
+    // clip = (1, 0, 2, 2) -> ndc.x = 0.5 -> screen.x = (0.5+1)*0.5*200 = 150.
+    approx(s, Vec3::new(150.0, 100.0, 1.0));
+  }
+
+  #[test]
+  fn item_type_overlay_text_matches_cpp_format() {
+    // Sanity on the string the pickup overlay builds (C++ `drawPickup:956/965`).
+    let line1 = format!(
+      "{} {}/{}",
+      item_type_to_name(EItemType::from_raw(4)),
+      5,
+      250
+    );
+    assert_eq!(line1, "Missiles 5/250");
+    let line2 = format!("{:.1}/{:.1}", 1.25_f32, 30.0_f32);
+    assert_eq!(line2, "1.2/30.0");
   }
 
   #[test]

@@ -218,7 +218,11 @@ Phase 5 complete.
   - New `pub(crate)` pure helpers + unit tests: `bomb_fuse_frames`, `bomb_proximity_highlight`, `projectile_world_pos`, `projectile_world_vel`. Private helper `read_vec3_member` alongside `walk_member`/`read_vec3_at`.
   - Deviations (sanctioned): dropped dead C++ reads (projectile `transform` @821, collision-actor `pos` @977); `CGameProjectile`/`CProjectileWeapon` schema lives in `entities/CWeapon.bs` (no `CGameProjectile.bs`). P8.4.5 still owns all HP/item/fuse-frame text overlays.
 
-- [ ] **P8.4.5** Screen-space text overlays (`getScreenspacePosFor*`, `drawBomb`/`drawAi`/`drawPickup` labels) + `renderImGui` status windows. — `TODO` · ports `WorldRenderer.cpp:408-529` + text overlay lines from draw fns; couples to egui `Painter` background layer.
+- [x] **P8.4.5** Screen-space text overlays + `renderImGui` status windows + `EItemType` enum — `DONE` · full detail: [`completed_tasks/P8.4.5.md`](completed_tasks/P8.4.5.md)
+  - Shipped: new `src/defs/` module (`mod defs;`) — `defs::item_types` with `EItemType` (`#[repr(i32)]`, C++ discriminants, `from_raw(u32)` → `Invalid` on unknown) + `item_type_to_name`. `mem::game_object_utils::get_all_loading_datas(&Ctx) -> Vec<GameInstance>` walks `g_main["globalObjects"]["gameResFactory"]["loadList"]`.
+  - `WorldRenderer` gained `cam_viewport: [f32;4]` (pixel-space `[0,0,w,h]`, set in `new`/`resize`/`update`), `pub text_overlays: Vec<TextOverlay>` + `clear_text_overlays()` / `add_text_overlay()`, `pub(crate) fn project(pos,view,proj,viewport) -> Vec3` (glm::project port), private `screenspace_pos_for_actor` / `_physics_actor` (Y-flipped), and `pub fn render_status_windows(&self, &Ctx, &mut egui::Ui)` (WorldStatus area/loading grid + PlayerStatus pos/vel/look). `draw_bomb`/`draw_ai`/`draw_pickup` now queue overlays.
+  - Call site wired: `app.rs::render` takes `Option<&Ctx>` and hosts `render_status_windows` behind the `defs_loaded` gate.
+  - Forward-deps: overlay `screen_pos` is the bare projected point — P9.1's overlay painter owns glyph-metric centering / line-height (`OVERLAY_LINE_HEIGHT = 14.0` is a nominal stand-in). All reads are `Option` and bail rather than C++ total-read-0.
 
 - [ ] **P8.4.6** Visibility-toggle UI: `TriggerRenderConfig` / `ActorRenderConfig` / `CameraMode` egui widgets. — `TODO` · finalize menu / preferences panel.
 

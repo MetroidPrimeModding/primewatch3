@@ -3,14 +3,14 @@
 //! map, refreshed once per frame by the app shell.
 //!
 //! `getAllObjects` / `getObjectByEntityID` and the renderer string helpers
-//! (`objectTagToString` / `fourCCToString`, landed in P7.2) are ported here. The
-//! resource browser helpers (`getAllCObjectReferences` / `getAllLoadingDatas`)
-//! belong to a later phase (P8).
+//! (`objectTagToString` / `fourCCToString`, landed in P7.2) are ported here.
+//! `getAllLoadingDatas` (the resource-load queue walk, P8.4.5) is here too.
+//! `getAllCObjectReferences` still belongs to a later phase.
 
 use std::collections::HashMap;
 
 use crate::ctx::Ctx;
-use crate::mem::globals::get_state_manager;
+use crate::mem::globals::{get_main, get_state_manager};
 use crate::mem::vtables::vtable_class_name;
 use crate::structs::prime_structs::GameInstance;
 
@@ -146,6 +146,58 @@ pub fn object_tag_to_string(ctx: &Ctx, inst: &GameInstance) -> String {
   format!("{id:08x}.{}", four_cc_to_string(four_cc))
 }
 
+/// Ports `GameObjectUtils::getAllLoadingDatas` (`GameObjectUtils.cpp:107-127`).
+///
+/// Walks the intrusive `rstl::list<SLoadingData>` at
+/// `g_main["globalObjects"]["gameResFactory"]["loadList"]`: `first` and `end`
+/// auto-deref to `rstl::list_node`s, `["item"]` is the inline `SLoadingData`,
+/// `["next"]` the next node. Terminates on `current == end`, a null node, or
+/// `res.len() > size` (the C++ "emergency exit").
+///
+/// Deviation from C++: the C++ `list["item"]` uses the panicking `operator[]`;
+/// here a `None` structural read stops the walk and returns what was gathered
+/// (the P4.2 / P5.1 convention). With a valid snapshot this never triggers.
+pub fn get_all_loading_datas(ctx: &Ctx) -> Vec<GameInstance> {
+  let mut res: Vec<GameInstance> = Vec::new();
+
+  let Some(list) = get_main()
+    .get_member(ctx, "globalObjects")
+    .and_then(|g| g.get_member(ctx, "gameResFactory"))
+    .and_then(|f| f.get_member(ctx, "loadList"))
+  else {
+    return res;
+  };
+
+  let size = list
+    .get_member(ctx, "size")
+    .and_then(|m| m.read_u32(ctx))
+    .unwrap_or(0);
+
+  let Some(end) = list.get_member(ctx, "end") else {
+    return res;
+  };
+  let Some(mut current) = list.get_member(ctx, "first") else {
+    return res;
+  };
+
+  while current.address != end.address && current.address != 0 {
+    // Emergency exit in case of bad timing (C++ `if (res.size() > size) break;`).
+    if res.len() as u32 > size {
+      break;
+    }
+    let Some(item) = current.get_member(ctx, "item") else {
+      break;
+    };
+    res.push(item);
+    let Some(next) = current.get_member(ctx, "next") else {
+      break;
+    };
+    current = next;
+  }
+
+  res
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -229,6 +281,30 @@ mod tests {
     let mem = GameMemory::new();
     let ctx = Ctx::new(&structs, &mem);
     let _ = get_all_objects(&ctx);
+  }
+
+  #[test]
+  fn get_all_loading_datas_on_zeroed_memory_is_empty() {
+    let structs = load_defs();
+    let mem = GameMemory::new();
+    let ctx = Ctx::new(&structs, &mem);
+    assert!(get_all_loading_datas(&ctx).is_empty());
+  }
+
+  #[test]
+  fn get_all_loading_datas_walks_the_live_list() {
+    let Some(mem) = load_mem1() else { return };
+    let structs = load_defs();
+    let ctx = Ctx::new(&structs, &mem);
+
+    // The load queue is usually empty on a settled snapshot; the contract under
+    // test is that the walk terminates and every returned `SLoadingData` handle
+    // is a readable `0x8...` effective address with a legible `tag`.
+    let datas = get_all_loading_datas(&ctx);
+    for d in &datas {
+      assert_eq!(d.address & 0x8000_0000, 0x8000_0000);
+      let _ = object_tag_to_string(&ctx, &d.get_member(&ctx, "tag").expect("tag member"));
+    }
   }
 
   #[test]

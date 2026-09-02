@@ -162,8 +162,10 @@ impl ApplicationHandler for App {
             &self.objects,
             &highlighted,
           );
+          window.render(true, &self.status_text, Some(&ctx));
+        } else {
+          window.render(false, &self.status_text, None);
         }
-        window.render(self.defs_loaded, &self.status_text);
       }
       _ => {}
     }
@@ -285,7 +287,11 @@ impl AppWindow {
   }
 
   /// One frame: build the egui UI, clear to black, paint egui (C++ `doFrame`).
-  fn render(&mut self, defs_loaded: bool, status_text: &str) {
+  ///
+  /// `ctx` is `Some` only when the defs are loaded and the per-frame memory
+  /// parse ran — it drives the `WorldRenderer` status windows (C++
+  /// `worldRenderer.renderImGui()` in `doFrame`).
+  fn render(&mut self, defs_loaded: bool, status_text: &str, ctx: Option<&Ctx>) {
     let frame = match self.surface.get_current_texture() {
       wgpu::CurrentSurfaceTexture::Success(frame)
       | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -366,6 +372,16 @@ impl AppWindow {
         world_view_size_pts = Some(avail);
         ui.image(egui::load::SizedTexture::new(world_texture, avail));
       });
+
+    // C++ `doFrame` -> `worldRenderer.renderImGui()`: the WorldStatus /
+    // PlayerStatus overlays, only while the memory parse is live.
+    if let Some(ctx) = ctx {
+      egui::Area::new(egui::Id::new("world-status-host"))
+        .fixed_pos(egui::pos2(0.0, 0.0))
+        .show(&self.egui_ctx, |ui| {
+          self.world.render_status_windows(ctx, ui);
+        });
+    }
 
     let mut full_output = self.egui_ctx.end_pass();
 

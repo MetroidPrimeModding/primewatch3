@@ -1,5 +1,6 @@
 mod app;
 mod ctx;
+mod defs;
 mod gl;
 mod inspector;
 mod mem;
