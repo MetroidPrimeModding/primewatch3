@@ -17,16 +17,16 @@
 //! - `glm::decompose` -> `cam_eye = cam_view.inverse().w_axis` (only `cam_eye`
 //!   is consumed this phase).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use glam::{Mat4, Quat, Vec3, Vec4};
+use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 
 use crate::ctx::Ctx;
 use crate::gl::mesh::DynamicMesh;
 use crate::gl::shader::{WorldPipelines, WorldUniforms};
-use crate::gl::{Topology, WORLD_COLOR_FORMAT, WORLD_DEPTH_FORMAT, shapes};
+use crate::gl::{Topology, Vert, WORLD_COLOR_FORMAT, WORLD_DEPTH_FORMAT, shapes};
 use crate::mem::area_utils::get_areas;
-use crate::mem::game_object_utils::get_object_by_entity_id;
+use crate::mem::game_object_utils::{TUniqueID, get_object_by_entity_id};
 use crate::mem::globals::get_state_manager;
 use crate::mem::math_utils::{read_as_matrix4f, read_as_quat, read_as_transform, read_as_vec3};
 use crate::structs::prime_structs::GameInstance;
@@ -87,6 +87,87 @@ pub struct WorldInput {
   pub cam_pitch: f32,
   pub cam_yaw: f32,
   pub cam_zoom: f32,
+}
+
+/// Ports `struct PlayerGhost` (`WorldRenderer.hpp:73-79`). `enabled` gates the
+/// `player_ghosts` draw loop; nothing populates the ghost array yet (matches
+/// C++ — the loop is a no-op until a later phase feeds it).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PlayerGhost {
+  pub enabled: bool,
+  pub position: Vec3,
+  pub orientation: Quat,
+  pub velocity: Vec3,
+  pub is_morphed: bool,
+}
+
+/// Ports `struct TriggerRenderConfig` (`WorldRenderer.hpp:46-61`). The C++ type
+/// is a packed bitfield with per-field initializers; here it's plain `bool`s
+/// with a matching `Default`. The P8.4.6 UI toggles these.
+#[derive(Clone, Copy, Debug)]
+pub struct TriggerRenderConfig {
+  pub detect_player: bool,
+  pub detect_ai: bool,
+  pub detect_projectiles: bool,
+  pub detect_bombs: bool,
+  pub detect_power_bombs: bool,
+  pub kill_on_enter: bool,
+  pub detect_morphed_player: bool,
+  pub use_collision_impulses: bool,
+  pub detect_camera: bool,
+  pub use_boolean_intersection: bool,
+  pub detect_unmorphed_player: bool,
+  pub block_environmental_effects: bool,
+  pub water: bool,
+  pub docks: bool,
+}
+
+impl Default for TriggerRenderConfig {
+  fn default() -> Self {
+    Self {
+      detect_player: true,
+      detect_ai: false,
+      detect_projectiles: false,
+      detect_bombs: false,
+      detect_power_bombs: false,
+      kill_on_enter: false,
+      detect_morphed_player: false,
+      use_collision_impulses: false,
+      detect_camera: false,
+      use_boolean_intersection: false,
+      detect_unmorphed_player: true,
+      block_environmental_effects: false,
+      water: true,
+      docks: true,
+    }
+  }
+}
+
+/// Ports `struct ActorRenderConfig` (`WorldRenderer.hpp:63-71`). Same
+/// bitfield-to-`bool` treatment as [`TriggerRenderConfig`].
+#[derive(Clone, Copy, Debug)]
+pub struct ActorRenderConfig {
+  pub render_projectiles: bool,
+  pub render_ai: bool,
+  pub render_pickups: bool,
+  pub render_collision_actors: bool,
+  pub render_physics_actors: bool,
+  pub render_actors: bool,
+  pub render_all_actors: bool,
+}
+
+impl Default for ActorRenderConfig {
+  fn default() -> Self {
+    Self {
+      render_projectiles: true,
+      render_ai: true,
+      render_pickups: true,
+      render_collision_actors: true,
+      render_physics_actors: false,
+      render_actors: false,
+      render_all_actors: false,
+    }
+  }
 }
 
 fn clamp_size(size: (u32, u32)) -> (u32, u32) {
@@ -288,6 +369,125 @@ fn read_vec3_member(ctx: &Ctx, parent: &GameInstance, name: &str) -> Option<Vec3
   read_as_vec3(ctx, &parent.get_member(ctx, name)?)
 }
 
+/// Walk a member chain (`entity["a"]["b"]…`), returning `None` on the first
+/// missing link — the P8.4.2 "`None` -> skip the draw" convention for the
+/// per-class draw functions.
+fn walk_member(ctx: &Ctx, inst: &GameInstance, path: &[&str]) -> Option<GameInstance> {
+  let mut cur = inst.clone();
+  for name in path {
+    cur = cur.get_member(ctx, name)?;
+  }
+  Some(cur)
+}
+
+/// [`walk_member`] + [`read_as_vec3`] — a `CVector3f` at the end of a member
+/// chain.
+fn read_vec3_at(ctx: &Ctx, inst: &GameInstance, path: &[&str]) -> Option<Vec3> {
+  read_as_vec3(ctx, &walk_member(ctx, inst, path)?)
+}
+
+/// Ports the `triggerRenderFlags` assembly in `renderEntities`
+/// (`WorldRenderer.cpp:587-599`) — `detect_projectiles` fans out to all seven
+/// projectile bits.
+pub(crate) fn trigger_render_flags(c: &TriggerRenderConfig) -> u32 {
+  let mut f = 0u32;
+  if c.detect_player {
+    f |= 0x1;
+  }
+  if c.detect_ai {
+    f |= 0x2;
+  }
+  if c.detect_projectiles {
+    f |= 0x4 | 0x8 | 0x10 | 0x20 | 0x100 | 0x200 | 0x400;
+  }
+  if c.detect_bombs {
+    f |= 0x40;
+  }
+  if c.detect_power_bombs {
+    f |= 0x80;
+  }
+  if c.kill_on_enter {
+    f |= 0x800;
+  }
+  if c.detect_morphed_player {
+    f |= 0x1000;
+  }
+  if c.use_collision_impulses {
+    f |= 0x2000;
+  }
+  if c.detect_camera {
+    f |= 0x4000;
+  }
+  if c.use_boolean_intersection {
+    f |= 0x8000;
+  }
+  if c.detect_unmorphed_player {
+    f |= 0x10000;
+  }
+  if c.block_environmental_effects {
+    f |= 0x20000;
+  }
+  f
+}
+
+/// Ports the `drawTrigger` colour ladder (`WorldRenderer.cpp:669-677`): default
+/// white, water tint, highlight red — highlight always wins.
+pub(crate) fn trigger_color(is_water: bool, is_highlighted: bool) -> Vec4 {
+  let mut color = Vec4::new(1.0, 1.0, 1.0, 0.5);
+  if is_water {
+    color = Vec4::new(0.5, 0.5, 1.0, 0.5);
+  }
+  if is_highlighted {
+    color = Vec4::new(1.0, 0.0, 0.0, 0.5);
+  }
+  color
+}
+
+/// `glm::abs(glm::length(min - max)) < 0.1` degeneracy test
+/// (`WorldRenderer.cpp:711` / `716`).
+pub(crate) fn is_degenerate_bbox(min: Vec3, max: Vec3) -> bool {
+  (min - max).length().abs() < 0.1
+}
+
+/// Ports the `drawPhysicsActor` bounding-box fallback chain
+/// (`WorldRenderer.cpp:706-719`): `collisionPrimitive` aabb (`pos`-offset) ->
+/// `baseBoundingBox` (`pos`-offset) -> `renderBounds` (**no** `pos` offset —
+/// the asymmetry is verbatim from C++).
+pub(crate) fn physics_actor_bbox(
+  pos: Vec3,
+  collision_primitive: (Vec3, Vec3),
+  base_bounding_box: (Vec3, Vec3),
+  render_bounds: (Vec3, Vec3),
+) -> (Vec3, Vec3) {
+  let (mut min, mut max) = (pos + collision_primitive.0, pos + collision_primitive.1);
+  if is_degenerate_bbox(min, max) {
+    min = pos + base_bounding_box.0;
+    max = pos + base_bounding_box.1;
+  }
+  if is_degenerate_bbox(min, max) {
+    min = render_bounds.0;
+    max = render_bounds.1;
+  }
+  (min, max)
+}
+
+/// Ports the `drawPlayer` speed-indicator colour ladder
+/// (`WorldRenderer.cpp:567-576`): red when the angle between facing and
+/// movement exceeds 90° (or is NaN), otherwise a green ramp that flips to cyan
+/// past 95%.
+pub(crate) fn player_speed_color(angle: f32) -> Vec4 {
+  let half_pi = std::f32::consts::FRAC_PI_2;
+  if angle.abs() > half_pi || angle.is_nan() {
+    return Vec4::new(1.0, 0.0, 0.0, 1.0);
+  }
+  let percent = angle / half_pi;
+  if percent > 0.95 {
+    Vec4::new(0.0, 1.0, 1.0, 1.0)
+  } else {
+    Vec4::new(0.0, percent * 0.5 + 0.5, 0.0, 1.0)
+  }
+}
+
 pub struct WorldRenderer {
   // --- camera params (`WorldRenderer.hpp:83-113` defaults) ---
   pub aspect: f32,
@@ -304,6 +504,8 @@ pub struct WorldRenderer {
   pub culling: CullType,
   pub camera_mode: CameraMode,
   pub orbit_player_camera_origin: OrbitPlayerCameraOrigin,
+  pub trigger_render_config: TriggerRenderConfig,
+  pub actor_render_config: ActorRenderConfig,
 
   // --- cached per-frame camera state ---
   pub cam_projection: Mat4,
@@ -311,15 +513,15 @@ pub struct WorldRenderer {
   pub cam_eye: Vec3,
   pub game_cam: GameCamera,
 
-  // --- cached per-frame player state ---
-  pub player_pos: Vec3,
-  // P8.4.3: consumed by drawPlayer / renderEntities
-  pub player_velocity: Vec3,
-  // P8.4.3: consumed by drawPlayer / renderEntities
-  pub player_orientation: Quat,
-  pub player_is_morphed: bool,
+  // --- cached per-frame player state (`WorldRenderer.hpp:109-113`) ---
+  /// The live player, read from `g_stateManager["player"]` each frame. Its
+  /// `position` / `orientation` / `velocity` / `is_morphed` feed `draw_player`
+  /// and the camera; a `None` on any sub-read keeps the last good value.
+  pub player: PlayerGhost,
+  /// `std::array<PlayerGhost, 5>` — all `enabled == false`, nothing populates
+  /// them yet (matches C++); the `draw_player` loop over them is a no-op.
+  pub player_ghosts: [PlayerGhost; 5],
   pub last_known_non_colliding_pos: Vec3,
-  // P8.4.3: consumed by drawPlayer / renderEntities
   pub player_look_vec: Vec3,
 
   // --- GPU state ---
@@ -357,14 +559,14 @@ impl WorldRenderer {
       culling: CullType::Back,
       camera_mode: CameraMode::FollowPlayer,
       orbit_player_camera_origin: OrbitPlayerCameraOrigin::Center,
+      trigger_render_config: TriggerRenderConfig::default(),
+      actor_render_config: ActorRenderConfig::default(),
       cam_projection: Mat4::IDENTITY,
       cam_view: Mat4::IDENTITY,
       cam_eye: Vec3::ZERO,
       game_cam: GameCamera::default(),
-      player_pos: Vec3::ZERO,
-      player_velocity: Vec3::ZERO,
-      player_orientation: Quat::IDENTITY,
-      player_is_morphed: false,
+      player: PlayerGhost::default(),
+      player_ghosts: [PlayerGhost::default(); 5],
       last_known_non_colliding_pos: Vec3::ZERO,
       player_look_vec: Vec3::ZERO,
       size,
@@ -404,8 +606,17 @@ impl WorldRenderer {
 
   /// Ports `WorldRenderer::update` (`WorldRenderer.cpp:120-151`) + the
   /// camera-setup block (`258-310`) + the CPU-side ghost-cube / camera-line
-  /// accumulation (`321-334`).
-  pub fn update(&mut self, ctx: &Ctx, input: &WorldInput, viewport_size: (u32, u32)) {
+  /// accumulation (`321-334`) + `drawPlayer` / `renderEntities`
+  /// (`312-336`) — those C++ `render()` calls happen here at the end of
+  /// `update` since this port keeps all CPU accumulation in `update`.
+  pub fn update(
+    &mut self,
+    ctx: &Ctx,
+    input: &WorldInput,
+    viewport_size: (u32, u32),
+    objects: &HashMap<TUniqueID, GameInstance>,
+    highlighted: &HashSet<u16>,
+  ) {
     self.update_areas(ctx);
 
     self.pitch += input.cam_pitch;
@@ -425,10 +636,10 @@ impl WorldRenderer {
         .get_member(ctx, "transform")
         .and_then(|m| read_as_transform(ctx, &m))
       {
-        self.player_pos = tf.w_axis.truncate();
+        self.player.position = tf.w_axis.truncate();
       }
       if let Some(v) = read_vec3_member(ctx, &player, "velocity") {
-        self.player_velocity = v;
+        self.player.velocity = v;
       }
       if let Some(v) = player
         .get_member(ctx, "lastNonCollidingState")
@@ -443,13 +654,13 @@ impl WorldRenderer {
         .get_member(ctx, "orientation")
         .and_then(|m| read_as_quat(ctx, &m))
       {
-        self.player_orientation = q;
+        self.player.orientation = q;
       }
       if let Some(morph) = player
         .get_member(ctx, "morphState")
         .and_then(|m| m.read_u32(ctx))
       {
-        self.player_is_morphed = morph == 1; // EPlayerMorphBallState::Morphed
+        self.player.is_morphed = morph == 1; // EPlayerMorphBallState::Morphed
       }
     }
 
@@ -506,7 +717,7 @@ impl WorldRenderer {
       yaw: self.yaw,
       distance: self.distance,
       up: self.up,
-      player_is_morphed: self.player_is_morphed,
+      player_is_morphed: self.player.is_morphed,
       last_known_non_colliding_pos: self.last_known_non_colliding_pos,
       manual_camera_pos: self.manual_camera_pos,
       game_cam: self.game_cam,
@@ -539,7 +750,317 @@ impl WorldRenderer {
         self.game_cam.transform,
         self.cam_line_length,
       ));
+
+    // --- entities + player (`WorldRenderer.cpp:312-336`) ---
+    self.render_entities(ctx, objects, highlighted);
+
+    let player = self.player;
+    self.draw_player(&player, Vec4::ONE);
+    let ghosts = self.player_ghosts;
+    for ghost in ghosts {
+      if ghost.enabled {
+        // teal
+        self.draw_player(&ghost, Vec4::new(0.0, 1.0, 1.0, 0.5));
+      }
+    }
   }
+
+  /// Selects the opaque or translucent immediate buffer by `translucent`, sets
+  /// its transform, and pushes `verts` — the `buf = color.a < 0.99 ? … : …`
+  /// pattern shared by `drawPlayer` / the per-class draw functions.
+  fn buf_add_tris(&mut self, translucent: bool, transform: Mat4, verts: &[Vert]) {
+    let buf = if translucent {
+      &mut self.translucent_render_buff
+    } else {
+      &mut self.render_buff
+    };
+    buf.set_transform(transform);
+    buf.add_tris(verts);
+  }
+
+  /// Ports `WorldRenderer::drawPlayer` (`WorldRenderer.cpp:531-581`). The
+  /// collision shape goes to the opaque or translucent buffer by `color.a`; the
+  /// speed indicator is always on the opaque `render_buff`.
+  fn draw_player(&mut self, ghost: &PlayerGhost, color: Vec4) {
+    let translucent = color.w < 0.99;
+
+    if ghost.is_morphed {
+      let model = Mat4::from_translation(ghost.position + Vec3::new(0.0, 0.0, 0.7))
+        * Mat4::from_quat(ghost.orientation);
+      let tris = shapes::generate_sphere(Vec3::ZERO, 0.7, color);
+      self.buf_add_tris(translucent, model, &tris);
+    } else {
+      let tris = shapes::generate_cube(Vec3::new(-0.5, -0.5, 0.0), Vec3::new(0.5, 0.5, 2.7), color);
+      self.buf_add_tris(translucent, Mat4::from_translation(ghost.position), &tris);
+    }
+
+    // Speed indicator — always on the opaque `render_buff`.
+    let z = if ghost.is_morphed { 0.7 } else { 2.7 / 2.0 };
+    self.render_buff.set_transform(Mat4::from_translation(
+      ghost.position + Vec3::new(0.0, 0.0, z),
+    ));
+
+    let forward3 = (ghost.orientation * Vec3::Y).normalize();
+    let forward = Vec2::new(forward3.x, forward3.y);
+    let movement3 = ghost.velocity.normalize();
+    let movement = Vec2::new(movement3.x, movement3.y);
+    let angle = (forward.dot(movement) / (forward.length() * movement.length())).acos();
+    let speed_color = player_speed_color(angle);
+
+    self.render_buff.set_color([1.0, 1.0, 1.0, 1.0]);
+    self
+      .render_buff
+      .add_line(Vec3::ZERO, Vec3::new(forward.x, forward.y, 0.0));
+    self.render_buff.set_color(speed_color.to_array());
+    self.render_buff.add_line(Vec3::ZERO, ghost.velocity * 0.3);
+  }
+
+  /// Ports `WorldRenderer::renderEntities` (`WorldRenderer.cpp:583-662`) — the
+  /// active/highlight filter plus the `extendsClass` dispatch chain. Chain order
+  /// is load-bearing (`CCollisionActor` -> `CAi` -> `CPhysicsActor` ->
+  /// `CActor`): every class here inherits from the ones below it.
+  //
+  // `collapsible_if` would suggest folding `if extends_class(X) { if cfg { … } }`
+  // into `&&`, but that changes the dispatch — a class match with its config
+  // flag off must NOT fall through to a base-class branch.
+  #[allow(clippy::collapsible_if)]
+  fn render_entities(
+    &mut self,
+    ctx: &Ctx,
+    objects: &HashMap<TUniqueID, GameInstance>,
+    highlighted: &HashSet<u16>,
+  ) {
+    self.render_buff.set_transform(Mat4::IDENTITY);
+    let trigger_flags = trigger_render_flags(&self.trigger_render_config);
+
+    for entity in objects.values() {
+      let active = entity
+        .get_member(ctx, "active")
+        .and_then(|m| m.read_bool(ctx));
+      if active != Some(true) {
+        continue;
+      }
+      let is_highlighted = entity
+        .get_member(ctx, "uniqueID")
+        .and_then(|m| m.read_u16(ctx))
+        .is_some_and(|uid| highlighted.contains(&uid));
+
+      if entity.extends_class(ctx, "CScriptTrigger") {
+        let flags = entity
+          .get_member(ctx, "triggerFlags")
+          .and_then(|m| m.read_u32(ctx))
+          .unwrap_or(0);
+        if entity.extends_class(ctx, "CScriptWater") {
+          if self.trigger_render_config.water {
+            self.draw_trigger(ctx, entity, is_highlighted);
+          }
+        } else if (flags & trigger_flags) != 0 {
+          self.draw_trigger(ctx, entity, is_highlighted);
+        }
+      } else if entity.extends_class(ctx, "CScriptDock") {
+        if self.trigger_render_config.docks {
+          self.draw_dock(ctx, entity, is_highlighted);
+        }
+      } else if entity.extends_class(ctx, "CGameProjectile") {
+        if self.actor_render_config.render_projectiles {
+          self.draw_projectile(ctx, entity, is_highlighted);
+        }
+      } else if entity.extends_class(ctx, "CBomb") {
+        if self.actor_render_config.render_projectiles {
+          self.draw_bomb(ctx, entity, is_highlighted);
+        }
+      } else if entity.extends_class(ctx, "CPowerBomb") {
+        if self.actor_render_config.render_projectiles {
+          self.draw_power_bomb(ctx, entity, is_highlighted);
+        }
+      } else if entity.extends_class(ctx, "CPlayer") {
+        // player render handled by draw_player
+      } else if entity.extends_class(ctx, "CChozoGhost") {
+        if self.actor_render_config.render_ai {
+          self.draw_chozo_ghost(ctx, entity, is_highlighted);
+        }
+      } else if entity.extends_class(ctx, "CScriptPickup") {
+        if self.actor_render_config.render_pickups {
+          self.draw_pickup(ctx, entity, is_highlighted);
+        }
+      } else if entity.extends_class(ctx, "CCollisionActor") {
+        if self.actor_render_config.render_collision_actors {
+          self.draw_collision_actor(ctx, entity, is_highlighted);
+        }
+      } else if entity.extends_class(ctx, "CAi") {
+        if self.actor_render_config.render_ai {
+          self.draw_ai(ctx, entity, is_highlighted);
+        }
+      } else if entity.extends_class(ctx, "CPhysicsActor") {
+        if self.actor_render_config.render_physics_actors {
+          self.draw_physics_actor(ctx, entity, is_highlighted);
+        }
+      } else if entity.extends_class(ctx, "CActor") {
+        if self.actor_render_config.render_actors {
+          self.draw_actor(ctx, entity, is_highlighted);
+        }
+      }
+    }
+  }
+
+  /// Ports `WorldRenderer::drawTrigger` (`WorldRenderer.cpp:664-684`).
+  fn draw_trigger(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
+    let Some(min) = read_vec3_at(ctx, entity, &["bounds", "min"]) else {
+      return;
+    };
+    let Some(max) = read_vec3_at(ctx, entity, &["bounds", "max"]) else {
+      return;
+    };
+    let Some(transform) = entity
+      .get_member(ctx, "transform")
+      .and_then(|m| read_as_transform(ctx, &m))
+    else {
+      return;
+    };
+    let color = trigger_color(entity.extends_class(ctx, "CScriptWater"), is_highlighted);
+    self.translucent_render_buff.set_transform(transform);
+    self
+      .translucent_render_buff
+      .add_tris(&shapes::generate_cube(min, max, color));
+  }
+
+  /// Ports `WorldRenderer::drawDock` (`WorldRenderer.cpp:686-702`). `min`/`max`
+  /// are inherited from `CPhysicsActor::collisionPrimitive`.
+  fn draw_dock(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
+    let Some(min) = read_vec3_at(ctx, entity, &["collisionPrimitive", "aabb", "min"]) else {
+      return;
+    };
+    let Some(max) = read_vec3_at(ctx, entity, &["collisionPrimitive", "aabb", "max"]) else {
+      return;
+    };
+    let Some(transform) = entity
+      .get_member(ctx, "transform")
+      .and_then(|m| read_as_transform(ctx, &m))
+    else {
+      return;
+    };
+    let color = if is_highlighted {
+      Vec4::new(1.0, 0.0, 0.0, 0.5)
+    } else {
+      Vec4::new(0.5, 1.0, 0.5, 0.5)
+    };
+    self.translucent_render_buff.set_transform(transform);
+    self
+      .translucent_render_buff
+      .add_tris(&shapes::generate_cube(min, max, color));
+  }
+
+  /// Ports `WorldRenderer::drawPhysicsActor` (`WorldRenderer.cpp:704-739`).
+  fn draw_physics_actor(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
+    let Some(transform) = entity
+      .get_member(ctx, "transform")
+      .and_then(|m| read_as_transform(ctx, &m))
+    else {
+      return;
+    };
+    let pos = transform.w_axis.truncate();
+
+    let Some(cp_min) = read_vec3_at(ctx, entity, &["collisionPrimitive", "aabb", "min"]) else {
+      return;
+    };
+    let Some(cp_max) = read_vec3_at(ctx, entity, &["collisionPrimitive", "aabb", "max"]) else {
+      return;
+    };
+    let Some(bb_min) = read_vec3_at(ctx, entity, &["baseBoundingBox", "min"]) else {
+      return;
+    };
+    let Some(bb_max) = read_vec3_at(ctx, entity, &["baseBoundingBox", "max"]) else {
+      return;
+    };
+    let Some(rb_min) = read_vec3_at(ctx, entity, &["renderBounds", "min"]) else {
+      return;
+    };
+    let Some(rb_max) = read_vec3_at(ctx, entity, &["renderBounds", "max"]) else {
+      return;
+    };
+
+    let (min, max) = physics_actor_bbox(pos, (cp_min, cp_max), (bb_min, bb_max), (rb_min, rb_max));
+
+    let color = if is_highlighted {
+      Vec4::new(1.0, 0.0, 0.0, 0.5)
+    } else {
+      Vec4::new(1.0, 1.0, 1.0, 0.5)
+    };
+
+    self.translucent_render_buff.set_color(color.to_array());
+    self.translucent_render_buff.set_transform(Mat4::IDENTITY);
+    self
+      .translucent_render_buff
+      .add_tris(&shapes::generate_cube(min, max, color));
+
+    self.translucent_render_buff.set_transform(transform);
+    self
+      .translucent_render_buff
+      .add_line(Vec3::new(0.0, -0.5, 0.0), Vec3::new(0.0, 0.5, 0.0));
+    self
+      .translucent_render_buff
+      .add_line(Vec3::new(-0.5, 0.0, 0.0), Vec3::new(0.5, 0.0, 0.0));
+    self
+      .translucent_render_buff
+      .add_line(Vec3::new(0.0, 0.0, -0.5), Vec3::new(0.0, 0.0, 0.5));
+  }
+
+  /// Ports `WorldRenderer::drawActor` (`WorldRenderer.cpp:741-773`). A null
+  /// `*CModelData` (`address == 0`, or an unreadable pointer) plus not
+  /// highlighted plus `!render_all_actors` skips the actor.
+  fn draw_actor(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
+    let model_addr = entity.get_member(ctx, "modelData").map_or(0, |m| m.address);
+    if model_addr == 0 && !is_highlighted && !self.actor_render_config.render_all_actors {
+      return;
+    }
+
+    let Some(min) = read_vec3_at(ctx, entity, &["renderBounds", "min"]) else {
+      return;
+    };
+    let Some(max) = read_vec3_at(ctx, entity, &["renderBounds", "max"]) else {
+      return;
+    };
+    let Some(transform) = entity
+      .get_member(ctx, "transform")
+      .and_then(|m| read_as_transform(ctx, &m))
+    else {
+      return;
+    };
+
+    let color = if is_highlighted {
+      Vec4::new(1.0, 0.0, 0.0, 0.5)
+    } else {
+      Vec4::new(1.0, 1.0, 1.0, 0.5)
+    };
+
+    self.translucent_render_buff.set_color(color.to_array());
+    self.translucent_render_buff.set_transform(Mat4::IDENTITY);
+    self
+      .translucent_render_buff
+      .add_tris(&shapes::generate_cube(min, max, color));
+
+    self.translucent_render_buff.set_transform(transform);
+    self
+      .translucent_render_buff
+      .add_line(Vec3::new(0.0, -0.5, 0.0), Vec3::new(0.0, 0.5, 0.0));
+    self
+      .translucent_render_buff
+      .add_line(Vec3::new(-0.5, 0.0, 0.0), Vec3::new(0.5, 0.0, 0.0));
+    self
+      .translucent_render_buff
+      .add_line(Vec3::new(0.0, 0.0, -0.5), Vec3::new(0.0, 0.0, 0.5));
+  }
+
+  // --- P8.4.4: specialized geometry + velocity vectors, no text overlays yet
+  // (`WorldRenderer.cpp:775-1023`). Stubbed now so the dispatch chain lands
+  // complete.
+  fn draw_projectile(&mut self, _ctx: &Ctx, _entity: &GameInstance, _is_highlighted: bool) {}
+  fn draw_bomb(&mut self, _ctx: &Ctx, _entity: &GameInstance, _is_highlighted: bool) {}
+  fn draw_power_bomb(&mut self, _ctx: &Ctx, _entity: &GameInstance, _is_highlighted: bool) {}
+  fn draw_chozo_ghost(&mut self, _ctx: &Ctx, _entity: &GameInstance, _is_highlighted: bool) {}
+  fn draw_pickup(&mut self, _ctx: &Ctx, _entity: &GameInstance, _is_highlighted: bool) {}
+  fn draw_collision_actor(&mut self, _ctx: &Ctx, _entity: &GameInstance, _is_highlighted: bool) {}
+  fn draw_ai(&mut self, _ctx: &Ctx, _entity: &GameInstance, _is_highlighted: bool) {}
 
   /// Ports `WorldRenderer::updateAreas` (`WorldRenderer.cpp:153-168`).
   fn update_areas(&mut self, ctx: &Ctx) {
@@ -808,5 +1329,105 @@ mod tests {
     let mut gpu: HashMap<u32, DynamicMesh> = HashMap::new();
     reconcile_area(&mut cpu, &mut gpu, 0x22, true, || None);
     assert!(cpu.is_empty());
+  }
+
+  #[test]
+  fn trigger_render_flags_default_config() {
+    // Defaults: detect_player + detect_unmorphed_player -> 0x1 | 0x10000.
+    let f = trigger_render_flags(&TriggerRenderConfig::default());
+    assert_eq!(f, 0x1 | 0x10000);
+  }
+
+  #[test]
+  fn trigger_render_flags_projectiles_fan_out() {
+    let cfg = TriggerRenderConfig {
+      detect_player: false,
+      detect_unmorphed_player: false,
+      detect_projectiles: true,
+      ..TriggerRenderConfig::default()
+    };
+    assert_eq!(
+      trigger_render_flags(&cfg),
+      0x4 | 0x8 | 0x10 | 0x20 | 0x100 | 0x200 | 0x400
+    );
+  }
+
+  #[test]
+  fn trigger_render_flags_all_bits() {
+    let cfg = TriggerRenderConfig {
+      detect_player: true,
+      detect_ai: true,
+      detect_projectiles: true,
+      detect_bombs: true,
+      detect_power_bombs: true,
+      kill_on_enter: true,
+      detect_morphed_player: true,
+      use_collision_impulses: true,
+      detect_camera: true,
+      use_boolean_intersection: true,
+      detect_unmorphed_player: true,
+      block_environmental_effects: true,
+      water: true,
+      docks: true,
+    };
+    assert_eq!(trigger_render_flags(&cfg), 0x3FFFF);
+  }
+
+  #[test]
+  fn trigger_color_precedence() {
+    // default white
+    assert_eq!(trigger_color(false, false), Vec4::new(1.0, 1.0, 1.0, 0.5));
+    // water tint
+    assert_eq!(trigger_color(true, false), Vec4::new(0.5, 0.5, 1.0, 0.5));
+    // highlight wins over water
+    assert_eq!(trigger_color(true, true), Vec4::new(1.0, 0.0, 0.0, 0.5));
+    assert_eq!(trigger_color(false, true), Vec4::new(1.0, 0.0, 0.0, 0.5));
+  }
+
+  #[test]
+  fn physics_actor_bbox_uses_collision_primitive_when_non_degenerate() {
+    let pos = Vec3::new(10.0, 0.0, 0.0);
+    let cp = (Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+    let bb = (Vec3::splat(-5.0), Vec3::splat(5.0));
+    let rb = (Vec3::splat(-9.0), Vec3::splat(9.0));
+    let (min, max) = physics_actor_bbox(pos, cp, bb, rb);
+    approx(min, pos + cp.0);
+    approx(max, pos + cp.1);
+  }
+
+  #[test]
+  fn physics_actor_bbox_falls_back_to_base_then_render_bounds() {
+    let pos = Vec3::new(10.0, 2.0, 3.0);
+    let degen = (Vec3::ZERO, Vec3::ZERO);
+    // collisionPrimitive degenerate -> baseBoundingBox (pos-offset).
+    let bb = (Vec3::splat(-2.0), Vec3::splat(2.0));
+    let (min, max) = physics_actor_bbox(pos, degen, bb, degen);
+    approx(min, pos + bb.0);
+    approx(max, pos + bb.1);
+
+    // both degenerate -> renderBounds, NOT pos-offset.
+    let rb = (Vec3::new(-4.0, -4.0, -4.0), Vec3::new(4.0, 4.0, 4.0));
+    let (min, max) = physics_actor_bbox(pos, degen, degen, rb);
+    approx(min, rb.0);
+    approx(max, rb.1);
+  }
+
+  #[test]
+  fn player_speed_color_ladder() {
+    let half_pi = std::f32::consts::FRAC_PI_2;
+    // > 90deg -> red
+    assert_eq!(
+      player_speed_color(half_pi + 0.1),
+      Vec4::new(1.0, 0.0, 0.0, 1.0)
+    );
+    // NaN -> red
+    assert_eq!(player_speed_color(f32::NAN), Vec4::new(1.0, 0.0, 0.0, 1.0));
+    // aligned -> green base (percent 0)
+    assert_eq!(player_speed_color(0.0), Vec4::new(0.0, 0.5, 0.0, 1.0));
+    // near 90deg -> cyan (percent > 0.95)
+    assert_eq!(
+      player_speed_color(half_pi * 0.98),
+      Vec4::new(0.0, 1.0, 1.0, 1.0)
+    );
   }
 }

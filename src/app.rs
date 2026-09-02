@@ -153,7 +153,15 @@ impl ApplicationHandler for App {
           let ctx = Ctx::new(&self.structs, &self.mem);
           self.objects = get_all_objects(&ctx);
           let viewport = window.world_view_px;
-          window.world.update(&ctx, &WorldInput::default(), viewport);
+          // TODO(P9.2): real highlight state (per-object watch selection).
+          let highlighted: std::collections::HashSet<u16> = std::collections::HashSet::new();
+          window.world.update(
+            &ctx,
+            &WorldInput::default(),
+            viewport,
+            &self.objects,
+            &highlighted,
+          );
         }
         window.render(self.defs_loaded, &self.status_text);
       }
