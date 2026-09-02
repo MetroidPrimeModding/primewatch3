@@ -232,7 +232,12 @@ Phase 5 complete.
 
 ## Phase 9 — App shell (ports `PrimeWatch.cpp`, `PrimeWatchInput.cpp`; replaces `main.rs`)
 
-- [ ] **P9.1** winit event loop: input → per-frame memory parse → egui UI → 3D render, in that order. — `TODO`
+- [x] **P9.1** winit event loop: input → memory parse → egui UI → 3D render — `DONE` · full detail: [`completed_tasks/P9.1.md`](completed_tasks/P9.1.md)
+  - `src/app.rs` near-total rewrite: `InputState` + `App::accumulate_input`/`device_event` accumulate winit events; pure `InputState::plan(wants_kb, wants_mouse, camera_mode) -> InputPlan` ports `PrimeWatch::processInput` (sticky mouse capture, look, wheel/arrow/PageUp-Down camera deltas, Shift/Ctrl+1-5 ghosts, Detached WASD/QE). `App::redraw` = C++ `mainLoop` order (input → `update_from_dolphin` → `get_all_objects` → `world.update` → `AppWindow::render`).
+  - `AppWindow::render` takes `&mut FrameState<'a>` (game/UI state split-borrowed out of `App`). Menu bar = Attach (PID list / detach / rfd `.raw` file picker) + P8.4.6 render-config menus + Tools (Reload Definitions / Raw Data View / Raw Demo View placeholder / exact-values); menu clicks deferred as `MenuAction` applied after `queue.present`. Also: `render_raw_data_view` hex table, per-frame text-overlay painter over the World image, P7 `Inspector` "globals" window, NOT-LOADED "Reload" button.
+  - `src/world/renderer.rs` +`record_player_ghost` / `clear_player_ghost` / `move_detached_camera`. `Cargo.toml` +`rfd = "0.15"` (heavy zbus/ashpd tree; synchronous picker — revisit before P10).
+  - **P9.2 must respect:** `FrameState` is the seam for the object-table / watch windows; `App.objects` is walked every frame but dropped after `world.update` — thread it into `FrameState`. `highlighted` set fed to `world.update` is currently empty (`// TODO(P9.2)`). Non-blocking gaps: Camera Controls window has no titlebar-X `.open()` bind (menu toggle only); scroll-zoom dead while hovering the World window; shell layout rough. All display/live-Dolphin manual checks still pending the human (see archive).
+
 - [ ] **P9.2** Per-object watch windows keyed by editor ID (`WatchedEditorId`). — `TODO`
 
 ## Phase 10 — Packaging / CI

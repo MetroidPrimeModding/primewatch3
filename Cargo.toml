@@ -17,6 +17,9 @@ glam = "0.33"
 pollster = "1.0"
 wgpu = "30"
 winit = "0.30"
+# Native file picker for the "Load from file" menu item (ports the C++
+# ImGuiFileDialog integration in PrimeWatch.cpp:305-312 / 376-378).
+rfd = "0.15"
 
 # Windows-only: real Dolphin process attach (OpenProcess / VirtualQueryEx / ReadProcessMemory).
 # Target-gated so it never touches the Linux/macOS build. Ports the Win32 headers used in

@@ -1,25 +1,37 @@
-//! Application shell: winit event loop + wgpu device/surface + a single egui window.
+//! Application shell: winit event loop + wgpu device/surface + the egui UI.
 //!
-//! Ports the window/context/defs-load parts of `../primewatch2/src/PrimeWatch.cpp`
-//! (`initAndCreateWindow`, `initGlAndImgui`, `mainLoop`, `doFrame`, `framebuffer_size_cb`).
-//! Game-specific pieces (memory attach, world renderer, inspector) belong to later phases.
+//! Ports `../primewatch2/src/PrimeWatch.cpp` (`mainLoop` / `processInput` /
+//! `doFrame` / `doImGui` / `doMainMenu` / `doMemoryParse`) and
+//! `../primewatch2/src/PrimeWatchInput.cpp` (`PrimeWatch::processInput`).
+//!
+//! Frame order (C++ `mainLoop`): accumulate input -> per-frame memory parse ->
+//! walk the live object list -> build the egui UI -> render the 3D world -> paint
+//! egui. winit is event-driven, so input is accumulated from `WindowEvent`s and
+//! consumed at the top of `RedrawRequested` (the polling model the C++ used via
+//! ImGui IO state).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::sync::Arc;
 
+use sysinfo::Pid;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::WindowEvent;
+use winit::event::{
+  DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent,
+};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
-use winit::window::{Window, WindowId};
+use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
+use winit::window::{CursorGrabMode, Window, WindowId};
 
 use crate::ctx::Ctx;
+use crate::inspector::Inspector;
 use crate::mem::dolphin_memory::DolphinMemoryAccess;
 use crate::mem::game_memory::GameMemory;
 use crate::mem::game_object_utils::{TUniqueID, get_all_objects};
+use crate::mem::globals::{get_main, get_memory_card, get_state_manager, get_tweak_player};
 use crate::structs::prime_structs::{GameInstance, GameStructs};
-use crate::world::renderer::{WorldInput, WorldRenderer};
+use crate::world::renderer::{CameraMode, WorldInput, WorldRenderer};
 
 /// Build the event loop and run the app. Mirrors `main()` in the C++ entrypoint.
 pub fn run() -> Result<(), Box<dyn Error>> {
@@ -29,8 +41,154 @@ pub fn run() -> Result<(), Box<dyn Error>> {
   Ok(())
 }
 
-/// Owns the long-lived game state plus the render state that only exists while the
-/// window is active. No globals — everything is threaded explicitly (CLAUDE.md).
+/// The five ghost-record hotkeys (`GLFW_KEY_1..5` in `PrimeWatchInput.cpp:144`).
+const GHOST_KEYS: [KeyCode; 5] = [
+  KeyCode::Digit1,
+  KeyCode::Digit2,
+  KeyCode::Digit3,
+  KeyCode::Digit4,
+  KeyCode::Digit5,
+];
+
+/// Raw winit input accumulated between frames, then folded into a [`WorldInput`]
+/// (plus camera / ghost side effects) at the top of each frame. Ports the ImGui
+/// IO state that `PrimeWatch::processInput` polled.
+#[derive(Default)]
+struct InputState {
+  keys_down: HashSet<KeyCode>,
+  modifiers: ModifiersState,
+  /// Accumulated raw mouse motion since the last frame (`io.MouseDelta`).
+  mouse_delta: (f32, f32),
+  /// Accumulated scroll-wheel lines since the last frame (`io.MouseWheel`).
+  scroll: f32,
+  left_down: bool,
+  right_down: bool,
+  /// `PrimeWatchInput::capturedMouse` — sticky while a button is held.
+  captured_mouse: bool,
+}
+
+/// Result of [`InputState::plan`] — a [`WorldInput`] plus the direct
+/// `worldRenderer` mutations `processInput` performs (ghost record/clear,
+/// detached-camera movement) and the resolved mouse-capture state.
+struct InputPlan {
+  world_input: WorldInput,
+  captured_mouse: bool,
+  ghost_record: [bool; 5],
+  ghost_clear: [bool; 5],
+  /// Net WASD/QE contribution for `CameraMode::Detached` (`forward = W - S`,
+  /// `right = A - D`, `up = E - Q`).
+  detached_move: (f32, f32, f32),
+}
+
+impl InputState {
+  /// Ports `PrimeWatch::processInput` (`PrimeWatchInput.cpp:126-233`). Pure: the
+  /// caller applies the plan and clears the accumulated deltas.
+  fn plan(&self, wants_keyboard: bool, wants_mouse: bool, camera_mode: CameraMode) -> InputPlan {
+    // `PrimeWatchInput.cpp:133-140` — sticky capture.
+    let mut captured = self.captured_mouse;
+    if !wants_mouse && (self.left_down || self.right_down) {
+      captured = true;
+    }
+    if !self.left_down && !self.right_down {
+      captured = false;
+    }
+
+    let mut wi = WorldInput::default();
+
+    // `PrimeWatchInput.cpp:144-157` — Shift+N records ghost N, Ctrl+N clears it.
+    let mut ghost_record = [false; 5];
+    let mut ghost_clear = [false; 5];
+    for (i, key) in GHOST_KEYS.iter().enumerate() {
+      if self.keys_down.contains(key) {
+        if self.modifiers.shift_key() {
+          ghost_record[i] = true;
+        } else if self.modifiers.control_key() {
+          ghost_clear[i] = true;
+        }
+      }
+    }
+
+    // `PrimeWatchInput.cpp:168-180` — mouse look + wheel zoom.
+    if captured {
+      wi.cam_pitch = self.mouse_delta.1 * 0.005;
+      wi.cam_yaw = self.mouse_delta.0 * -0.005;
+    }
+    if !wants_mouse {
+      wi.cam_zoom = self.scroll * -2.0;
+    }
+
+    // `PrimeWatchInput.cpp:182-232` — keyboard camera control.
+    let mut detached_move = (0.0_f32, 0.0_f32, 0.0_f32);
+    if !wants_keyboard {
+      let down = |k| self.keys_down.contains(&k);
+      if down(KeyCode::ArrowUp) {
+        wi.cam_pitch += 0.03;
+      }
+      if down(KeyCode::ArrowDown) {
+        wi.cam_pitch -= 0.03;
+      }
+      if down(KeyCode::ArrowLeft) {
+        wi.cam_yaw += 0.03;
+      }
+      if down(KeyCode::ArrowRight) {
+        wi.cam_yaw -= 0.03;
+      }
+      if down(KeyCode::PageUp) {
+        wi.cam_zoom -= 0.5;
+      }
+      if down(KeyCode::PageDown) {
+        wi.cam_zoom += 0.5;
+      }
+      if camera_mode == CameraMode::Detached {
+        let axis = |a, b| i32::from(down(a)) as f32 - i32::from(down(b)) as f32;
+        detached_move = (
+          axis(KeyCode::KeyW, KeyCode::KeyS),
+          axis(KeyCode::KeyA, KeyCode::KeyD),
+          axis(KeyCode::KeyE, KeyCode::KeyQ),
+        );
+      }
+    }
+
+    InputPlan {
+      world_input: wi,
+      captured_mouse: captured,
+      ghost_record,
+      ghost_clear,
+      detached_move,
+    }
+  }
+}
+
+/// Deferred menu action — collected during the egui pass (which only holds
+/// shared borrows) and applied afterwards against the mutable game state. Ports
+/// the immediate `MemoryAccess::` / `loadDefs` / file-dialog calls in
+/// `PrimeWatch::doMainMenu` / `doImGui`.
+enum MenuAction {
+  RefreshPids,
+  Attach(u32),
+  Detach,
+  LoadFromFile,
+  ReloadDefs,
+}
+
+/// The mutable game/UI state `AppWindow::render` needs from the owning [`App`].
+/// Handed in by reference so the wgpu/egui render state and the game state stay
+/// separate fields (no `App`-owns-`AppWindow`-owns-`App` cycle).
+struct FrameState<'a> {
+  dolphin: &'a mut DolphinMemoryAccess,
+  mem: &'a mut GameMemory,
+  structs: &'a mut GameStructs,
+  defs_loaded: &'a mut bool,
+  status_text: &'a mut String,
+  pids: &'a mut Vec<Pid>,
+  show_raw_data_view: &'a mut bool,
+  show_demo_view: &'a mut bool,
+  inspector: &'a mut Inspector,
+}
+
+/// Owns the long-lived game state plus the render state that only exists while
+/// the window is active. No globals — everything is threaded explicitly
+/// (CLAUDE.md).
 struct App {
   /// Local MEM1 snapshot, refreshed each frame from `dolphin` (P3.2).
   mem: GameMemory,
@@ -39,13 +197,23 @@ struct App {
   structs: GameStructs,
   /// Live object list, walked off `g_stateManager` once per frame (C++
   /// `PrimeWatch::doMemoryParse` -> `GameObjectUtils::getAllObjects`).
-  #[allow(dead_code)] // consumed by the inspector / world renderer in Phase 7+
   objects: HashMap<TUniqueID, GameInstance>,
   /// Whether the `.bs` definitions loaded — drives which egui window is shown,
   /// mirroring `GameDefinitions::isLoaded()` in C++ `doFrame`.
   defs_loaded: bool,
   /// Either "Loaded N structs and M enums" or the load error string.
   status_text: String,
+  /// Cached Dolphin PID list for the Attach menu (`PrimeWatch::pids`).
+  pids: Vec<Pid>,
+  /// C++ `PrimeWatch::showRawDataView`.
+  show_raw_data_view: bool,
+  /// C++ `PrimeWatch::showDemoView`.
+  show_demo_view: bool,
+  /// Generic `GameInstance` tree view (P7) — hosts the "globals" window and the
+  /// Tools-menu exact-values toggle (`GameObjectRenderers::render_exact_values`).
+  inspector: Inspector,
+  /// Input accumulated between frames.
+  input: InputState,
   /// Render state — `None` until `resumed` (Wayland/macOS require deferred creation).
   window: Option<AppWindow>,
 }
@@ -104,9 +272,192 @@ impl App {
       objects: HashMap::new(),
       defs_loaded,
       status_text,
+      pids,
+      show_raw_data_view: false,
+      show_demo_view: false,
+      inspector: Inspector::new(),
+      input: InputState::default(),
       window: None,
     }
   }
+
+  /// One `RedrawRequested`: consume accumulated input, refresh memory, walk the
+  /// object list, update + render the world, paint egui. Ports `mainLoop`'s
+  /// `processInput(); doFrame();` pair.
+  fn redraw(&mut self) {
+    let App {
+      window,
+      mem,
+      dolphin,
+      structs,
+      objects,
+      defs_loaded,
+      status_text,
+      pids,
+      show_raw_data_view,
+      show_demo_view,
+      inspector,
+      input,
+    } = self;
+    let Some(window) = window.as_mut() else {
+      return;
+    };
+
+    if *defs_loaded {
+      // C++ `doMemoryParse` — refresh the snapshot (no-op while detached).
+      mem.update_from_dolphin(dolphin);
+
+      // Consume accumulated input into a plan, then apply it (ghost record/clear,
+      // detached-camera move, mouse grab). `wants_*` gate keyboard/mouse the way
+      // ImGui's `WantCapture*` did.
+      let wants_kb = window.egui_ctx.egui_wants_keyboard_input();
+      let wants_mouse = window.egui_ctx.egui_wants_pointer_input();
+      let prev_captured = input.captured_mouse;
+      let plan = input.plan(wants_kb, wants_mouse, window.world.camera_mode);
+      input.captured_mouse = plan.captured_mouse;
+      input.mouse_delta = (0.0, 0.0);
+      input.scroll = 0.0;
+
+      for (i, &rec) in plan.ghost_record.iter().enumerate() {
+        if rec {
+          window.world.record_player_ghost(i);
+        }
+      }
+      for (i, &clr) in plan.ghost_clear.iter().enumerate() {
+        if clr {
+          window.world.clear_player_ghost(i);
+        }
+      }
+      let (mf, mr, mu) = plan.detached_move;
+      if mf != 0.0 || mr != 0.0 || mu != 0.0 {
+        window.world.move_detached_camera(mf, mr, mu);
+      }
+      if plan.captured_mouse != prev_captured {
+        apply_cursor_grab(&window.window, plan.captured_mouse);
+      }
+
+      // Walk the live object list, then update the world.
+      let ctx = Ctx::new(structs, mem);
+      *objects = get_all_objects(&ctx);
+      let viewport = window.world_view_px;
+      // TODO(P9.2): real highlight state (per-object watch selection).
+      let highlighted: HashSet<u16> = HashSet::new();
+      window
+        .world
+        .update(&ctx, &plan.world_input, viewport, objects, &highlighted);
+    }
+
+    // `objects` is walked above and consumed by `world.update`. P9.2's object
+    // table / filter window (C++ `PrimeWatch::drawObjectsWindow`) will also need
+    // it — pass it into `FrameState` and mount that window in `AppWindow::render`
+    // next to "globals".
+    let mut fs = FrameState {
+      dolphin,
+      mem,
+      structs,
+      defs_loaded,
+      status_text,
+      pids,
+      show_raw_data_view,
+      show_demo_view,
+      inspector,
+    };
+    window.render(&mut fs);
+  }
+
+  /// Accumulate one `WindowEvent` into [`InputState`] (called after egui has had
+  /// its chance to claim the event).
+  fn accumulate_input(&mut self, event: &WindowEvent) {
+    match event {
+      WindowEvent::KeyboardInput { event, .. } => {
+        if let PhysicalKey::Code(code) = event.physical_key {
+          match event.state {
+            ElementState::Pressed => {
+              self.input.keys_down.insert(code);
+            }
+            ElementState::Released => {
+              self.input.keys_down.remove(&code);
+            }
+          }
+        }
+      }
+      WindowEvent::ModifiersChanged(m) => self.input.modifiers = m.state(),
+      WindowEvent::MouseInput { state, button, .. } => {
+        let pressed = *state == ElementState::Pressed;
+        match button {
+          MouseButton::Left => self.input.left_down = pressed,
+          MouseButton::Right => self.input.right_down = pressed,
+          _ => {}
+        }
+      }
+      WindowEvent::MouseWheel { delta, .. } => {
+        let dy = match delta {
+          MouseScrollDelta::LineDelta(_, y) => *y,
+          // ImGui reports wheel in "lines"; approximate pixel deltas.
+          MouseScrollDelta::PixelDelta(p) => (p.y / 50.0) as f32,
+        };
+        self.input.scroll += dy;
+      }
+      WindowEvent::Focused(false) => {
+        // Drop held keys/buttons so nothing sticks while unfocused.
+        self.input.keys_down.clear();
+        self.input.left_down = false;
+        self.input.right_down = false;
+      }
+      _ => {}
+    }
+  }
+}
+
+/// Grab/release the pointer for detached-camera mouse look.
+fn apply_cursor_grab(window: &Window, captured: bool) {
+  if captured {
+    let _ = window
+      .set_cursor_grab(CursorGrabMode::Locked)
+      .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+    window.set_cursor_visible(false);
+  } else {
+    let _ = window.set_cursor_grab(CursorGrabMode::None);
+    window.set_cursor_visible(true);
+  }
+}
+
+/// A minimal read-only hex dump over the MEM1 snapshot. Ports the
+/// `mem_edit.DrawContents(GameMemory::memory...)` viewer in `doImGui:340-345`
+/// (a small custom table rather than adding `egui_memory_editor`). Offsets are
+/// raw snapshot offsets (base 0), matching the C++ `MemoryEditor`.
+fn render_raw_data_view(ui: &mut egui::Ui, data: &[u8]) {
+  const BYTES_PER_ROW: usize = 16;
+  let rows = data.len().div_ceil(BYTES_PER_ROW);
+  let row_h = ui.text_style_height(&egui::TextStyle::Monospace);
+  egui::ScrollArea::vertical()
+    .auto_shrink([false, false])
+    .show_rows(ui, row_h, rows, |ui, range| {
+      for row in range {
+        let start = row * BYTES_PER_ROW;
+        let end = (start + BYTES_PER_ROW).min(data.len());
+        let chunk = &data[start..end];
+        let mut line = format!("{start:08x}  ");
+        for b in chunk {
+          line.push_str(&format!("{b:02x} "));
+        }
+        for _ in chunk.len()..BYTES_PER_ROW {
+          line.push_str("   ");
+        }
+        line.push(' ');
+        for &b in chunk {
+          line.push(if (0x20..0x7f).contains(&b) {
+            b as char
+          } else {
+            '.'
+          });
+        }
+        ui.add(
+          egui::Label::new(egui::RichText::new(line).monospace())
+            .wrap_mode(egui::TextWrapMode::Extend),
+        );
+      }
+    });
 }
 
 impl ApplicationHandler for App {
@@ -132,42 +483,44 @@ impl ApplicationHandler for App {
     _window_id: WindowId,
     event: WindowEvent,
   ) {
-    let Some(window) = self.window.as_mut() else {
+    // Route to egui first so it can claim the event (C++ `ImGui_ImplGlfw`
+    // callbacks run before `processInput` reads IO state).
+    if let Some(window) = self.window.as_mut() {
+      let _ = window.egui_state.on_window_event(&window.window, &event);
+    } else {
       return;
-    };
+    }
 
-    let _ = window.egui_state.on_window_event(&window.window, &event);
+    self.accumulate_input(&event);
 
     match event {
       WindowEvent::CloseRequested => event_loop.exit(),
-      WindowEvent::Resized(size) => window.resize(size),
-      WindowEvent::ScaleFactorChanged { .. } => window.window.request_redraw(),
-      WindowEvent::RedrawRequested => {
-        // Per-frame memory parse (C++ `PrimeWatch::doMemoryParse`,
-        // `PrimeWatch.cpp:483-488`): refresh the snapshot, then walk the live
-        // object list off `g_stateManager`. Gated on the defs being loaded; the
-        // dolphin refresh is a no-op while detached.
-        // TODO(P9.1): input -> parse -> ui -> render still needs its real ordering.
-        if self.defs_loaded {
-          self.mem.update_from_dolphin(&self.dolphin);
-          let ctx = Ctx::new(&self.structs, &self.mem);
-          self.objects = get_all_objects(&ctx);
-          let viewport = window.world_view_px;
-          // TODO(P9.2): real highlight state (per-object watch selection).
-          let highlighted: std::collections::HashSet<u16> = std::collections::HashSet::new();
-          window.world.update(
-            &ctx,
-            &WorldInput::default(),
-            viewport,
-            &self.objects,
-            &highlighted,
-          );
-          window.render(true, &self.status_text, Some(&ctx));
-        } else {
-          window.render(false, &self.status_text, None);
+      WindowEvent::Resized(size) => {
+        if let Some(window) = self.window.as_mut() {
+          window.resize(size);
         }
       }
+      WindowEvent::ScaleFactorChanged { .. } => {
+        if let Some(window) = self.window.as_ref() {
+          window.window.request_redraw();
+        }
+      }
+      WindowEvent::RedrawRequested => self.redraw(),
       _ => {}
+    }
+  }
+
+  fn device_event(
+    &mut self,
+    _event_loop: &ActiveEventLoop,
+    _device_id: DeviceId,
+    event: DeviceEvent,
+  ) {
+    // Raw mouse motion — used for detached-camera look while the pointer is
+    // grabbed (`io.MouseDelta` in `PrimeWatchInput.cpp:172`).
+    if let DeviceEvent::MouseMotion { delta } = event {
+      self.input.mouse_delta.0 += delta.0 as f32;
+      self.input.mouse_delta.1 += delta.1 as f32;
     }
   }
 
@@ -286,12 +639,12 @@ impl AppWindow {
     self.window.request_redraw();
   }
 
-  /// One frame: build the egui UI, clear to black, paint egui (C++ `doFrame`).
-  ///
-  /// `ctx` is `Some` only when the defs are loaded and the per-frame memory
-  /// parse ran — it drives the `WorldRenderer` status windows (C++
-  /// `worldRenderer.renderImGui()` in `doFrame`).
-  fn render(&mut self, defs_loaded: bool, status_text: &str, ctx: Option<&Ctx>) {
+  /// One frame: build the egui UI, render the 3D world, clear to black, paint
+  /// egui (C++ `doFrame` / `doImGui`). `fs` carries the game/UI state owned by
+  /// [`App`].
+  fn render(&mut self, fs: &mut FrameState) {
+    let defs_loaded = *fs.defs_loaded;
+
     let frame = match self.surface.get_current_texture() {
       wgpu::CurrentSurfaceTexture::Success(frame)
       | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
@@ -343,32 +696,75 @@ impl AppWindow {
     let raw_input = self.egui_state.take_egui_input(&self.window);
     self.egui_ctx.begin_pass(raw_input);
 
-    // C++ `PrimeWatch::doMainMenu`: the top menu bar. Only the render-config
-    // half (Culling / Camera / Triggers / Actors) is ported here (P8.4.6); the
-    // Attach and Tools menus are P9.1.
+    let egui_ctx = self.egui_ctx.clone();
+    let mut menu_actions: Vec<MenuAction> = Vec::new();
+    let ctx = if defs_loaded {
+      Some(Ctx::new(&*fs.structs, &*fs.mem))
+    } else {
+      None
+    };
+
+    // --- menu bar (C++ `PrimeWatch::doMainMenu`) -------------------------------
     //
-    // Deviation: the task specced `egui::TopBottomPanel::top(...).show(ctx, ...)`,
-    // but egui 0.36 removed the context-level panel API — panels only mount
-    // inside a `Ui`, and this app drives egui via `begin_pass`/`end_pass` with no
-    // root `Ui`. A top-anchored `Area` + `Frame::menu` matches the rest of the
-    // app's `Area`/`Window` layout and gives the same "menu bar at the top" UX.
+    // Deviation: egui 0.36 has no context-level `TopBottomPanel`, so the bar is
+    // a top-anchored `Area` + `Frame::menu` (P8.4.6 decision). The render-config
+    // menus live on `WorldRenderer::render_menu`; Attach + Tools are here.
     if defs_loaded {
-      let egui_ctx = self.egui_ctx.clone();
       egui::Area::new(egui::Id::new("menu_bar"))
         .fixed_pos(egui::pos2(0.0, 0.0))
         .show(&egui_ctx, |ui| {
           egui::Frame::menu(ui.style()).show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-              // P9.1: Attach menu (pids / detach / load-from-file dialog).
+              // Attach (`PrimeWatch.cpp:353-381`).
+              let attached = fs.dolphin.get_attached_pid();
+              let attach_title = if attached > 0 {
+                format!("Attached ({attached})")
+              } else {
+                "Detatched".to_string()
+              };
+              ui.menu_button(attach_title, |ui| {
+                ui.menu_button("Attach", |ui| {
+                  if ui.button("Refresh").clicked() {
+                    menu_actions.push(MenuAction::RefreshPids);
+                  }
+                  ui.separator();
+                  for pid in fs.pids.iter() {
+                    if ui.button(format!("{pid}")).clicked() {
+                      menu_actions.push(MenuAction::Attach(pid.as_u32()));
+                    }
+                  }
+                });
+                if ui
+                  .add_enabled(attached != 0, egui::Button::new("Detatch"))
+                  .clicked()
+                {
+                  menu_actions.push(MenuAction::Detach);
+                }
+                if ui.button("Load from file").clicked() {
+                  menu_actions.push(MenuAction::LoadFromFile);
+                }
+              });
+
+              // Culling / Camera / Triggers / Actors (P8.4.6).
               self.world.render_menu(ui);
-              // P9.1: Tools menu (Reload Definitions / Raw Data View /
-              //       Raw Demo View / exact-values toggle).
+
+              // Tools (`PrimeWatch.cpp:466-478`).
+              ui.menu_button("Tools", |ui| {
+                if ui.button("Reload Definitions").clicked() {
+                  menu_actions.push(MenuAction::ReloadDefs);
+                }
+                ui.checkbox(fs.show_raw_data_view, "Raw Data View");
+                ui.checkbox(fs.show_demo_view, "Raw Demo View");
+                ui.checkbox(
+                  &mut fs.inspector.exact_values,
+                  "Show exact floating point values",
+                );
+              });
             });
           });
         });
 
-      // C++ `PrimeWatch::doFrame:322-336` — the "Camera Controls" window, shown
-      // while `showExactCameraControls`.
+      // "Camera Controls" window (C++ `doImGui:322-336`).
       if self.world.show_exact_camera_controls {
         egui::Window::new("Camera Controls")
           .resizable(false)
@@ -376,7 +772,7 @@ impl AppWindow {
       }
     }
 
-    // Single window either way, matching the C++ "NOT LOADED" fallback in `doFrame`.
+    // --- status / NOT LOADED window (C++ `doFrame:247-256`) ------------------
     let title = if defs_loaded {
       "Prime Watch"
     } else {
@@ -385,34 +781,98 @@ impl AppWindow {
     egui::Window::new(title)
       .resizable(false)
       .collapsible(false)
-      .show(&self.egui_ctx, |ui| {
+      .show(&egui_ctx, |ui| {
         if defs_loaded {
-          ui.label(status_text);
+          ui.label(fs.status_text.as_str());
         } else {
           ui.label("Script definitions are not currently loaded.");
           ui.label("These are required to function.");
           ui.label("Current error:");
-          ui.label(status_text);
+          ui.label(fs.status_text.as_str());
+          if ui.button("Reload").clicked() {
+            menu_actions.push(MenuAction::ReloadDefs);
+          }
         }
       });
 
-    // Show the offscreen 3D target. The panel's available size drives next
-    // frame's world target size (documented one-frame lag).
+    // --- the offscreen 3D target + screen-space text overlays ---------------
     let mut world_view_size_pts: Option<egui::Vec2> = None;
     egui::Window::new("World")
       .default_size([640.0, 480.0])
-      .show(&self.egui_ctx, |ui| {
+      .show(&egui_ctx, |ui| {
         let avail = ui.available_size();
         world_view_size_pts = Some(avail);
-        ui.image(egui::load::SizedTexture::new(world_texture, avail));
+        let resp = ui.image(egui::load::SizedTexture::new(world_texture, avail));
+        let rect = resp.rect;
+
+        // Paint the queued overlays (C++ `ImDrawList::AddText` in the per-class
+        // draw fns). `screen_pos` is in world-target physical pixels (Y-down,
+        // already flipped by `getScreenspacePosFor*`); map it into the image
+        // rect. Exact glyph centering is approximate — no shared font metrics.
+        let (tw, th) = self.world_view_px;
+        let sx = rect.width() / tw.max(1) as f32;
+        let sy = rect.height() / th.max(1) as f32;
+        let painter = ui.painter_at(rect);
+        for ov in &self.world.text_overlays {
+          let pos = rect.min + egui::vec2(ov.screen_pos.x * sx, ov.screen_pos.y * sy);
+          painter.text(
+            pos,
+            egui::Align2::CENTER_CENTER,
+            ov.text.as_str(),
+            egui::FontId::proportional(13.0),
+            egui::Color32::WHITE,
+          );
+        }
       });
 
-    // C++ `doFrame` -> `worldRenderer.renderImGui()`: the WorldStatus /
-    // PlayerStatus overlays, only while the memory parse is live.
-    if let Some(ctx) = ctx {
+    // --- globals inspector (C++ `doImGui:314-320`) -------------------------
+    if let Some(ctx) = ctx.as_ref() {
+      egui::Window::new("globals").show(&egui_ctx, |ui| {
+        let sm = get_state_manager();
+        fs.inspector.render(ui, ctx, "g_stateManager", &sm, true);
+        let main = get_main();
+        fs.inspector.render(ui, ctx, "g_main", &main, true);
+        if let Some(mc) = get_memory_card(ctx) {
+          fs.inspector.render(ui, ctx, "gp_MemoryCard", &mc, true);
+        }
+        if let Some(tp) = get_tweak_player(ctx) {
+          fs.inspector.render(ui, ctx, "gp_TweakPlayer", &tp, true);
+        }
+      });
+    }
+
+    // --- Raw Data View (C++ `doImGui:340-345`) ----------------------------
+    if *fs.show_raw_data_view {
+      let mut open = true;
+      egui::Window::new("Raw view")
+        .open(&mut open)
+        .show(&egui_ctx, |ui| render_raw_data_view(ui, &fs.mem.data[..]));
+      if !open {
+        *fs.show_raw_data_view = false;
+      }
+    }
+
+    // --- Demo window (C++ `doImGui:281-283`) ----------------------------
+    // Deviation: `egui_demo_lib` is not a dependency, so this is a placeholder.
+    if *fs.show_demo_view {
+      let mut open = true;
+      egui::Window::new("Demo")
+        .open(&mut open)
+        .show(&egui_ctx, |ui| {
+          ui.label("The egui demo window is not bundled in this build.");
+          ui.label("(C++ used ImGui::ShowDemoWindow for debugging.)");
+        });
+      if !open {
+        *fs.show_demo_view = false;
+      }
+    }
+
+    // --- WorldStatus / PlayerStatus overlays (C++ `doFrame` ->
+    //     `worldRenderer.renderImGui()`), only while the memory parse is live.
+    if let Some(ctx) = ctx.as_ref() {
       egui::Area::new(egui::Id::new("world-status-host"))
-        .fixed_pos(egui::pos2(0.0, 0.0))
-        .show(&self.egui_ctx, |ui| {
+        .fixed_pos(egui::pos2(0.0, 24.0))
+        .show(&egui_ctx, |ui| {
           self.world.render_status_windows(ctx, ui);
         });
     }
@@ -483,12 +943,14 @@ impl AppWindow {
     self.window.pre_present_notify();
     self.queue.present(frame);
 
+    // Apply the menu actions collected during the egui pass (C++ does these
+    // inline; deferred here so the pass only needs shared borrows).
+    for action in menu_actions {
+      apply_menu_action(action, fs);
+    }
+
     // Resize the offscreen target to match the "World" panel for the next frame
-    // (documented one-frame lag). `WorldRenderer::resize` reports whether the
-    // target was recreated; `AppWindow` doesn't need to act on it because
-    // `update_egui_texture_from_wgpu_texture` rebuilds the egui bind group from
-    // the current view every frame anyway (no re-`register` / no leak). The
-    // pixel size is also stashed for next frame's `WorldRenderer::update`.
+    // (documented one-frame lag).
     if let Some(sz) = world_view_size_pts {
       let ppp = full_output.pixels_per_point;
       let w = (sz.x * ppp).round().max(1.0) as u32;
@@ -496,5 +958,140 @@ impl AppWindow {
       self.world_view_px = (w, h);
       let _recreated = self.world.resize(&self.device, (w, h));
     }
+  }
+}
+
+/// Apply one deferred [`MenuAction`] against the mutable game state.
+fn apply_menu_action(action: MenuAction, fs: &mut FrameState) {
+  match action {
+    MenuAction::RefreshPids => {
+      *fs.pids = fs.dolphin.get_dolphin_pids();
+    }
+    MenuAction::Attach(pid) => {
+      if fs.dolphin.attach_to_process(pid as i32) {
+        println!("Attached to Dolphin pid {pid}");
+      } else {
+        eprintln!("Failed to attach to Dolphin pid {pid}");
+      }
+    }
+    MenuAction::Detach => fs.dolphin.detach_from_process(),
+    MenuAction::LoadFromFile => {
+      // C++ `ImGuiFileDialog` -> `rfd` native picker; detach before loading a
+      // dump (`PrimeWatch.cpp:305-311`).
+      if let Some(path) = rfd::FileDialog::new()
+        .add_filter("Memory dump", &["raw"])
+        .set_directory(".")
+        .pick_file()
+      {
+        fs.dolphin.detach_from_process();
+        match fs.mem.load_from_file(&path.to_string_lossy()) {
+          Ok(()) => println!("Loaded {}", path.display()),
+          Err(err) => eprintln!("Failed to load {}: {err}", path.display()),
+        }
+      }
+    }
+    MenuAction::ReloadDefs => {
+      // Fresh registry so removed `.bs` entries don't linger (C++
+      // `loadDefinitionsFromPath` rebuilds from scratch).
+      *fs.structs = GameStructs::new_empty();
+      match fs.structs.load_from_dir("prime_defs") {
+        Ok(()) => {
+          *fs.status_text = format!(
+            "Loaded {} structs and {} enums",
+            fs.structs.structs.len(),
+            fs.structs.enums.len()
+          );
+          *fs.defs_loaded = true;
+          println!("{}", fs.status_text);
+        }
+        Err(err) => {
+          *fs.defs_loaded = false;
+          eprintln!("Error loading structs: {err}");
+          *fs.status_text = err;
+        }
+      }
+    }
+  }
+}
+
+#[cfg(test)]
+mod tests {
+  use super::*;
+
+  fn state() -> InputState {
+    InputState::default()
+  }
+
+  #[test]
+  fn capture_engages_on_button_when_egui_idle_and_releases_on_button_up() {
+    let mut s = state();
+    s.left_down = true;
+    let plan = s.plan(false, false, CameraMode::FollowPlayer);
+    assert!(plan.captured_mouse);
+
+    s.captured_mouse = true;
+    s.left_down = false;
+    let plan = s.plan(false, false, CameraMode::FollowPlayer);
+    assert!(!plan.captured_mouse);
+  }
+
+  #[test]
+  fn egui_wanting_mouse_blocks_capture_and_zoom() {
+    let mut s = state();
+    s.left_down = true;
+    s.scroll = 3.0;
+    let plan = s.plan(false, true, CameraMode::FollowPlayer);
+    assert!(!plan.captured_mouse);
+    assert_eq!(plan.world_input.cam_zoom, 0.0);
+  }
+
+  #[test]
+  fn mouse_delta_drives_pitch_yaw_only_while_captured() {
+    let mut s = state();
+    s.captured_mouse = true;
+    s.left_down = true;
+    s.mouse_delta = (10.0, 4.0);
+    let plan = s.plan(false, false, CameraMode::FollowPlayer);
+    assert!((plan.world_input.cam_yaw - (10.0 * -0.005)).abs() < 1e-6);
+    assert!((plan.world_input.cam_pitch - (4.0 * 0.005)).abs() < 1e-6);
+  }
+
+  #[test]
+  fn shift_and_ctrl_digits_record_and_clear_ghosts() {
+    let mut s = state();
+    s.keys_down.insert(KeyCode::Digit3);
+    s.modifiers = ModifiersState::SHIFT;
+    let plan = s.plan(false, false, CameraMode::FollowPlayer);
+    assert_eq!(plan.ghost_record, [false, false, true, false, false]);
+    assert_eq!(plan.ghost_clear, [false; 5]);
+
+    s.modifiers = ModifiersState::CONTROL;
+    let plan = s.plan(false, false, CameraMode::FollowPlayer);
+    assert_eq!(plan.ghost_clear, [false, false, true, false, false]);
+    assert_eq!(plan.ghost_record, [false; 5]);
+  }
+
+  #[test]
+  fn wasd_only_moves_in_detached_mode_and_arrows_always_work() {
+    let mut s = state();
+    s.keys_down.insert(KeyCode::KeyW);
+    s.keys_down.insert(KeyCode::ArrowLeft);
+
+    let plan = s.plan(false, false, CameraMode::FollowPlayer);
+    assert_eq!(plan.detached_move, (0.0, 0.0, 0.0));
+    assert!((plan.world_input.cam_yaw - 0.03).abs() < 1e-6);
+
+    let plan = s.plan(false, false, CameraMode::Detached);
+    assert_eq!(plan.detached_move, (1.0, 0.0, 0.0));
+  }
+
+  #[test]
+  fn keyboard_capture_blocks_movement_keys() {
+    let mut s = state();
+    s.keys_down.insert(KeyCode::KeyW);
+    s.keys_down.insert(KeyCode::ArrowUp);
+    let plan = s.plan(true, false, CameraMode::Detached);
+    assert_eq!(plan.detached_move, (0.0, 0.0, 0.0));
+    assert_eq!(plan.world_input.cam_pitch, 0.0);
   }
 }

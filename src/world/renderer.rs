@@ -712,6 +712,44 @@ impl WorldRenderer {
     &self.color
   }
 
+  /// Ports the Shift+`1..5` branch of `PrimeWatch::processInput`
+  /// (`PrimeWatchInput.cpp:148-153`): snapshot the live player into ghost slot
+  /// `i` and enable it. Out-of-range `i` is a no-op (C++ asserts the array size
+  /// matches the key list; the Rust port just clamps).
+  pub fn record_player_ghost(&mut self, i: usize) {
+    let player = self.player;
+    if let Some(ghost) = self.player_ghosts.get_mut(i) {
+      ghost.enabled = true;
+      ghost.position = player.position;
+      ghost.orientation = player.orientation;
+      ghost.velocity = player.velocity;
+      ghost.is_morphed = player.is_morphed;
+    }
+  }
+
+  /// Ports the Ctrl+`1..5` branch of `PrimeWatch::processInput`
+  /// (`PrimeWatchInput.cpp:154-156`): disable ghost slot `i`.
+  pub fn clear_player_ghost(&mut self, i: usize) {
+    if let Some(ghost) = self.player_ghosts.get_mut(i) {
+      ghost.enabled = false;
+    }
+  }
+
+  /// Ports the `CameraMode::DETATCHED` WASD/QE block of
+  /// `PrimeWatch::processInput` (`PrimeWatchInput.cpp:206-231`). `forward` /
+  /// `right` / `up` are the net key contributions (e.g. `forward = W - S`); the
+  /// per-axis basis and `manualCameraSpeed * 0.2` scaling match the C++.
+  pub fn move_detached_camera(&mut self, forward: f32, right: f32, up: f32) {
+    let angle = quat_from_euler(Vec3::new(0.0, 0.0, self.yaw));
+    let fwd = angle * Vec3::new(1.0, 0.0, 0.0);
+    let rgt = angle * Vec3::new(0.0, 1.0, 0.0);
+    let up_axis = Vec3::new(0.0, 0.0, 1.0);
+    let speed = self.manual_camera_speed * 0.2;
+    self.manual_camera_pos += fwd * (forward * speed);
+    self.manual_camera_pos += rgt * (right * speed);
+    self.manual_camera_pos += up_axis * (up * speed);
+  }
+
   /// Ports `WorldRenderer::update` (`WorldRenderer.cpp:120-151`) + the
   /// camera-setup block (`258-310`) + the CPU-side ghost-cube / camera-line
   /// accumulation (`321-334`) + `drawPlayer` / `renderEntities`
