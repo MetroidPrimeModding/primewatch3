@@ -3,7 +3,6 @@ mod ctx;
 mod gl;
 mod inspector;
 mod mem;
-mod scene;
 mod structs;
 mod world;
 

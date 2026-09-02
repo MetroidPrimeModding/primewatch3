@@ -151,17 +151,26 @@ fn fs_line(in: VsOut) -> @location(0) vec4<f32> {
 }
 "#;
 
+/// Cull-mode order for the mesh-pipeline arrays: `[0]` = no culling, `[1]` =
+/// back-face, `[2]` = front-face. Ports the `switch (culling)` in
+/// `WorldRenderer.cpp:357-369` — P8.4 selects a variant per `CullType` at draw
+/// (`front_face: Cw` is baked; lines are never culled).
+pub const CULL_MODES: [Option<wgpu::Face>; 3] =
+  [None, Some(wgpu::Face::Back), Some(wgpu::Face::Front)];
+
 /// The mesh + line pipelines (opaque + translucent variants) plus the shared
 /// uniform buffer / bind group — ports `OpenGLShader`'s compile+link
 /// (`OpenGLShader.cpp:8-45`) and the GL state set in
 /// `WorldRenderer.cpp:352-403`.
+///
+/// The two mesh pipelines exist in all three [`CULL_MODES`] variants (the GL
+/// code toggled `glCullFace` at draw time); pick one with [`WorldPipelines::mesh`].
 pub struct WorldPipelines {
-  pub bind_group_layout: wgpu::BindGroupLayout,
   pub uniform_buffer: wgpu::Buffer,
   pub bind_group: wgpu::BindGroup,
-  pub mesh_opaque: wgpu::RenderPipeline,
+  mesh_opaque: [wgpu::RenderPipeline; 3],
+  mesh_translucent: [wgpu::RenderPipeline; 3],
   pub line_opaque: wgpu::RenderPipeline,
-  pub mesh_translucent: wgpu::RenderPipeline,
   pub line_translucent: wgpu::RenderPipeline,
 }
 
@@ -226,7 +235,8 @@ impl WorldPipelines {
     let build = |fs_entry: &str,
                  topology: wgpu::PrimitiveTopology,
                  blend: Option<wgpu::BlendState>,
-                 depth_write: bool|
+                 depth_write: bool,
+                 cull_mode: Option<wgpu::Face>|
      -> wgpu::RenderPipeline {
       device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("world-pipeline"),
@@ -241,8 +251,8 @@ impl WorldPipelines {
           topology,
           // ports `glFrontFace(GL_CW)` (`WorldRenderer.cpp:355`).
           front_face: wgpu::FrontFace::Cw,
-          // P8.4: owns the `CullType` BACK/FRONT/NONE → pipeline-variant choice.
-          cull_mode: None,
+          // P8.4: `CullType` BACK/FRONT/NONE selected per draw via `CULL_MODES`.
+          cull_mode,
           ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {
@@ -271,23 +281,40 @@ impl WorldPipelines {
       })
     };
 
-    let mesh_opaque = build("fs_mesh", wgpu::PrimitiveTopology::TriangleList, None, true);
-    let line_opaque = build("fs_line", wgpu::PrimitiveTopology::LineList, None, true);
-    let mesh_translucent = build(
-      "fs_mesh",
-      wgpu::PrimitiveTopology::TriangleList,
-      Some(alpha_blend),
-      false,
+    let mesh_opaque = CULL_MODES.map(|c| {
+      build(
+        "fs_mesh",
+        wgpu::PrimitiveTopology::TriangleList,
+        None,
+        true,
+        c,
+      )
+    });
+    let mesh_translucent = CULL_MODES.map(|c| {
+      build(
+        "fs_mesh",
+        wgpu::PrimitiveTopology::TriangleList,
+        Some(alpha_blend),
+        false,
+        c,
+      )
+    });
+    let line_opaque = build(
+      "fs_line",
+      wgpu::PrimitiveTopology::LineList,
+      None,
+      true,
+      None,
     );
     let line_translucent = build(
       "fs_line",
       wgpu::PrimitiveTopology::LineList,
       Some(alpha_blend),
       false,
+      None,
     );
 
     Self {
-      bind_group_layout,
       uniform_buffer,
       bind_group,
       mesh_opaque,
@@ -301,6 +328,17 @@ impl WorldPipelines {
   /// (`WorldRenderer.cpp:338-350`).
   pub fn set_uniforms(&self, queue: &wgpu::Queue, u: &WorldUniforms) {
     queue.write_buffer(&self.uniform_buffer, 0, as_bytes(std::slice::from_ref(u)));
+  }
+
+  /// The mesh pipeline for the given translucency + cull mode. `cull` must be one
+  /// of [`CULL_MODES`]; an unrecognized value falls back to the no-cull variant.
+  pub fn mesh(&self, translucent: bool, cull: Option<wgpu::Face>) -> &wgpu::RenderPipeline {
+    let idx = CULL_MODES.iter().position(|c| *c == cull).unwrap_or(0);
+    if translucent {
+      &self.mesh_translucent[idx]
+    } else {
+      &self.mesh_opaque[idx]
+    }
   }
 }
 

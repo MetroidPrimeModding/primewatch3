@@ -6,3 +6,4 @@
 //! in P8.4.
 
 pub mod collision_mesh;
+pub mod renderer;
