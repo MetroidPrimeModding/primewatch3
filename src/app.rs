@@ -367,7 +367,7 @@ impl AppWindow {
         ui.image(egui::load::SizedTexture::new(world_texture, avail));
       });
 
-    let full_output = self.egui_ctx.end_pass();
+    let mut full_output = self.egui_ctx.end_pass();
 
     self
       .egui_state
@@ -423,6 +423,7 @@ impl AppWindow {
     for id in &full_output.textures_delta.free {
       self.egui_renderer.free_texture(id);
     }
+    full_output.textures_delta.clear();
 
     self.queue.submit(
       user_cmd_bufs
