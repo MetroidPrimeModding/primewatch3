@@ -342,6 +342,40 @@ impl AppWindow {
 
     let raw_input = self.egui_state.take_egui_input(&self.window);
     self.egui_ctx.begin_pass(raw_input);
+
+    // C++ `PrimeWatch::doMainMenu`: the top menu bar. Only the render-config
+    // half (Culling / Camera / Triggers / Actors) is ported here (P8.4.6); the
+    // Attach and Tools menus are P9.1.
+    //
+    // Deviation: the task specced `egui::TopBottomPanel::top(...).show(ctx, ...)`,
+    // but egui 0.36 removed the context-level panel API — panels only mount
+    // inside a `Ui`, and this app drives egui via `begin_pass`/`end_pass` with no
+    // root `Ui`. A top-anchored `Area` + `Frame::menu` matches the rest of the
+    // app's `Area`/`Window` layout and gives the same "menu bar at the top" UX.
+    if defs_loaded {
+      let egui_ctx = self.egui_ctx.clone();
+      egui::Area::new(egui::Id::new("menu_bar"))
+        .fixed_pos(egui::pos2(0.0, 0.0))
+        .show(&egui_ctx, |ui| {
+          egui::Frame::menu(ui.style()).show(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
+              // P9.1: Attach menu (pids / detach / load-from-file dialog).
+              self.world.render_menu(ui);
+              // P9.1: Tools menu (Reload Definitions / Raw Data View /
+              //       Raw Demo View / exact-values toggle).
+            });
+          });
+        });
+
+      // C++ `PrimeWatch::doFrame:322-336` — the "Camera Controls" window, shown
+      // while `showExactCameraControls`.
+      if self.world.show_exact_camera_controls {
+        egui::Window::new("Camera Controls")
+          .resizable(false)
+          .show(&egui_ctx, |ui| self.world.render_camera_controls(ui));
+      }
+    }
+
     // Single window either way, matching the C++ "NOT LOADED" fallback in `doFrame`.
     let title = if defs_loaded {
       "Prime Watch"

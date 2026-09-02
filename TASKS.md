@@ -224,7 +224,11 @@ Phase 5 complete.
   - Call site wired: `app.rs::render` takes `Option<&Ctx>` and hosts `render_status_windows` behind the `defs_loaded` gate.
   - Forward-deps: overlay `screen_pos` is the bare projected point — P9.1's overlay painter owns glyph-metric centering / line-height (`OVERLAY_LINE_HEIGHT = 14.0` is a nominal stand-in). All reads are `Option` and bail rather than C++ total-read-0.
 
-- [ ] **P8.4.6** Visibility-toggle UI: `TriggerRenderConfig` / `ActorRenderConfig` / `CameraMode` egui widgets. — `TODO` · finalize menu / preferences panel.
+- [x] **P8.4.6** Visibility-toggle UI: Culling/Camera/Triggers/Actors menus + Camera Controls window — `DONE` · full detail: [`completed_tasks/P8.4.6.md`](completed_tasks/P8.4.6.md)
+  - `src/world/renderer.rs`: new `pub(crate)` free fns `render_menu_bar(...)` / `render_camera_controls_ui(...)` (plain `&mut` field refs, headless-testable) with thin `WorldRenderer::render_menu` / `render_camera_controls` forwarders. Added `pub manual_camera_speed: f32` (1.0, ports `WorldRenderer.hpp:91`) and `pub show_exact_camera_controls: bool` (false, app-shell state parked here). Ports `PrimeWatch::doMainMenu:383-464` + `doFrame:322-336`.
+  - Culling menu keeps the verbatim C++ label/value skew ("Show Front"→`CullType::Back`, "Show Back"→`CullType::Front`). Camera Controls Yaw/Pitch display degrees, write back radians only on `.changed()`; `yaw_deg = deg % 360.0` (matches C++ `fmod` sign).
+  - **Deviation:** `use_collision_impulses` checkbox label is the corrected spelling `"useCollisionImpulses"` (C++ has `useCollisionImpluses` sic). **Deviation:** egui 0.36 has no context-level panel API (`TopBottomPanel` gone) — `src/app.rs::render` mounts the menu bar as a top `egui::Area` + `egui::Frame::menu` + `egui::MenuBar::new().ui(...)`, behind `defs_loaded`; `// P9.1:` markers left for the Attach + Tools menus.
+  - P9.1 owns: Attach/Tools menus; a `.open()` close binding on the Camera Controls window; shell layout so the `menu_bar` / `world-status-host` Areas (both `fixed_pos (0,0)`) don't overlap.
 
 ## Phase 9 — App shell (ports `PrimeWatch.cpp`, `PrimeWatchInput.cpp`; replaces `main.rs`)
 
