@@ -1,0 +1,96 @@
+name: Rust
+
+on:
+  push:
+    branches: [ main ]
+    tags:
+      - 'v[0-9]+.*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            bin: primewatch3.exe
+            archive: primewatch3-windows.zip
+          - os: ubuntu-latest
+            bin: primewatch3
+            archive: primewatch3-linux.tar.gz
+          - os: macos-latest
+            bin: primewatch3
+            archive: primewatch3-macos.tar.gz
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Linux build deps
+      if: runner.os == 'Linux'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          libgtk-3-dev \
+          libudev-dev \
+          libwayland-dev \
+          libxkbcommon-dev \
+          libx11-dev \
+          libxrandr-dev \
+          libxi-dev \
+          libxcursor-dev
+
+    - uses: dtolnay/rust-toolchain@stable
+
+    - uses: Swatinem/rust-cache@v2
+      with:
+        key: ${{ matrix.os }}
+
+    - name: Build
+      run: cargo build --release
+
+    - name: Test
+      run: cargo test --release
+
+    # Windows: pwsh + Compress-Archive. Not `tar` under bash — Git-for-Windows bash may
+    # shadow System32's bsdtar with GNU tar, which cannot write a real zip and would
+    # silently emit a mislabeled tarball.
+    - name: Create release archive (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory primewatch3 | Out-Null
+        Copy-Item -Recurse prime_defs primewatch3/
+        Copy-Item "target/release/${{ matrix.bin }}" primewatch3/
+        Compress-Archive -Path primewatch3 -DestinationPath "${{ matrix.archive }}"
+
+    # Linux/macOS: gzip tarball (GNU tar on Linux cannot create zip).
+    - name: Create release archive (Unix)
+      if: runner.os != 'Windows'
+      shell: bash
+      run: |
+        mkdir primewatch3
+        cp -r prime_defs primewatch3/
+        cp "target/release/${{ matrix.bin }}" primewatch3/
+        tar -czf "${{ matrix.archive }}" primewatch3
+
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: primewatch3-${{ matrix.os }}
+        path: primewatch3/**
+        if-no-files-found: error
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      if: startsWith(github.ref, 'refs/tags/v')
+      with:
+        files: ${{ matrix.archive }}
+        fail_on_unmatched_files: true
+        body: Automated release build

@@ -246,6 +246,29 @@ Phase 5 complete.
 
 ## Phase 10 — Packaging / CI
 
-- [ ] **P10.1** Rust CI (`cargo build --release`), zip binary + current `prime_defs/`. — `TODO`
-- [ ] **P10.2** Add Linux/macOS CI targets. — `TODO`
-!
+- [x] **P10.1** Cross-platform Rust CI + release packaging — `DONE` · full detail: [`completed_tasks/P10.1.md`](completed_tasks/P10.1.md)
+  - New `.github/workflows/rust_build.yml` (repo had no `.github/`), ports
+    `../primewatch2/.github/workflows/cmake_build.yml`. Triggers: push to `main` + `v[0-9]+.*`
+    tags; job `permissions: contents: write`; `actions/checkout@v4` submodules recursive;
+    `dtolnay/rust-toolchain@stable`; `Swatinem/rust-cache@v2` keyed by OS; `cargo build --release`
+    then `cargo test --release`.
+  - Cross-platform matrix (**subsumes P10.2**): `windows-latest` / `ubuntu-latest` / `macos-latest`,
+    `fail-fast: false`, per-leg `bin` + `archive` matrix vars. Two mutually-exclusive package steps:
+    Windows uses `shell: pwsh` + `Compress-Archive` → `primewatch3-windows.zip`; Linux/macOS use
+    `shell: bash` + `tar -czf` → `primewatch3-linux.tar.gz` / `primewatch3-macos.tar.gz`. Each
+    archive contains a `primewatch3/` dir (`prime_defs/` + per-OS binary).
+    `actions/upload-artifact@v4` name `primewatch3-${{ matrix.os }}` (unique per leg),
+    `if-no-files-found: error`. `softprops/action-gh-release@v2` in every leg gated on
+    `refs/tags/v` with `fail_on_unmatched_files: true` — the three legs upsert one release per tag
+    and each attaches its own archive.
+  - Deviations: not `tar` under bash on Windows (Git-for-Windows bash can shadow System32 bsdtar
+    with GNU tar, which cannot write a real zip) — Windows uses PowerShell `Compress-Archive`
+    instead. Linux/macOS use `.tar.gz`. Linux-only `apt-get` step installs the winit/wgpu/rfd
+    `-dev` libs — a harmless runtime superset (nothing is strictly build-time required; rfd uses
+    the ashpd/zbus xdg-portal backend, not gtk).
+  - PENDING USER (manual): live multi-OS CI run + a `v*` tag — all three legs green, archives
+    unpack to `primewatch3/prime_defs/` + binary, and one release ends up with all three attached.
+    Full checklist in `completed_tasks/P10.1.md`.
+- [x] **P10.2** Linux/macOS CI targets — `DONE` (subsumed by P10.1) · full detail: [`completed_tasks/P10.1.md`](completed_tasks/P10.1.md)
+  - Folded into P10.1's `rust_build.yml` matrix (`ubuntu-latest` + `macos-latest` legs). No
+    separate workflow or deliverable.
