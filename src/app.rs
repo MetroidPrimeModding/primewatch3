@@ -762,6 +762,12 @@ struct AppWindow {
   /// Re-saved at most once per [`ui_state::AUTOSAVE_INTERVAL`] from `render`,
   /// plus a final save in `App::exiting`.
   last_ui_save: Instant,
+  /// FPS counter shown at the end of the toolbar. `fps_window_start` /
+  /// `fps_window_frames` accumulate over the current one-second window;
+  /// `fps_display` is the last computed value (rounded to whole fps).
+  fps_window_start: Instant,
+  fps_window_frames: u32,
+  fps_display: u32,
 }
 
 impl AppWindow {
@@ -839,6 +845,9 @@ impl AppWindow {
       world_view_px: (800, 600),
       world_view_input: WorldViewInput::default(),
       last_ui_save: Instant::now(),
+      fps_window_start: Instant::now(),
+      fps_window_frames: 0,
+      fps_display: 0,
     })
   }
 
@@ -856,6 +865,15 @@ impl AppWindow {
   /// egui. `fs` carries the game/UI state owned by [`App`].
   fn render(&mut self, fs: &mut FrameState) {
     let defs_loaded = *fs.defs_loaded;
+
+    // FPS counter: count frames, recompute at most once per second.
+    self.fps_window_frames += 1;
+    let fps_elapsed = self.fps_window_start.elapsed().as_secs_f32();
+    if fps_elapsed >= 1.0 {
+      self.fps_display = (self.fps_window_frames as f32 / fps_elapsed).round() as u32;
+      self.fps_window_start = Instant::now();
+      self.fps_window_frames = 0;
+    }
 
     let frame = match self.surface.get_current_texture() {
       wgpu::CurrentSurfaceTexture::Success(frame)
@@ -970,6 +988,14 @@ impl AppWindow {
                   "Show exact floating point values",
                 );
               });
+
+              // FPS counter, pinned to the end of the toolbar.
+              ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| {
+                  ui.label(format!("{} FPS", self.fps_display));
+                },
+              );
             });
           });
         });
