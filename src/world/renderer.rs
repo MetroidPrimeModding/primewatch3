@@ -1755,11 +1755,13 @@ impl WorldRenderer {
     egui::Window::new("WorldStatus")
       .resizable(false)
       .title_bar(false)
+      .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
       .show(&egui_ctx, |ui| self.render_world_status(ctx, ui));
 
     egui::Window::new("PlayerStatus")
       .resizable(false)
       .title_bar(false)
+      .anchor(egui::Align2::LEFT_BOTTOM, [8.0, -8.0])
       .show(&egui_ctx, |ui| self.render_player_status(ui));
   }
 

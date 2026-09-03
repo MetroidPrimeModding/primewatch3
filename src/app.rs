@@ -829,7 +829,7 @@ impl AppWindow {
     let window = Arc::new(
       event_loop.create_window(
         Window::default_attributes()
-          .with_title("Prime Watch 2")
+          .with_title("Prime Watch 3")
           .with_inner_size(LogicalSize::new(1200, 800)),
       )?,
     );
