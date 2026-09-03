@@ -189,9 +189,7 @@ impl GameMember {
   }
 }
 
-/// Ports C++ `GameDefinitions::primitiveSize` (`GameDefinitions.cpp:75-96`)
-/// exactly, including the `_ => 4` default. Note the C++ has no `u64`/`i64`
-/// case — those fall through to 4; that is intentionally preserved here.
+/// u64/i64 currently ignored.
 pub fn primitive_size(type_name: &str) -> u32 {
   match type_name {
     "u8" | "i8" | "bool" => 1,
@@ -207,20 +205,15 @@ pub struct GameInstance {
   pub address: u32,
   pub type_name: String,
   /// Bitfield start bit / length carried from the `GameMember` this instance was
-  /// resolved from (C++ `GameMember::bit` / `GameMember::bitLength`). `None` for
-  /// struct roots and any non-bitfield member; only the integer `read_u*` reads
-  /// consult them. See C++ `GameDefinitions::getBits`.
+  /// resolved from. `None` for struct roots and any non-bitfield member; only the integer `read_u*` reads
+  /// consult them.
   pub bit: Option<i64>,
   pub bit_length: Option<i64>,
   /// Array length carried from the `GameMember` this instance was resolved from
-  /// (C++ `GameMember::arrayLength`). `None` for struct roots, non-array
-  /// members, and every instance produced by [`GameInstance::element`].
+  /// `None` for struct roots, non-array members, and every instance produced by [`GameInstance::element`].
   pub array_length: Option<i64>,
   /// Whether the `GameMember` this instance was resolved from was a pointer
-  /// member (C++ `GameMember::pointer`). The C++ recursion keeps this bit set
-  /// *after* the deref so the leaf renderer can still show the `*name` prefix,
-  /// treat `address == 0` as "null", and render a `u8*` as a C string. `false`
-  /// for struct roots ([`GameInstance::new`] / [`GameInstance::with_bitfield`])
+  /// member. `false` for struct roots ([`GameInstance::new`] / [`GameInstance::with_bitfield`])
   /// and every instance produced by [`GameInstance::element`].
   pub pointer: bool,
 }
@@ -267,8 +260,7 @@ impl GameInstance {
     }
   }
 
-  /// C++ `getBits` takes `optional<uint32_t>` and calls `.value_or(0)`; a
-  /// malformed `.bs` could hand us a negative value, so clamp before the cast.
+  /// a malformed `.bs` could hand us a negative value, so clamp before the cast.
   fn bit_u32(&self) -> u32 {
     self.bit.unwrap_or(0).max(0) as u32
   }
@@ -281,11 +273,9 @@ impl GameInstance {
     ctx.structs.get_struct_by_name(&self.type_name)
   }
 
-  /// C++ `GameMember::extendsClass` (`GameDefinitions.cpp:227-232`): true if this
-  /// instance's own type *is* `class_name`, or its type transitively extends it.
-  /// A type name with no matching `.bs` struct only matches on the identity
-  /// check (mirrors the C++ `structByName(...).has_value()` guard). Delegates to
-  /// the already-fixed [`GameStruct::extends`] for the recursion.
+  /// True if this instance's own type *is* `class_name`, or its type transitively extends it.
+  /// A type name with no matching `.bs` struct only matches on the identity check.
+  /// Delegates to [`GameStruct::extends`] for the recursion.
   pub fn extends_class(&self, ctx: &Ctx, class_name: &str) -> bool {
     if self.type_name == class_name {
       return true;
@@ -298,9 +288,7 @@ impl GameInstance {
 
   /// Fallible member lookup: the `Option` form of [`GameInstance::member`], for
   /// call sites where a missing member is a legitimate outcome (optional field,
-  /// speculative probe). Auto-derefs pointer members. See
-  /// `GameDefinitions.cpp:286-290` (`GameMember::operator[]`) for the C++
-  /// contract — `operator[]` is this plus a throw on `nullopt`.
+  /// speculative probe). Auto-derefs pointer members.
   pub fn get_member(&self, ctx: &Ctx, name: &str) -> Option<GameInstance> {
     let struct_ = self.get_type(ctx)?;
     let member = struct_.get_member_by_name(ctx.structs, name)?;
@@ -311,31 +299,17 @@ impl GameInstance {
     Some(GameInstance::with_member(addr, &member))
   }
 
-  /// C++ `GameMember::operator[]` (`GameDefinitions.cpp:286-290`,
-  /// `GameDefinitions.hpp:35` — "WARNING: this will crash if it doesn't exit").
-  /// Panicking-on-absence is the *documented, intended* behavior: a missing
-  /// member here means a typo in a `.bs` file or a call site, i.e. a bug, so it
-  /// mirrors the C++ `throw std::invalid_argument`. Use [`GameInstance::get_member`]
-  /// when a miss is legitimate.
-  ///
-  /// The C++ message is `"Unknown member {type} {name}.{subName}"`; the Rust
-  /// `GameInstance` carries no member-name of its own, so the honest equivalent
-  /// drops the `{name}` segment: `"Unknown member {type_name}.{name}"`.
-  ///
-  // P4.5: one-arg threading achieved via `&Ctx` — `member` takes a single `&Ctx`
-  // (wrapping `&GameStructs` + `&GameMemory`), so `x.member(ctx, "a").member(ctx,
-  // "b").read_u32(ctx)` chains without re-passing two borrows. `Ctx` is `Copy`,
-  // so call sites aren't fighting the borrow checker. No builder / macro needed.
+  /// Panicking-on-absence was the *documented, intended* behavior: a
+  /// missing member here means a typo in a `.bs` file or a call site, i.e. a bug
+  /// Use [`GameInstance::get_member`] when a miss is legitimate.
   pub fn member(&self, ctx: &Ctx, name: &str) -> GameInstance {
     self
       .get_member(ctx, name)
       .unwrap_or_else(|| panic!("Unknown member {}.{}", self.type_name, name))
   }
 
-  /// Stride of one element of this instance's type, in bytes. Ports the
-  /// `sizePer` rule in C++ `renderArray` / `renderVector`
-  /// (`GameObjectRenderers.cpp:433-439` / `406-411`): a struct's `size`, else
-  /// `primitive_size`. A negative schema `size` clamps to 0.
+  /// Stride of one element of this instance's type, in bytes. A struct's `size`,
+  /// else `primitive_size`. A negative schema `size` clamps to 0.
   pub fn element_size(&self, ctx: &Ctx) -> u32 {
     ctx
       .structs
@@ -346,9 +320,7 @@ impl GameInstance {
 
   /// The `index`-th array element: a fresh instance at
   /// `self.address + index * element_size`, same `type_name`, with `bit` /
-  /// `bit_length` / `array_length` all cleared. Ports the C++ `renderArray`
-  /// step (`GameObjectRenderers.cpp:442-448`) — pure address arithmetic, no
-  /// bounds check against `array_length` (callers own that, matching C++).
+  /// `bit_length` / `array_length` all cleared.
   pub fn element(&self, ctx: &Ctx, index: u32) -> GameInstance {
     GameInstance::new(
       self
@@ -358,14 +330,6 @@ impl GameInstance {
     )
   }
 
-  /// Ports C++ `GameMember::read_*` (`GameDefinitions.cpp:246-283`). Integer
-  /// reads route through `GameMemory::read_u*_bits` (C++ `getBits`); `f32`/`f64`/
-  /// `string` take no bit masking, matching the C++.
-  ///
-  /// Deviation from C++: C++ reads are total (`getRealPtr` clamps OOB to 0).
-  /// These return `Option` and do **not** substitute a default — defaulting is
-  /// deferred to the P7 render callsites so the inspector can tell "unreadable"
-  /// from "zero" and the reads compose with `?`.
   pub fn read_u8(&self, ctx: &Ctx) -> Option<u8> {
     ctx
       .mem
@@ -557,7 +521,7 @@ mod tests {
     let bad = GameInstance::with_bitfield(0x8000_001C, "uint".to_string(), Some(-3), Some(-1));
     assert_eq!(bad.read_u32(&ctx), mem.read_u32(0x8000_001C));
 
-    // f32 ignores bit fields entirely (matches C++).
+    // f32 ignores bit fields entirely.
     let bf_f = GameInstance::with_bitfield(0x8000_001C, "float".to_string(), Some(4), Some(4));
     assert_eq!(bf_f.read_f32(&ctx), mem.read_f32(0x8000_001C));
   }
@@ -634,7 +598,6 @@ mod tests {
     assert_eq!(primitive_size("i32"), 4);
     assert_eq!(primitive_size("f32"), 4);
     assert_eq!(primitive_size("f64"), 8);
-    // C++ has no u64/i64 case — falls through to the default 4.
     assert_eq!(primitive_size("u64"), 4);
     assert_eq!(primitive_size("i64"), 4);
     // unknown type name -> default 4.
@@ -709,8 +672,6 @@ mod tests {
     assert_eq!(m.type_name, "float");
   }
 
-  /// `member` (C++ `operator[]`) resolves to exactly what `get_member` returns
-  /// for a present member.
   #[test]
   fn member_matches_get_member_when_present() {
     let structs = chain();
@@ -724,7 +685,6 @@ mod tests {
     assert_eq!(via_member.type_name, via_get.type_name);
   }
 
-  /// A typo'd member name panics with the C++-style `"Unknown member ..."`.
   #[test]
   #[should_panic(expected = "Unknown member")]
   fn member_panics_on_typo() {
@@ -735,8 +695,6 @@ mod tests {
     root.member(&ctx, "b_feild");
   }
 
-  /// `GameInstance::extends_class` (C++ `GameMember::extendsClass`): identity,
-  /// transitive parents, and the unknown-type fall-through.
   #[test]
   fn extends_class_resolves_transitive_inheritance() {
     let structs = chain();

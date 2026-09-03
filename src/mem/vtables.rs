@@ -1,17 +1,15 @@
-//! Ports `../primewatch2/src/defs/GameVtables.{hpp,cpp}` — the MP1
-//! `vtable address → class name` table.
+//! The MP1 `vtable address → class name` table.
 //!
 //! An object's C++ class is identified at runtime by the vtable pointer at its
 //! `+0x0`. `CObjectList` entries only store the base `CEntity`; the walk in
-//! `GameObjectUtils` (P6.1) reads `entity["vtable"]` and, if it is in this
-//! table and names a known `.bs` struct, retypes the handle to the concrete
-//! class. C++ uses this map for point lookups only (`.count(v)` / `map[v]`).
+//! `GameObjectUtils` reads `entity["vtable"]` and, if it is in this table and
+//! names a known `.bs` struct, retypes the handle to the concrete class.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
 /// `address → class name`. A handful of values are themselves hex-address
-/// strings (unresolved aliases) — kept verbatim from the C++ table.
+/// strings (unresolved aliases) — kept verbatim from the original table.
 pub static MP1_VTABLES: LazyLock<HashMap<u32, &'static str>> = LazyLock::new(|| {
   HashMap::from([
     (0x803d9660, "CFirstPersonCamera"),
@@ -161,7 +159,7 @@ pub static MP1_VTABLES: LazyLock<HashMap<u32, &'static str>> = LazyLock::new(|| 
   ])
 });
 
-/// Point lookup — C++ `MP1_VTABLES.count(v) ? MP1_VTABLES[v] : <none>`.
+/// Point lookup: the mapped class name for a vtable address, or `None`.
 pub fn vtable_class_name(address: u32) -> Option<&'static str> {
   MP1_VTABLES.get(&address).copied()
 }
@@ -186,9 +184,9 @@ mod tests {
     assert_eq!(vtable_class_name(0x803d96e9), None);
   }
 
-  /// The C++ `GameVtables.cpp` initializer has 142 distinct braced pairs. Guard
-  /// the count so a bad transcription (dropped or duplicated line) is caught —
-  /// a duplicate key would silently shrink the `HashMap`.
+  /// The original table has 142 distinct entries. Guard the count so a bad
+  /// transcription (dropped or duplicated line) is caught — a duplicate key
+  /// would silently shrink the `HashMap`.
   #[test]
   fn table_size_matches_cpp() {
     assert_eq!(MP1_VTABLES.len(), 142);

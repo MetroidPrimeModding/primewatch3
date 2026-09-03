@@ -10,11 +10,9 @@ const DOLPHIN_STEM_PREFIX: &str = "dolphin-emu";
 const DOLPHIN_STEM_PREFIX: &str = "dolphin";
 
 /// Copy cap: the amount of emulated RAM (MEM1) the game snapshot mirrors.
-/// C++ `MemoryAccess.hpp:7` — `constexpr int DOLPHIN_MEMORY_SIZE = 0x1800000`.
 pub const DOLPHIN_MEMORY_SIZE: usize = 0x1800000;
 
 /// The span of Dolphin's shared-memory mapping (`mmap`/`munmap` length).
-/// C++ `MemoryAccess.cpp:74` / `:103` — `constexpr size_t size = 0x2040000`.
 /// Larger than `DOLPHIN_MEMORY_SIZE` because it also covers the L1 cache / MEM2 region.
 const DOLPHIN_SHM_SIZE: usize = 0x2040000;
 
@@ -22,8 +20,7 @@ pub struct DolphinMemoryAccess {
   system: System,
   attached_pid: i32,
 
-  // POSIX (Linux + macOS share the shm_open/mmap path — C++ __APPLE__ branch is
-  // byte-identical to the __linux__ branch).
+  // POSIX (Linux + macOS share the shm_open/mmap path).
   #[cfg(any(target_os = "linux", target_os = "macos"))]
   emu_ram_address_start: *mut u8,
 
@@ -76,8 +73,6 @@ impl DolphinMemoryAccess {
           return None;
         }
         let exe = process.exe()?;
-        // C++ `getDolphinPids` matches the Linux binary `dolphin-emu`
-        // (`MemoryAccess.cpp:44`) or the Windows `Dolphin.exe` (`:230`).
         let stem = exe.file_stem()?.to_str()?.to_ascii_lowercase();
 
         if stem.starts_with(DOLPHIN_STEM_PREFIX) {
@@ -89,18 +84,19 @@ impl DolphinMemoryAccess {
       .collect()
   }
 
-  /// Ports `MemoryAccess.cpp:169` `getEmuRAMAddressStart()`. Scans the target's
-  /// virtual address space for Dolphin's MEM1 mapping: the first `0x2000000`-byte
-  /// `MEM_MAPPED` region that `QueryWorkingSetEx` reports as physically valid (this
-  /// disambiguates unrelated mapped regions of the same size). Stores its base in
-  /// `self.emu_ram_address_start` and returns `true` on success.
+  /// Scans the target's virtual address space for Dolphin's MEM1 mapping: the
+  /// first `0x2000000`-byte `MEM_MAPPED` region that `QueryWorkingSetEx` reports
+  /// as physically valid (this disambiguates unrelated mapped regions of the
+  /// same size). Stores its base in `self.emu_ram_address_start` and returns
+  /// `true` on success.
   ///
   /// Deviations from C++:
-  /// - The original keeps scanning past MEM1 to set the `MEM2Present` flag; that flag
-  ///   is never read anywhere in primewatch2, so we stop at the first valid MEM1
-  ///   region and do not carry `MEM2Present`.
-  /// - `wsInfo.VirtualAttributes.Valid` is bit 0 of the bitfield union; this `windows`
-  ///   crate version generates no `.Valid()` accessor, so we mask `Flags & 1`.
+  /// - The original keeps scanning past MEM1 to set the `MEM2Present` flag; that
+  ///   flag is never read anywhere by the app, so we stop at the first valid
+  ///   MEM1 region and do not carry `MEM2Present`.
+  /// - `wsInfo.VirtualAttributes.Valid` is bit 0 of the bitfield union; this
+  ///   `windows` crate version generates no `.Valid()` accessor, so we mask
+  ///   `Flags & 1`.
   #[cfg(target_os = "windows")]
   fn get_emu_ram_address_start(&mut self) -> bool {
     use windows::Win32::Foundation::HANDLE;
@@ -167,7 +163,7 @@ impl DolphinMemoryAccess {
     false
   }
 
-  /// Ports `MemoryAccess.cpp:73` (Linux) / `:392` (macOS) — identical bodies.
+  /// Attach to the Dolphin process `pid`.
   pub fn attach_to_process(&mut self, pid: i32) -> bool {
     self.detach_from_process();
 
@@ -205,7 +201,7 @@ impl DolphinMemoryAccess {
         )
       };
 
-      // The fd is not needed once the mapping exists (C++ closes it on both paths).
+      // The fd is not needed once the mapping exists.
       // SAFETY: `fd` is a valid descriptor we own and no longer use.
       unsafe { libc::close(fd) };
 
@@ -241,9 +237,6 @@ impl DolphinMemoryAccess {
       } {
         Ok(h) => h,
         Err(e) => {
-          // Deviation from C++ (`MemoryAccess.cpp:247`): the original ignores an
-          // `OpenProcess` failure and still returns `true`. A null handle makes every
-          // later call fail, so surface it here instead.
           eprintln!("Failed to open Dolphin process {pid}: {e}");
           return false;
         }
@@ -252,7 +245,7 @@ impl DolphinMemoryAccess {
       self.dolphin_proc_handle = handle.0;
 
       if !self.get_emu_ram_address_start() {
-        // Wait for Dolphin to start running a game (C++ `:251`).
+        // Wait for Dolphin to start running a game.
         println!("Detected dolphin isn't running a game. We'll check for it in copy.");
       }
 
@@ -267,8 +260,7 @@ impl DolphinMemoryAccess {
     }
   }
 
-  /// Ports `MemoryAccess.cpp:102` (Linux) / `:421` (macOS). Unlike the C++, a failed
-  /// `munmap` logs and continues rather than `exit(4)`.
+  /// Detach from the attached Dolphin process.
   pub fn detach_from_process(&mut self) {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
@@ -312,11 +304,9 @@ impl DolphinMemoryAccess {
     self.attached_pid
   }
 
-  /// Ports `MemoryAccess.cpp:127` + `getRealPtr` (`:119`). Returns `false` and copies
-  /// nothing when not attached or the offset is out of range (the C++ `getRealPtr`
-  /// silently substitutes offset 0 — a latent bug; the only live caller passes 0).
-  /// The copy is bounded by `dest.len()`, `size`, `DOLPHIN_MEMORY_SIZE`, and the
-  /// mapping tail so a short `dest` can never be overrun.
+  /// Returns `false` and copies nothing when not attached or the offset is out
+  /// of range. The copy is bounded by `dest.len()`, `size`, `DOLPHIN_MEMORY_SIZE`,
+  /// and the mapping tail so a short `dest` can never be overrun.
   pub fn dolphin_memcpy(&self, dest: &mut [u8], offset: usize, size: usize) -> bool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
@@ -351,21 +341,18 @@ impl DolphinMemoryAccess {
       use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 
       if self.dolphin_proc_handle.is_null() || self.emu_ram_address_start == 0 {
-        // Base not resolved yet (Dolphin running, no game). The P3.2 caller
-        // re-attaches every frame, which re-runs the region scan — see decision E.
-        // Keeping the `&self` signature means we cannot re-scan in place here.
+        // Base not resolved yet (Dolphin running, no game). The caller
+        // re-attaches every frame, which re-runs the region scan. Keeping the
+        // `&self` signature means we cannot re-scan in place here.
         return false;
       }
 
       let real_offset = offset & 0x7FFF_FFFF;
       if real_offset > DOLPHIN_MEMORY_SIZE {
-        // Deviation from C++ `getRealPtr` (which silently substitutes offset 0) —
-        // matches the sanctioned P2.1 POSIX deviation.
         return false;
       }
 
-      // Clamp to `dest.len()` as well as `DOLPHIN_MEMORY_SIZE`: C++ only clamps to
-      // the latter, a latent overrun fixed for POSIX in P2.1.
+      // Clamp to `dest.len()` as well as `DOLPHIN_MEMORY_SIZE`
       let n = size.min(DOLPHIN_MEMORY_SIZE).min(dest.len());
       let mut read: usize = 0;
       // SAFETY: `dolphin_proc_handle` is a live handle with PROCESS_VM_READ;
@@ -391,15 +378,13 @@ impl DolphinMemoryAccess {
           err.0
         );
         if err == ERROR_PARTIAL_COPY {
-          // C++ zeroes `emuRAMAddressStart` here to force a re-scan; we cannot
-          // (`&self`), and the per-frame re-attach (P3.2) covers it — decision E.
           eprintln!("Game probably closed. Will continue looking.");
         }
         return false;
       }
 
       if read != n {
-        // Warn but do not fail hard, matching the C++ tone (`MemoryAccess.cpp:304`).
+        // Warn but do not fail hard
         eprintln!("Failed to read enough from {offset:#x}. Read {read} of {n}");
       }
       read == n

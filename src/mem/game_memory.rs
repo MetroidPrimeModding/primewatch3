@@ -4,8 +4,8 @@ use std::io::Read;
 use crate::mem::dolphin_memory::{DOLPHIN_MEMORY_SIZE, DolphinMemoryAccess};
 
 /// The MEM1 snapshot size, as a `usize`. Single source of truth is
-/// `dolphin_memory::DOLPHIN_MEMORY_SIZE` (C++ `MemoryAccess.hpp:7`); this alias
-/// keeps the array-length spelling readable.
+/// `dolphin_memory::DOLPHIN_MEMORY_SIZE`; this alias keeps the array-length
+/// spelling readable.
 const SNAPSHOT_LEN: usize = DOLPHIN_MEMORY_SIZE;
 
 pub struct GameMemory {
@@ -26,10 +26,9 @@ impl GameMemory {
     GameMemory { data }
   }
 
-  /// Ports C++ `GameMemory::loadFromPath` (`GameMemory.cpp:23-27`): read up to
-  /// `SNAPSHOT_LEN` bytes from `path` into the snapshot, in place. A file shorter
-  /// than the snapshot is not an error — the remaining bytes keep their previous
-  /// value, matching the C++ `ifstream::read` behaviour.
+  /// Read up to `SNAPSHOT_LEN` bytes from `path` into the snapshot, in place. A
+  /// file shorter than the snapshot is not an error — the remaining bytes keep
+  /// their previous value.
   pub fn load_from_file(&mut self, path: &str) -> Result<(), std::io::Error> {
     let file = fs::File::open(path)?;
     let mut reader = std::io::BufReader::new(file);
@@ -48,10 +47,9 @@ impl GameMemory {
     Ok(())
   }
 
-  /// Ports C++ `GameMemory::updateFromDolphin` (`GameMemory.cpp:17-21`): when a
-  /// live process is attached, copy its MEM1 over the snapshot; when detached
-  /// (`get_attached_pid()` returns `-1`), do nothing and leave whatever was last
-  /// loaded (e.g. a `./mem1.raw` dump) untouched.
+  /// When a live process is attached, copy its MEM1 over the snapshot; when
+  /// detached (`get_attached_pid()` returns `-1`), do nothing and leave whatever
+  /// was last loaded (e.g. a `./mem1.raw` dump) untouched.
   pub fn update_from_dolphin(&mut self, dolphin: &DolphinMemoryAccess) {
     if dolphin.get_attached_pid() > 0 {
       dolphin.dolphin_memcpy(&mut self.data[..], 0, DOLPHIN_MEMORY_SIZE);
@@ -68,11 +66,6 @@ impl GameMemory {
 
   /// Bounded big-endian fixed-width fetch. Returns `None` when the `N` bytes at
   /// `address` fall outside the snapshot.
-  ///
-  /// C++ `GameMemory::getRealPtr` clamps an out-of-range masked address to
-  /// offset `0` and reads garbage from the start of RAM; the Rust port instead
-  /// reports the miss as `None`. Choosing a default (0 / empty) for a missing
-  /// read is the caller's job (P4.2 `GameInstance`).
   fn read_bytes<const N: usize>(&self, address: u32) -> Option<[u8; N]> {
     let offset = GameMemory::address_to_offset(address);
     self.data.get(offset..offset + N)?.try_into().ok()
@@ -119,15 +112,14 @@ impl GameMemory {
     Some(f64::from_be_bytes(self.read_bytes(address)?))
   }
 
-  /// C++ `GameMember::read_bool` (`GameDefinitions.cpp:246`): a non-zero byte.
+  /// A non-zero byte.
   pub fn read_bool(&self, address: u32) -> Option<bool> {
     Some(self.read_u8(address)? != 0)
   }
 
-  /// C++ `GameMember::read_string` (`GameDefinitions.cpp:274`): NUL-terminated,
-  /// max 255 bytes, raw ASCII (no byte-swap). Returns `None` only if the very
-  /// first byte is out of range; a later OOB byte terminates the string like a
-  /// NUL (mirrors C++ `getRealPtr` returning `0`).
+  /// NUL-terminated, max 255 bytes, raw ASCII (no byte-swap).
+  /// Returns `None` only if the very first byte is out of range; a
+  /// later OOB byte terminates the string like a NUL.
   pub fn read_string(&self, address: u32) -> Option<String> {
     self.read_u8(address)?;
     let mut val = String::new();
@@ -140,10 +132,6 @@ impl GameMemory {
     Some(val)
   }
 
-  /// C++ `GameDefinitions::getBits` (`GameDefinitions.cpp:234-243`) with the
-  /// shift/mask UB guarded for Rust: `bit_length == 0` (and, defensively,
-  /// `bit_length >= width_bits`) means "the whole value"; a `bit` past the
-  /// value width yields `0`.
   fn extract_bits(v: u64, bit: u32, bit_length: u32, width_bits: u32) -> u64 {
     let value_mask = if width_bits >= 64 {
       u64::MAX

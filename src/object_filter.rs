@@ -1,6 +1,6 @@
 //! A small reimplementation of Dear ImGui's `ImGuiTextFilter` — the widget the
-//! C++ "Objects" window used to filter the entity table
-//! (`../primewatch2/src/PrimeWatch.cpp::drawObjectsWindow`, `objectFilter`).
+//! C++ "Objects" window used to filter the entity table (`objectFilter` in
+//! `drawObjectsWindow`).
 //!
 //! Semantics ported from `imgui.cpp` `ImGuiTextFilter::Build` / `PassFilter`:
 //!
@@ -13,7 +13,7 @@
 //! * Otherwise: any negative match rejects; then, if there are positive terms
 //!   and none matched, reject; else pass.
 //!
-//! Deviations from stock ImGui, both matching this port's task spec:
+//! Deviations from stock ImGui, both deliberate:
 //!
 //! * Matching is **case-sensitive** substring (ImGui's `ImStristr` is
 //!   case-insensitive) — the filter probe strings are built with fixed casing.
@@ -31,7 +31,7 @@ pub struct ObjectFilter {
 }
 
 impl ObjectFilter {
-  /// Ports `ImGuiTextFilter::PassFilter`. Returns `true` if `text` should be
+  /// Mirrors `ImGuiTextFilter::PassFilter`. Returns `true` if `text` should be
   /// shown given the current filter.
   pub fn passes(&self, text: &str) -> bool {
     let terms: Vec<&str> = self

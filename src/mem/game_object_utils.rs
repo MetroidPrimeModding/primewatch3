@@ -1,11 +1,9 @@
-//! Ports `../primewatch2/src/utils/GameObjectUtils.cpp` — walks the
-//! `CObjectList` hanging off `g_stateManager` into a `TUniqueID -> GameInstance`
-//! map, refreshed once per frame by the app shell.
+//! Walks the `CObjectList` hanging off `g_stateManager` into a
+//! `TUniqueID -> GameInstance` map, refreshed once per frame by the app shell.
 //!
-//! `getAllObjects` / `getObjectByEntityID` and the renderer string helpers
-//! (`objectTagToString` / `fourCCToString`, landed in P7.2) are ported here.
-//! `getAllLoadingDatas` (the resource-load queue walk, P8.4.5) is here too.
-//! `getAllCObjectReferences` still belongs to a later phase.
+//! `get_all_objects` / `get_object_by_entity_id`, the renderer string helpers
+//! (`object_tag_to_string` / `four_cc_to_string`), and the resource-load queue
+//! walk (`get_all_loading_datas`) all live here.
 
 use std::collections::BTreeMap;
 
@@ -14,28 +12,20 @@ use crate::mem::globals::{get_main, get_state_manager};
 use crate::mem::vtables::vtable_class_name;
 use crate::structs::prime_structs::GameInstance;
 
-/// C++ `TUniqueID` — the per-area object id used as the `CObjectList` slot index.
+/// The per-area object id used as the `CObjectList` slot index.
 pub type TUniqueID = u16;
 
-/// Sentinel terminating the intrusive slot list (C++ `0xFFFF`).
+/// Sentinel terminating the intrusive slot list.
 const LIST_END: u16 = 0xFFFF;
 
-/// Ports `GameObjectUtils::getAllObjects` (`GameObjectUtils.cpp:26-61`).
-///
 /// Reads `g_stateManager["allObjects"]` (auto-derefs `*CObjectList`), then walks
 /// the intrusive linked list of `SObjectListEntry` slots starting at `firstID`,
-/// stopping at `0xFFFF` or after `size + 1` iterations (the C++ "bad timing"
+/// stopping at `0xFFFF` or after `size + 1` iterations (a "bad timing"
 /// emergency break). Each slot's `entity` (`*CEntity` auto-deref) is retyped to
 /// its concrete class when the vtable at `+0x0` is in `MP1_VTABLES` *and* the
-/// mapped name is a real `.bs` struct (`GameVtables.cpp` parity).
+/// mapped name is a real `.bs` struct.
 ///
-/// Deviation from C++: C++ reads are total (`getRealPtr` clamps OOB to 0). Per
-/// the P4.2 / P5.1 convention these reads are `Option` with no default
-/// substitution, so a `None` on any structural/value read mid-walk stops the
-/// walk and returns what was gathered so far rather than fabricating a `0`. With
-/// a valid snapshot this never triggers.
-/// Returns a `BTreeMap` (not a `HashMap`) to match the C++ `std::map<TUniqueID,
-/// GameMember>`: the world renderer's translucent pass has no depth write and
+/// Returns a `BTreeMap` (not a `HashMap`): the world renderer's translucent pass has no depth write and
 /// blends in iteration order, so a stable, id-sorted order is load-bearing —
 /// a per-frame `HashMap` reshuffle makes overlapping triggers flicker.
 pub fn get_all_objects(ctx: &Ctx) -> BTreeMap<TUniqueID, GameInstance> {
@@ -64,7 +54,7 @@ pub fn get_all_objects(ctx: &Ctx) -> BTreeMap<TUniqueID, GameInstance> {
   let mut count: u32 = 0;
   let mut current_id: u16 = first;
   while current_id != LIST_END {
-    // Emergency exit in case of bad timing (C++ `if (count > size) break;`).
+    // Emergency exit in case of bad timing
     if count > size as u32 {
       break;
     }
@@ -82,7 +72,7 @@ pub fn get_all_objects(ctx: &Ctx) -> BTreeMap<TUniqueID, GameInstance> {
     };
 
     // Retype only when the vtable is in `MP1_VTABLES` *and* the mapped name is a
-    // real `.bs` struct (`GameVtables.cpp` parity).
+    // real `.bs` struct.
     if let Some(name) =
       vtable_class_name(vtable).filter(|name| ctx.structs.get_struct_by_name(name).is_some())
     {
@@ -91,8 +81,7 @@ pub fn get_all_objects(ctx: &Ctx) -> BTreeMap<TUniqueID, GameInstance> {
 
     objects.insert(current_id, entity);
 
-    // Advance via the *indexed* slot's `next` link (C++ reads `currentEntry`,
-    // and `prev` / `next` are per-slot).
+    // Advance via the *indexed* slot's `next` link
     let Some(next) = current_entry
       .get_member(ctx, "next")
       .and_then(|m| m.read_u16(ctx))
@@ -105,11 +94,9 @@ pub fn get_all_objects(ctx: &Ctx) -> BTreeMap<TUniqueID, GameInstance> {
   objects
 }
 
-/// Ports `GameObjectUtils::getObjectByEntityID` (`GameObjectUtils.cpp:13-24`).
-///
 /// Single-slot lookup into the same `CObjectList`: `eid & 0x3FF` is the slot
 /// index; returns that slot's `entity` (`*CEntity` auto-deref), with no vtable
-/// retype. Needed by the world renderer's camera lookup (`WorldRenderer.cpp:143`).
+/// retype. Needed by the world renderer's camera lookup.
 pub fn get_object_by_entity_id(ctx: &Ctx, eid: u16) -> Option<GameInstance> {
   let actual_id = eid & 0x3FF;
   let global_list = get_state_manager().get_member(ctx, "allObjects")?;
@@ -119,25 +106,21 @@ pub fn get_object_by_entity_id(ctx: &Ctx, eid: u16) -> Option<GameInstance> {
     .get_member(ctx, "entity")
 }
 
-/// Ports `GameObjectUtils::fourCCToString` (`GameObjectUtils.cpp:98-105`).
-///
 /// The four bytes of `cc`, most-significant first, each mapped 1:1 to a `char`
-/// (`char::from(u8)` — the Latin-1 mapping for 0x80-0xFF). C++ overwrites a
-/// 4-space `std::string` with the raw bytes; NUL / control bytes land in the
-/// result verbatim and are *not* sanitized here (the game's tags are ASCII; a
-/// clean display is P9's concern).
+/// (`char::from(u8)` — the Latin-1 mapping for 0x80-0xFF). NUL / control bytes
+/// land in the result verbatim and are *not* sanitized here (the game's tags
+/// are ASCII; a clean display is the render layer's concern).
 pub fn four_cc_to_string(cc: u32) -> String {
   (0..4)
     .map(|i| char::from((cc >> ((3 - i) * 8)) as u8))
     .collect()
 }
 
-/// Ports `GameObjectUtils::objectTagToString` (`GameObjectUtils.cpp:88-96`):
-/// `"{id:08x}.{fourCC}"`.
+/// Formats an `SObjectTag` as `"{id:08x}.{fourCC}"`.
 ///
 /// `id` / `fourCC` are read as `u32` from the `SObjectTag` members; an
-/// unreadable member defaults to `0` at this callsite (the P7.1 total-read
-/// convention — C++ uses the panicking `operator[]` on a well-formed `.bs`).
+/// unreadable member defaults to `0` at this callsite (the total-read
+/// convention).
 pub fn object_tag_to_string(ctx: &Ctx, inst: &GameInstance) -> String {
   let id = inst
     .get_member(ctx, "id")
@@ -150,17 +133,11 @@ pub fn object_tag_to_string(ctx: &Ctx, inst: &GameInstance) -> String {
   format!("{id:08x}.{}", four_cc_to_string(four_cc))
 }
 
-/// Ports `GameObjectUtils::getAllLoadingDatas` (`GameObjectUtils.cpp:107-127`).
-///
 /// Walks the intrusive `rstl::list<SLoadingData>` at
 /// `g_main["globalObjects"]["gameResFactory"]["loadList"]`: `first` and `end`
 /// auto-deref to `rstl::list_node`s, `["item"]` is the inline `SLoadingData`,
 /// `["next"]` the next node. Terminates on `current == end`, a null node, or
-/// `res.len() > size` (the C++ "emergency exit").
-///
-/// Deviation from C++: the C++ `list["item"]` uses the panicking `operator[]`;
-/// here a `None` structural read stops the walk and returns what was gathered
-/// (the P4.2 / P5.1 convention). With a valid snapshot this never triggers.
+/// `res.len() > size` (the "emergency exit").
 pub fn get_all_loading_datas(ctx: &Ctx) -> Vec<GameInstance> {
   let mut res: Vec<GameInstance> = Vec::new();
 
@@ -185,7 +162,7 @@ pub fn get_all_loading_datas(ctx: &Ctx) -> Vec<GameInstance> {
   };
 
   while current.address != end.address && current.address != 0 {
-    // Emergency exit in case of bad timing (C++ `if (res.size() > size) break;`).
+    // Emergency exit in case of bad timing.
     if res.len() as u32 > size {
       break;
     }
@@ -314,7 +291,7 @@ mod tests {
   #[test]
   fn four_cc_to_string_mrea() {
     assert_eq!(four_cc_to_string(0x4D52_4541), "MREA");
-    // Trailing NUL bytes are preserved verbatim (C++ parity).
+    // Trailing NUL bytes are preserved verbatim.
     assert_eq!(four_cc_to_string(0x0000_0000), "\0\0\0\0");
   }
 

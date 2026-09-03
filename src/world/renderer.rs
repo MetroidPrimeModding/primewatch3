@@ -1,13 +1,9 @@
-//! `WorldRenderer` — the live 3D world view. Ports the non-entity half of
-//! `../primewatch2/src/world/WorldRenderer.{hpp,cpp}` (the `renderEntities` /
-//! `drawPlayer` / per-class draw functions and the ImGui status windows are
-//! P8.4.3+).
+//! `WorldRenderer` — the live 3D world view.
 //!
-//! Replaces the P1.3 `SpikeScene`: same offscreen-target contract
-//! (`render` hands back a colour `TextureView` for egui to composite), now
-//! driven by the game's memory — the three camera modes, the `mesh_by_mrea`
-//! collision-mesh cache + GPU upload, and the area-AABB / camera-frustum line
-//! overlays.
+//! Renders to an offscreen target (`render` hands back a colour `TextureView`
+//! for egui to composite), driven by the game's memory — the three camera modes,
+//! the `mesh_by_mrea` collision-mesh cache + GPU upload, and the area-AABB /
+//! camera-frustum line overlays.
 //!
 //! Deviations from the C++ are called out at each site; the load-bearing ones:
 //! - Camera reads keep the last good value on a `None` (mid-load) rather than
@@ -15,7 +11,7 @@
 //! - `fov` is passed to `perspective` unconverted, exactly as the C++ passes it
 //!   to `glm::perspective` (see [`perspective`]).
 //! - `glm::decompose` -> `cam_eye = cam_view.inverse().w_axis` (only `cam_eye`
-//!   is consumed this phase).
+//!   is consumed).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -35,8 +31,7 @@ use crate::mem::math_utils::{read_as_matrix4f, read_as_quat, read_as_transform, 
 use crate::structs::prime_structs::GameInstance;
 use crate::world::collision_mesh::{CollisionMesh, load_mesh};
 
-/// Ports `enum class CullType` (`WorldRenderer.hpp:19-23`). Selected by the
-/// P8.4.6 Culling menu.
+/// Selected by the Culling menu.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CullType {
   Back,
@@ -44,8 +39,7 @@ pub enum CullType {
   None,
 }
 
-/// Ports `enum class CameraMode` (`WorldRenderer.hpp:25-29`). Selected by the
-/// P8.4.6 Camera menu.
+/// Selected by the Camera menu.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CameraMode {
   FollowPlayer,
@@ -53,8 +47,7 @@ pub enum CameraMode {
   GameCam,
 }
 
-/// Ports `enum class OrbitPlayerCameraOrigin` (`WorldRenderer.hpp:31-35`).
-/// Selected by the P8.4.6 Camera menu (Follow Player sub-group).
+/// Selected by the Camera menu (Follow Player sub-group).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OrbitPlayerCameraOrigin {
   Top,
@@ -62,14 +55,14 @@ pub enum OrbitPlayerCameraOrigin {
   Bottom,
 }
 
-/// Ports `struct GameCamera` (`WorldRenderer.hpp:37-44`) — the in-game camera as
-/// read from `CGameCamera`. Only `perspective` / `transform` are consumed this
-/// phase; `fov` / `znear` / `zfar` / `aspect` are read for the P8.4.5 status UI.
+/// The in-game camera as read from `CGameCamera`. Only `perspective` /
+/// `transform` are consumed; `fov` / `znear` / `zfar` / `aspect` are read for
+/// the camera status UI.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GameCamera {
   pub perspective: Mat4,
   pub transform: Mat4,
-  // P8.4.5: shown by the camera status window
+  // shown by the camera status window
   pub fov: f32,
 
   pub znear: f32,
@@ -79,9 +72,9 @@ pub struct GameCamera {
   pub aspect: f32,
 }
 
-/// Ports `PrimeWatchInput` (`../primewatch2/src/PrimeWatchInput.hpp`) minus
-/// `capturedMouse`. Real winit plumbing is P9.1; `app.rs` passes
-/// [`WorldInput::default`] (all zero — no camera motion) for now.
+/// The camera-motion inputs (`PrimeWatchInput` minus `capturedMouse`). `app.rs`
+/// passes [`WorldInput::default`] (all zero — no camera motion) until real winit
+/// plumbing lands.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WorldInput {
   pub cam_pitch: f32,
@@ -89,9 +82,8 @@ pub struct WorldInput {
   pub cam_zoom: f32,
 }
 
-/// Ports `struct PlayerGhost` (`WorldRenderer.hpp:73-79`). `enabled` gates the
-/// `player_ghosts` draw loop; nothing populates the ghost array yet (matches
-/// C++ — the loop is a no-op until a later phase feeds it).
+/// `enabled` gates the `player_ghosts` draw loop; nothing populates the ghost
+/// array yet (matches C++ — the loop is a no-op until something feeds it).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlayerGhost {
   pub enabled: bool,
@@ -101,9 +93,8 @@ pub struct PlayerGhost {
   pub is_morphed: bool,
 }
 
-/// Ports `struct TriggerRenderConfig` (`WorldRenderer.hpp:46-61`). The C++ type
-/// is a packed bitfield with per-field initializers; here it's plain `bool`s
-/// with a matching `Default`. The P8.4.6 UI toggles these.
+/// The C++ type is a packed bitfield with per-field initializers; here it's
+/// plain `bool`s with a matching `Default`. The UI toggles these.
 #[derive(Clone, Copy, Debug)]
 pub struct TriggerRenderConfig {
   pub detect_player: bool,
@@ -143,8 +134,7 @@ impl Default for TriggerRenderConfig {
   }
 }
 
-/// Ports `struct ActorRenderConfig` (`WorldRenderer.hpp:63-71`). Same
-/// bitfield-to-`bool` treatment as [`TriggerRenderConfig`].
+/// Same bitfield-to-`bool` treatment as [`TriggerRenderConfig`].
 #[derive(Clone, Copy, Debug)]
 pub struct ActorRenderConfig {
   pub render_projectiles: bool,
@@ -174,9 +164,8 @@ fn clamp_size(size: (u32, u32)) -> (u32, u32) {
   (size.0.max(1), size.1.max(1))
 }
 
-/// Build the offscreen colour + depth targets. Folded in from the deleted
-/// `scene.rs::create_targets`; uses the shared `gl::WORLD_*_FORMAT` consts
-/// (P8.2 forward-note "P8.4 unifies scene.rs's format consts").
+/// Build the offscreen colour + depth targets. Uses the shared
+/// `gl::WORLD_*_FORMAT` consts.
 fn create_targets(
   device: &wgpu::Device,
   size: (u32, u32),
@@ -212,7 +201,7 @@ fn create_targets(
   )
 }
 
-/// The `lookPos.z += …` nudge in `WorldRenderer.cpp:263-281`.
+/// The `lookPos.z += …` nudge from the C++ camera setup.
 fn orbit_z_nudge(origin: OrbitPlayerCameraOrigin, morphed: bool) -> f32 {
   match origin {
     OrbitPlayerCameraOrigin::Top => {
@@ -233,8 +222,7 @@ fn orbit_z_nudge(origin: OrbitPlayerCameraOrigin, morphed: bool) -> f32 {
   }
 }
 
-/// Ports `glm::quat(glm::vec3 eulerAngle)` — glm's half-angle constructor
-/// (`detail/type_quat.inl`):
+/// glm's half-angle quaternion constructor `glm::quat(glm::vec3 eulerAngle)`:
 /// ```text
 /// c = cos(euler * 0.5); s = sin(euler * 0.5);
 /// w = c.x*c.y*c.z + s.x*s.y*s.z
@@ -242,7 +230,7 @@ fn orbit_z_nudge(origin: OrbitPlayerCameraOrigin, morphed: bool) -> f32 {
 /// y = c.x*s.y*c.z + s.x*c.y*s.z
 /// z = c.x*c.y*s.z - s.x*s.y*c.z
 /// ```
-/// `WorldRenderer.cpp` calls it as `glm::quat(glm::vec3(0, pitch, yaw))`, i.e.
+/// The C++ calls it as `glm::quat(glm::vec3(0, pitch, yaw))`, i.e.
 /// `euler.x = 0`, `euler.y = pitch`, `euler.z = yaw`.
 pub fn quat_from_euler(euler: Vec3) -> Quat {
   let h = euler * 0.5;
@@ -257,16 +245,16 @@ pub fn quat_from_euler(euler: Vec3) -> Quat {
   )
 }
 
-/// Ports `glm::perspective(fov, aspect, zNear, zFar)` (`WorldRenderer.cpp:259` /
-/// `291`).
+/// Wraps `glm::perspective(fov, aspect, zNear, zFar)`.
 ///
+/// TODO: we need to find out where we are using degrees vs radians and fix this
 /// NOTE: the C++ passes `fov` (default `45`) straight into `glm::perspective`,
 /// whose first parameter is the vertical FOV in **radians** — `45` rad is
 /// almost certainly a latent bug in the original. This is ported verbatim: no
-/// degrees→radians conversion here. Flagged in the P8.4.2 manual checklist.
+/// degrees→radians conversion here.
 ///
 /// Uses glam's DirectX-convention RH projection ([0, 1] clip depth) — the wgpu
-/// convention, same call the deleted `scene.rs` used.
+/// convention.
 fn perspective(fov: f32, aspect: f32, z_near: f32, z_far: f32) -> Mat4 {
   glam::camera::rh::proj::directx::perspective(fov, aspect.max(1e-3), z_near, z_far)
 }
@@ -298,8 +286,7 @@ pub(crate) struct CameraResult {
   pub manual_camera_pos: Vec3,
 }
 
-/// Ports the camera-setup block of `WorldRenderer::render`
-/// (`WorldRenderer.cpp:258-310`).
+/// The camera-setup block of `WorldRenderer::render`.
 pub(crate) fn compute_camera(p: &CameraParams) -> CameraResult {
   let mut manual_camera_pos = p.manual_camera_pos;
   let (projection, view) = match p.camera_mode {
@@ -308,8 +295,7 @@ pub(crate) fn compute_camera(p: &CameraParams) -> CameraResult {
       let angle = quat_from_euler(Vec3::new(0.0, p.pitch, p.yaw));
       let mut look_pos = p.last_known_non_colliding_pos;
       look_pos.z += orbit_z_nudge(p.orbit, p.player_is_morphed);
-      // C++: `camEye = vec4(lookPos,1) - (angle * vec4{distance,0,0,1})`; the
-      // quat rotates the xyz, the vec4 subtraction truncates to vec3.
+      // The quat rotates the xyz, the vec4 subtraction truncates to vec3.
       let eye = look_pos - (angle * Vec3::new(p.distance, 0.0, 0.0));
       manual_camera_pos = look_pos;
       (
@@ -328,10 +314,9 @@ pub(crate) fn compute_camera(p: &CameraParams) -> CameraResult {
       )
     }
   };
-  // Replaces the `glm::decompose(camView, …)` block (`WorldRenderer.cpp:297-310`)
-  // — only `camEye` is consumed downstream this phase (the shader `viewPos`);
-  // `camPointing` / `camViewport` are P8.4.5. The camera-to-world translation is
-  // the true eye position.
+  // Replaces the `glm::decompose(camView, …)` block — only `camEye` is consumed
+  // downstream (the shader `viewPos`). The camera-to-world translation is the
+  // true eye position.
   let eye = view.inverse().w_axis.truncate();
   CameraResult {
     projection,
@@ -342,9 +327,8 @@ pub(crate) fn compute_camera(p: &CameraParams) -> CameraResult {
 }
 
 /// Pure `mesh_by_mrea` / GPU-cache bookkeeping for one area, factored out of
-/// [`WorldRenderer::update_areas`] so it's testable without a GPU device
-/// (`WorldRenderer.cpp:155-167`). `loaded` = `isPostConstructed`; `load`
-/// produces the CPU mesh on a cache miss.
+/// [`WorldRenderer::update_areas`] so it's testable without a GPU device.
+/// `loaded` = `isPostConstructed`; `load` produces the CPU mesh on a cache miss.
 fn reconcile_area<F: FnOnce() -> Option<CollisionMesh>>(
   mesh_by_mrea: &mut HashMap<u32, CollisionMesh>,
   gpu_mesh_by_mrea: &mut HashMap<u32, DynamicMesh>,
@@ -370,8 +354,8 @@ fn read_vec3_member(ctx: &Ctx, parent: &GameInstance, name: &str) -> Option<Vec3
 }
 
 /// Walk a member chain (`entity["a"]["b"]…`), returning `None` on the first
-/// missing link — the P8.4.2 "`None` -> skip the draw" convention for the
-/// per-class draw functions.
+/// missing link — the "`None` -> skip the draw" convention for the per-class
+/// draw functions.
 fn walk_member(ctx: &Ctx, inst: &GameInstance, path: &[&str]) -> Option<GameInstance> {
   let mut cur = inst.clone();
   for name in path {
@@ -386,9 +370,8 @@ fn read_vec3_at(ctx: &Ctx, inst: &GameInstance, path: &[&str]) -> Option<Vec3> {
   read_as_vec3(ctx, &walk_member(ctx, inst, path)?)
 }
 
-/// Ports the `triggerRenderFlags` assembly in `renderEntities`
-/// (`WorldRenderer.cpp:587-599`) — `detect_projectiles` fans out to all seven
-/// projectile bits.
+/// The `triggerRenderFlags` assembly in `renderEntities` — `detect_projectiles`
+/// fans out to all seven projectile bits.
 pub(crate) fn trigger_render_flags(c: &TriggerRenderConfig) -> u32 {
   let mut f = 0u32;
   if c.detect_player {
@@ -430,8 +413,8 @@ pub(crate) fn trigger_render_flags(c: &TriggerRenderConfig) -> u32 {
   f
 }
 
-/// Ports the `drawTrigger` colour ladder (`WorldRenderer.cpp:669-677`): default
-/// white, water tint, highlight red — highlight always wins.
+/// The `drawTrigger` colour ladder: default white, water tint, highlight red —
+/// highlight always wins.
 pub(crate) fn trigger_color(is_water: bool, is_highlighted: bool) -> Vec4 {
   let mut color = Vec4::new(1.0, 1.0, 1.0, 0.5);
   if is_water {
@@ -443,16 +426,14 @@ pub(crate) fn trigger_color(is_water: bool, is_highlighted: bool) -> Vec4 {
   color
 }
 
-/// `glm::abs(glm::length(min - max)) < 0.1` degeneracy test
-/// (`WorldRenderer.cpp:711` / `716`).
+/// `glm::abs(glm::length(min - max)) < 0.1` degeneracy test.
 pub(crate) fn is_degenerate_bbox(min: Vec3, max: Vec3) -> bool {
   (min - max).length().abs() < 0.1
 }
 
-/// Ports the `drawPhysicsActor` bounding-box fallback chain
-/// (`WorldRenderer.cpp:706-719`): `collisionPrimitive` aabb (`pos`-offset) ->
-/// `baseBoundingBox` (`pos`-offset) -> `renderBounds` (**no** `pos` offset —
-/// the asymmetry is verbatim from C++).
+/// The `drawPhysicsActor` bounding-box fallback chain: `collisionPrimitive` aabb
+/// (`pos`-offset) -> `baseBoundingBox` (`pos`-offset) -> `renderBounds` (**no**
+/// `pos` offset).
 pub(crate) fn physics_actor_bbox(
   pos: Vec3,
   collision_primitive: (Vec3, Vec3),
@@ -471,10 +452,9 @@ pub(crate) fn physics_actor_bbox(
   (min, max)
 }
 
-/// Ports the `drawPlayer` speed-indicator colour ladder
-/// (`WorldRenderer.cpp:567-576`): red when the angle between facing and
-/// movement exceeds 90° (or is NaN), otherwise a green ramp that flips to cyan
-/// past 95%.
+/// The `drawPlayer` speed-indicator colour ladder: red when the angle between
+/// facing and movement exceeds 90° (or is NaN), otherwise a green ramp that
+/// flips to cyan past 95%.
 pub(crate) fn player_speed_color(angle: f32) -> Vec4 {
   let half_pi = std::f32::consts::FRAC_PI_2;
   if angle.abs() > half_pi || angle.is_nan() {
@@ -488,25 +468,25 @@ pub(crate) fn player_speed_color(angle: f32) -> Vec4 {
   }
 }
 
-/// Ports `drawBomb`'s fuse-frame gate (`WorldRenderer.cpp:845-847`):
-/// `ceil(fuseTimeSeconds * 60) + 1`. The draw is skipped when this is `<= 0`.
+/// `drawBomb`'s fuse-frame gate: `ceil(fuseTimeSeconds * 60) + 1`. The draw is
+/// skipped when this is `<= 0`.
 pub(crate) fn bomb_fuse_frames(fuse_time: f32) -> i32 {
   (fuse_time * 60.0).ceil() as i32 + 1
 }
 
-/// Ports `drawBomb`'s ball-proximity highlight recompute
-/// (`WorldRenderer.cpp:851-859`) — the passed-in highlight flag is discarded and
-/// this predicate decides. `maxDistance` is the hardcoded `1.5` tweak value.
+/// `drawBomb`'s ball-proximity highlight recompute — the passed-in highlight
+/// flag is discarded and this predicate decides. `maxDistance` is the hardcoded
+/// `1.5` tweak value.
 pub(crate) fn bomb_proximity_highlight(player_pos: Vec3, bomb_pos: Vec3) -> bool {
   let pos_to_ball = player_pos + Vec3::new(0.0, 0.0, 0.7) - bomb_pos;
   pos_to_ball.length() < 1.5 && pos_to_ball.z >= -0.7
 }
 
-/// Ports `drawProjectile`'s nested `CProjectileWeapon` transform chain
-/// (`WorldRenderer.cpp:811`): `localToWorldXf * (localXf * projOffset +
-/// localOffset) + worldOffset`, with each offset extended to a `w = 0` vec4 so
-/// the matrix translations only apply via `localToWorldXf` / `localXf`
-/// rotation-scale, and `worldOffset` added in world space.
+/// `drawProjectile`'s nested `CProjectileWeapon` transform chain:
+/// `localToWorldXf * (localXf * projOffset + localOffset) + worldOffset`, with
+/// each offset extended to a `w = 0` vec4 so the matrix translations only apply
+/// via `localToWorldXf` / `localXf` rotation-scale, and `worldOffset` added in
+/// world space.
 pub(crate) fn projectile_world_pos(
   local_to_world: Mat4,
   local_xf: Mat4,
@@ -519,14 +499,14 @@ pub(crate) fn projectile_world_pos(
   .truncate()
 }
 
-/// Ports `drawProjectile`'s velocity transform (`WorldRenderer.cpp:813`):
-/// `localToWorldXf * localXf * vec4(velocity, 0)`.
+/// `drawProjectile`'s velocity transform: `localToWorldXf * localXf *
+/// vec4(velocity, 0)`.
 pub(crate) fn projectile_world_vel(local_to_world: Mat4, local_xf: Mat4, velocity: Vec3) -> Vec3 {
   (local_to_world * local_xf * velocity.extend(0.0)).truncate()
 }
 
-/// Ports `glm::project(obj, view, projection, viewport)` as used by
-/// `getScreenspacePosFor*` (`WorldRenderer.cpp:915` / `938`).
+/// `glm::project(obj, view, projection, viewport)` as used by
+/// `getScreenspacePosFor*`.
 ///
 /// `clip = projection * view * vec4(pos, 1)`, perspective-divide to NDC, then map
 /// to the pixel viewport: `screen.xy = viewport.xy + (ndc.xy + 1) * 0.5 *
@@ -538,9 +518,6 @@ pub(crate) fn projectile_world_vel(local_to_world: Mat4, local_xf: Mat4, velocit
 /// is the raw NDC depth and is unused).
 ///
 /// Returns `None` when the point is on or behind the camera plane (`clip.w <= 0`).
-/// The C++ (and glm) divided by a negative `w` there, mirroring points from behind
-/// the camera onto the screen — this is that latent bug fixed: callers skip the
-/// overlay instead of drawing it at a bogus position.
 pub(crate) fn project(pos: Vec3, view: Mat4, projection: Mat4, viewport: [f32; 4]) -> Option<Vec3> {
   let clip = projection * view * pos.extend(1.0);
   if clip.w <= 0.0 {
@@ -555,9 +532,8 @@ pub(crate) fn project(pos: Vec3, view: Mat4, projection: Mat4, viewport: [f32; 4
 }
 
 /// A screen-space text label accumulated during `update` and painted by the app
-/// shell's overlay pass (P9.1). Ports the `ImDrawList::AddText` calls in the
-/// per-class draw functions (`WorldRenderer.cpp:873-878` / `900-909` /
-/// `943-973`).
+/// shell's overlay pass. From the `ImDrawList::AddText` calls in the per-class
+/// draw functions.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextOverlay {
   pub screen_pos: Vec2,
@@ -566,11 +542,12 @@ pub struct TextOverlay {
 
 /// Nominal line height for stacking multi-line overlays (`drawPickup`'s two
 /// lines). The C++ uses `ImGui::GetTextLineHeight()`; this layer has no font
-/// system, so the P9.1 painter owns exact glyph metrics / horizontal centering.
+/// system, so the overlay painter owns exact glyph metrics / horizontal
+/// centering.
 const OVERLAY_LINE_HEIGHT: f32 = 14.0;
 
 pub struct WorldRenderer {
-  // --- camera params (`WorldRenderer.hpp:83-113` defaults) ---
+  // --- camera params ---
   pub aspect: f32,
   pub fov: f32,
   pub z_near: f32,
@@ -587,22 +564,20 @@ pub struct WorldRenderer {
   pub orbit_player_camera_origin: OrbitPlayerCameraOrigin,
   pub trigger_render_config: TriggerRenderConfig,
   pub actor_render_config: ActorRenderConfig,
-  /// Ports `WorldRenderer.hpp:91` `float manualCameraSpeed{1.0f}` — the
-  /// detached-camera move-speed multiplier, driven by the "Speed" slider in the
-  /// Camera menu.
+  /// The detached-camera move-speed multiplier, driven by the "Speed" slider in
+  /// the Camera menu.
   pub manual_camera_speed: f32,
-  /// Ports C++ `PrimeWatch::showExactCameraControls`. This is really app-shell
-  /// state; it is parked on `WorldRenderer` for now so the P8.4.6 menu bar and
-  /// the Camera Controls window can share it without new app plumbing.
+  /// This is really app-shell state; it is parked on `WorldRenderer`
+  /// for now so the menu bar and the Camera Controls window can share it
+  /// without new app plumbing.
   pub show_exact_camera_controls: bool,
 
   // --- cached per-frame camera state ---
   pub cam_projection: Mat4,
   pub cam_view: Mat4,
   pub cam_eye: Vec3,
-  /// Pixel-space viewport `[x, y, width, height]` for [`project`]. Ports C++
-  /// `camViewport` (`PrimeWatch.cpp:91` / `494` — `{0, 0, width, height}`); set
-  /// in [`WorldRenderer::resize`] and again each [`WorldRenderer::update`].
+  /// Pixel-space viewport `[x, y, width, height]` for [`project`].
+  /// Aet in [`WorldRenderer::resize`] and again each [`WorldRenderer::update`].
   pub cam_viewport: [f32; 4],
   pub game_cam: GameCamera,
 
@@ -610,13 +585,12 @@ pub struct WorldRenderer {
   /// Cleared at the top of every [`WorldRenderer::update`].
   pub text_overlays: Vec<TextOverlay>,
 
-  // --- cached per-frame player state (`WorldRenderer.hpp:109-113`) ---
+  // --- cached per-frame player state ---
   /// The live player, read from `g_stateManager["player"]` each frame. Its
   /// `position` / `orientation` / `velocity` / `is_morphed` feed `draw_player`
   /// and the camera; a `None` on any sub-read keeps the last good value.
   pub player: PlayerGhost,
-  /// `std::array<PlayerGhost, 5>` — all `enabled == false`, nothing populates
-  /// them yet (matches C++); the `draw_player` loop over them is a no-op.
+  /// Saved player ghosts  (using hotkeys)
   pub player_ghosts: [PlayerGhost; 5],
   pub last_known_non_colliding_pos: Vec3,
   pub player_look_vec: Vec3,
@@ -674,7 +648,7 @@ impl WorldRenderer {
       color,
       depth,
       pipelines,
-      // ports `WorldRenderer::init` (`WorldRenderer.cpp:115-118`).
+      // mirrors `WorldRenderer::init`.
       render_buff: crate::gl::immediate::ImmediateModeBuffer::new(),
       translucent_render_buff: crate::gl::immediate::ImmediateModeBuffer::new(),
       opaque_tris: DynamicMesh::new(device, "world-opaque-tris", Topology::Triangles),
@@ -687,7 +661,7 @@ impl WorldRenderer {
   }
 
   /// Recreate the colour + depth targets if `size` changed. Returns `true` when
-  /// they were recreated (same contract as the deleted `SpikeScene::resize`).
+  /// they were recreated.
   pub fn resize(&mut self, device: &wgpu::Device, size: (u32, u32)) -> bool {
     let size = clamp_size(size);
     if size == self.size {
@@ -717,10 +691,8 @@ impl WorldRenderer {
     &self.color
   }
 
-  /// Ports the Shift+`1..5` branch of `PrimeWatch::processInput`
-  /// (`PrimeWatchInput.cpp:148-153`): snapshot the live player into ghost slot
-  /// `i` and enable it. Out-of-range `i` is a no-op (C++ asserts the array size
-  /// matches the key list; the Rust port just clamps).
+  /// The Shift+`1..5` branch of `PrimeWatch::processInput`: snapshot the live
+  /// player into ghost slot `i` and enable it. Out-of-range `i` is a no-op.
   pub fn record_player_ghost(&mut self, i: usize) {
     let player = self.player;
     if let Some(ghost) = self.player_ghosts.get_mut(i) {
@@ -732,18 +704,16 @@ impl WorldRenderer {
     }
   }
 
-  /// Ports the Ctrl+`1..5` branch of `PrimeWatch::processInput`
-  /// (`PrimeWatchInput.cpp:154-156`): disable ghost slot `i`.
+  /// The Ctrl+`1..5` branch of `PrimeWatch::processInput`: disable ghost slot `i`.
   pub fn clear_player_ghost(&mut self, i: usize) {
     if let Some(ghost) = self.player_ghosts.get_mut(i) {
       ghost.enabled = false;
     }
   }
 
-  /// Ports the `CameraMode::DETATCHED` WASD/QE block of
-  /// `PrimeWatch::processInput` (`PrimeWatchInput.cpp:206-231`). `forward` /
-  /// `right` / `up` are the net key contributions (e.g. `forward = W - S`); the
-  /// per-axis basis and `manualCameraSpeed * 0.2` scaling match the C++.
+  /// The `CameraMode::DETATCHED` WASD/QE block of `PrimeWatch::processInput`.
+  /// `forward` / `right` / `up` are the net key contributions (e.g.
+  /// `forward = W - S`).
   pub fn move_detached_camera(&mut self, forward: f32, right: f32, up: f32) {
     let angle = quat_from_euler(Vec3::new(0.0, 0.0, self.yaw));
     let fwd = angle * Vec3::new(1.0, 0.0, 0.0);
@@ -755,11 +725,10 @@ impl WorldRenderer {
     self.manual_camera_pos += up_axis * (up * speed);
   }
 
-  /// Ports `WorldRenderer::update` (`WorldRenderer.cpp:120-151`) + the
-  /// camera-setup block (`258-310`) + the CPU-side ghost-cube / camera-line
-  /// accumulation (`321-334`) + `drawPlayer` / `renderEntities`
-  /// (`312-336`) — those C++ `render()` calls happen here at the end of
-  /// `update` since this port keeps all CPU accumulation in `update`.
+  /// `WorldRenderer::update` + the camera-setup block + the CPU-side ghost-cube
+  /// / camera-line accumulation + `drawPlayer` / `renderEntities` — those C++
+  /// `render()` calls happen here at the end of `update` since this port keeps
+  /// all CPU accumulation in `update`.
   pub fn update(
     &mut self,
     ctx: &Ctx,
@@ -778,7 +747,6 @@ impl WorldRenderer {
     self.pitch = self.pitch.clamp(-lim, lim);
     self.distance = self.distance.clamp(1.0, 100.0);
 
-    // C++ sets `aspect` from the framebuffer elsewhere; derive it here.
     self.aspect = viewport_size.0 as f32 / viewport_size.1.max(1) as f32;
 
     // --- player reads (keep last good value on a `None`) ---
@@ -823,7 +791,9 @@ impl WorldRenderer {
         .and_then(|m| m.read_u16(ctx))
       && let Some(mut camera) = get_object_by_entity_id(ctx, cam_id)
     {
-      // C++ `camera.type = "CGameCamera"` — assume the active camera is one.
+      // Assume the active camera is a CGameCamera.
+      // There seems to be a bug here at least sometimes, causing morph camera data to not pull in properly
+      // TODO: add a view to debug this?
       camera.type_name = "CGameCamera".to_string();
       if let Some(m) = camera
         .get_member(ctx, "perspectiveMatrix")
@@ -878,8 +848,6 @@ impl WorldRenderer {
     self.cam_view = res.view;
     self.cam_eye = res.eye;
     self.manual_camera_pos = res.manual_camera_pos;
-    // C++ sets `camViewport` from the framebuffer in `framebuffer_size_cb`; keep
-    // it in lock-step with the render target each frame (pixel space, not NDC).
     self.cam_viewport = [
       0.0,
       0.0,
@@ -887,7 +855,7 @@ impl WorldRenderer {
       viewport_size.1.max(1) as f32,
     ];
 
-    // --- CPU geometry into the immediate buffers (`WorldRenderer.cpp:321-334`) ---
+    // --- CPU geometry into the immediate buffers ---
     self.render_buff.clear();
     self.translucent_render_buff.clear();
 
@@ -902,9 +870,8 @@ impl WorldRenderer {
         Vec4::new(1.0, 0.5, 0.5, 0.5),
       ));
 
-    // Deviation from C++ (which always drew this): in GameCam mode the view *is*
-    // the game camera, so the frustum lines sit exactly on the screen edge and
-    // flicker in and out. Skip them in that mode.
+    // In GameCam mode the view *is* the game camera, so the frustum lines sit exactly on
+    // the screen edge and flicker in and out. Skip them in that mode.
     if self.camera_mode != CameraMode::GameCam {
       self.render_buff.set_transform(Mat4::IDENTITY);
       self
@@ -916,7 +883,7 @@ impl WorldRenderer {
         ));
     }
 
-    // --- entities + player (`WorldRenderer.cpp:312-336`) ---
+    // --- entities + player ---
     self.render_entities(ctx, objects, highlighted);
 
     let player = self.player;
@@ -943,9 +910,9 @@ impl WorldRenderer {
     buf.add_tris(verts);
   }
 
-  /// Ports `WorldRenderer::drawPlayer` (`WorldRenderer.cpp:531-581`). The
-  /// collision shape goes to the opaque or translucent buffer by `color.a`; the
-  /// speed indicator is always on the opaque `render_buff`.
+  /// `WorldRenderer::drawPlayer`. The collision shape goes to the opaque or
+  /// translucent buffer by `color.a`; the speed indicator is always on the
+  /// opaque `render_buff`.
   fn draw_player(&mut self, ghost: &PlayerGhost, color: Vec4) {
     let translucent = color.w < 0.99;
 
@@ -980,10 +947,10 @@ impl WorldRenderer {
     self.render_buff.add_line(Vec3::ZERO, ghost.velocity * 0.3);
   }
 
-  /// Ports `WorldRenderer::renderEntities` (`WorldRenderer.cpp:583-662`) — the
-  /// active/highlight filter plus the `extendsClass` dispatch chain. Chain order
-  /// is load-bearing (`CCollisionActor` -> `CAi` -> `CPhysicsActor` ->
-  /// `CActor`): every class here inherits from the ones below it.
+  /// `WorldRenderer::renderEntities` — the active/highlight filter plus the
+  /// `extendsClass` dispatch chain. Chain order is load-bearing
+  /// (`CCollisionActor` -> `CAi` -> `CPhysicsActor` -> `CActor`): every class
+  /// here inherits from the ones below it.
   //
   // `collapsible_if` would suggest folding `if extends_class(X) { if cfg { … } }`
   // into `&&`, but that changes the dispatch — a class match with its config
@@ -1068,7 +1035,7 @@ impl WorldRenderer {
     }
   }
 
-  /// Ports `WorldRenderer::drawTrigger` (`WorldRenderer.cpp:664-684`).
+  /// `WorldRenderer::drawTrigger`.
   fn draw_trigger(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
     let Some(min) = read_vec3_at(ctx, entity, &["bounds", "min"]) else {
       return;
@@ -1089,8 +1056,8 @@ impl WorldRenderer {
       .add_tris(&shapes::generate_cube(min, max, color));
   }
 
-  /// Ports `WorldRenderer::drawDock` (`WorldRenderer.cpp:686-702`). `min`/`max`
-  /// are inherited from `CPhysicsActor::collisionPrimitive`.
+  /// `WorldRenderer::drawDock`. `min`/`max` are inherited from
+  /// `CPhysicsActor::collisionPrimitive`.
   fn draw_dock(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
     let Some(min) = read_vec3_at(ctx, entity, &["collisionPrimitive", "aabb", "min"]) else {
       return;
@@ -1115,7 +1082,7 @@ impl WorldRenderer {
       .add_tris(&shapes::generate_cube(min, max, color));
   }
 
-  /// Ports `WorldRenderer::drawPhysicsActor` (`WorldRenderer.cpp:704-739`).
+  /// `WorldRenderer::drawPhysicsActor`.
   fn draw_physics_actor(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
     let Some(transform) = entity
       .get_member(ctx, "transform")
@@ -1170,9 +1137,9 @@ impl WorldRenderer {
       .add_line(Vec3::new(0.0, 0.0, -0.5), Vec3::new(0.0, 0.0, 0.5));
   }
 
-  /// Ports `WorldRenderer::drawActor` (`WorldRenderer.cpp:741-773`). A null
-  /// `*CModelData` (`address == 0`, or an unreadable pointer) plus not
-  /// highlighted plus `!render_all_actors` skips the actor.
+  /// `WorldRenderer::drawActor`. A null `*CModelData` (`address == 0`, or an
+  /// unreadable pointer) plus not highlighted plus `!render_all_actors` skips
+  /// the actor.
   fn draw_actor(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
     let model_addr = entity.get_member(ctx, "modelData").map_or(0, |m| m.address);
     if model_addr == 0 && !is_highlighted && !self.actor_render_config.render_all_actors {
@@ -1216,9 +1183,9 @@ impl WorldRenderer {
       .add_line(Vec3::new(0.0, 0.0, -0.5), Vec3::new(0.0, 0.0, 0.5));
   }
 
-  /// Ports `WorldRenderer::getScreenspacePosForActor`
-  /// (`WorldRenderer.cpp:912-918`): project the entity's transform translation
-  /// to screen pixels, then flip Y for the top-left-origin overlay space.
+  /// `WorldRenderer::getScreenspacePosForActor`: project the entity's transform
+  /// translation to screen pixels, then flip Y for the top-left-origin overlay
+  /// space.
   fn screenspace_pos_for_actor(&self, ctx: &Ctx, entity: &GameInstance) -> Option<Vec2> {
     let transform = entity
       .get_member(ctx, "transform")
@@ -1228,11 +1195,11 @@ impl WorldRenderer {
     Some(Vec2::new(s.x, self.cam_viewport[3] - s.y))
   }
 
-  /// Ports `WorldRenderer::getScreenspacePosForPhysicsActor`
-  /// (`WorldRenderer.cpp:920-941`): same as [`Self::screenspace_pos_for_actor`]
-  /// but offsets the projected point by the centre of the actor's bounding box,
-  /// picked from the `collisionPrimitive` -> `baseBoundingBox` -> `renderBounds`
-  /// ladder (the last one is `pos`-relative — verbatim C++ asymmetry).
+  /// `WorldRenderer::getScreenspacePosForPhysicsActor`: same as
+  /// [`Self::screenspace_pos_for_actor`] but offsets the projected point by the
+  /// centre of the actor's bounding box, picked from the `collisionPrimitive` ->
+  /// `baseBoundingBox` -> `renderBounds` ladder (the last one is `pos`-relative
+  /// asymmetry).
   fn screenspace_pos_for_physics_actor(&self, ctx: &Ctx, entity: &GameInstance) -> Option<Vec2> {
     let transform = entity
       .get_member(ctx, "transform")
@@ -1260,14 +1227,8 @@ impl WorldRenderer {
     Some(Vec2::new(s.x, self.cam_viewport[3] - s.y))
   }
 
-  // --- P8.4.4: specialized geometry + velocity vectors. P8.4.5 adds the
-  // screen-space HP / item / fuse-frame text overlays via
-  // [`Self::add_text_overlay`] + [`project`] (`ImDrawList::AddText` /
-  // `getScreenspacePosFor*` in the C++).
-
-  /// Ports `WorldRenderer::drawProjectile` (`WorldRenderer.cpp:800-842`) minus
-  /// the dead line-821 `transform` read (never used in the C++). The
-  /// `CProjectileWeapon` at `entity["projectile"]` is inline (not a pointer).
+  /// `WorldRenderer::drawProjectile`. The `CProjectileWeapon` at `entity["projectile"]` is inline
+  /// (not a pointer).
   fn draw_projectile(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
     let Some(active) = entity
       .get_member(ctx, "projectileActive")
@@ -1348,10 +1309,9 @@ impl WorldRenderer {
       .add_line(pos, pos + vel.normalize() * 0.5);
   }
 
-  /// Ports `WorldRenderer::drawBomb` (`WorldRenderer.cpp:844-879`). The passed-in
-  /// `_is_highlighted` is intentionally ignored — the C++ recomputes it from ball
-  /// proximity. The fuse-frame count is queued as a screen-space overlay
-  /// (`WorldRenderer.cpp:873-878`).
+  /// `WorldRenderer::drawBomb`. The passed-in `_is_highlighted` is intentionally
+  /// ignored — it is recomputed from ball proximity. The fuse-frame count
+  /// is queued as a screen-space overlay.
   fn draw_bomb(&mut self, ctx: &Ctx, entity: &GameInstance, _is_highlighted: bool) {
     let Some(fuse_time) = entity
       .get_member(ctx, "fuseTime")
@@ -1389,14 +1349,13 @@ impl WorldRenderer {
         color,
       ));
 
-    // HP-style fuse-frame count over the bomb (`WorldRenderer.cpp:873-878`).
+    // HP-style fuse-frame count over the bomb.
     if let Some(screen) = self.screenspace_pos_for_actor(ctx, entity) {
       self.add_text_overlay(screen, format!("{}", bomb_fuse_frames(fuse_time)));
     }
   }
 
-  /// Ports `WorldRenderer::drawPowerBomb` (`WorldRenderer.cpp:881-896`). No
-  /// highlight branch. `CPowerBomb : CWeapon`.
+  /// `WorldRenderer::drawPowerBomb`. No highlight branch. `CPowerBomb : CWeapon`.
   fn draw_power_bomb(&mut self, ctx: &Ctx, entity: &GameInstance, _is_highlighted: bool) {
     let Some(cur_time) = entity
       .get_member(ctx, "curTime")
@@ -1427,10 +1386,10 @@ impl WorldRenderer {
       .add_tris(&shapes::generate_sphere(Vec3::ZERO, cur_radius, color));
   }
 
-  /// Ports `WorldRenderer::drawChozoGhost` (`WorldRenderer.cpp:775-798`) minus
-  /// the dead `spaceWarpPosition` read and the commented-out warp line. Draws
-  /// the `CAi` body then a magenta line to the ghost's cover point (resolved by
-  /// slot id `coverPoint & 0x3FF` in the object map).
+  /// `WorldRenderer::drawChozoGhost` minus the dead `spaceWarpPosition` read and
+  /// the commented-out warp line. Draws the `CAi` body then a magenta line to
+  /// the ghost's cover point (resolved by slot id `coverPoint & 0x3FF` in the
+  /// object map).
   fn draw_chozo_ghost(
     &mut self,
     ctx: &Ctx,
@@ -1468,10 +1427,9 @@ impl WorldRenderer {
     }
   }
 
-  /// Ports `WorldRenderer::drawPickup` (`WorldRenderer.cpp:943-973`). With the
-  /// Ports `WorldRenderer::drawPickup` (`WorldRenderer.cpp:943-973`): the
-  /// `drawPhysicsActor` body plus two label lines — `"<item> <amount>/<capacity>"`
-  /// above and `"<curTime>/<lifeTime>"` below the projected point.
+  /// `WorldRenderer::drawPickup`: the `drawPhysicsActor` body plus two label
+  /// lines — `"<item> <amount>/<capacity>"` above and `"<curTime>/<lifeTime>"`
+  /// below the projected point.
   fn draw_pickup(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
     self.draw_physics_actor(ctx, entity, is_highlighted);
 
@@ -1508,9 +1466,9 @@ impl WorldRenderer {
     self.add_text_overlay(screen, line2);
   }
 
-  /// Ports `WorldRenderer::drawCollisionActor` (`WorldRenderer.cpp:975-1023`)
-  /// minus the dead line-977 `pos`. Axis cross on the opaque buffer, then the
-  /// aabb / sphere / obbTreeGroup primitive ladder (first non-null wins).
+  /// `WorldRenderer::drawCollisionActor` minus the dead `pos`. Axis cross on the
+  /// opaque buffer, then the aabb / sphere / obbTreeGroup primitive ladder
+  /// (first non-null wins).
   fn draw_collision_actor(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
     let Some(transform) = entity
       .get_member(ctx, "transform")
@@ -1526,8 +1484,6 @@ impl WorldRenderer {
     };
     let solid_color = color.with_w(1.0);
 
-    // `*Cx` members auto-deref -> `.address` is the pointee (0 if null), the
-    // Rust analogue of the C++ `primitive.offset` non-null test.
     let aabb_addr = entity
       .get_member(ctx, "aabbPrimitive")
       .map_or(0, |m| m.address);
@@ -1538,8 +1494,8 @@ impl WorldRenderer {
       .get_member(ctx, "obbTreeGroupPrimitive")
       .map_or(0, |m| m.address);
 
-    // C++ lines 993-996: set colour/transform on both buffers before the ladder
-    // so branches that only push tris/lines inherit them.
+    // Set colour/transform on both buffers before the ladder so branches
+    // that only push tris/lines inherit them.
     self.translucent_render_buff.set_color(color.to_array());
     self.translucent_render_buff.set_transform(transform);
     self.render_buff.set_color(solid_color.to_array());
@@ -1600,8 +1556,8 @@ impl WorldRenderer {
     }
   }
 
-  /// Ports `WorldRenderer::drawAi` (`WorldRenderer.cpp:898-910`): the
-  /// `drawPhysicsActor` body plus a `healthInfo.health` label over the actor.
+  /// `WorldRenderer::drawAi`: the `drawPhysicsActor` body plus a
+  /// `healthInfo.health` label over the actor.
   fn draw_ai(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
     self.draw_physics_actor(ctx, entity, is_highlighted);
 
@@ -1613,7 +1569,7 @@ impl WorldRenderer {
     }
   }
 
-  /// Ports `WorldRenderer::updateAreas` (`WorldRenderer.cpp:153-168`).
+  /// `WorldRenderer::updateAreas`.
   fn update_areas(&mut self, ctx: &Ctx) {
     for area in get_areas(ctx) {
       let Some(mrea) = area.get_member(ctx, "mrea").and_then(|m| m.read_u32(ctx)) else {
@@ -1635,9 +1591,8 @@ impl WorldRenderer {
     }
   }
 
-  /// Ports the GPU half of `WorldRenderer::render`
-  /// (`WorldRenderer.cpp:336-406`, minus `renderEntities`). Adds one render pass
-  /// into the offscreen `(color, depth)` target.
+  /// The GPU half of `WorldRenderer::render` (minus `renderEntities`). Adds one
+  /// render pass into the offscreen `(color, depth)` target.
   pub fn render(
     &mut self,
     device: &wgpu::Device,
@@ -1657,7 +1612,7 @@ impl WorldRenderer {
       .gpu_mesh_by_mrea
       .retain(|k, _| self.mesh_by_mrea.contains_key(k));
 
-    // Per-mesh AABB wireframe boxes (`WorldRenderer.cpp:374-378`) — done here so
+    // Per-mesh AABB wireframe boxes — done here so
     // it happens after `update_areas` regardless of call ordering.
     self.render_buff.set_transform(Mat4::IDENTITY);
     for mesh in self.mesh_by_mrea.values() {
@@ -1680,9 +1635,8 @@ impl WorldRenderer {
       .translucent_lines
       .upload(device, queue, self.translucent_render_buff.line_verts());
 
-    // model is identity for every draw this phase: the immediate buffers bake
-    // per-vertex transforms and collision verts are already world-space
-    // (`WorldRenderer.cpp:339` / `386` / `397`).
+    // model is identity for every draw: the immediate buffers bake per-vertex
+    // transforms and collision verts are already world-space.
     let uniforms = WorldUniforms::from_matrices(
       Mat4::IDENTITY,
       self.cam_view,
@@ -1724,31 +1678,28 @@ impl WorldRenderer {
 
     pass.set_bind_group(0, &self.pipelines.bind_group, &[]);
 
-    // (a) collision meshes — honour `self.culling` (`WorldRenderer.cpp:357-372`).
+    // (a) collision meshes — honour `self.culling`.
     pass.set_pipeline(self.pipelines.mesh(false, mesh_cull));
     for dm in self.gpu_mesh_by_mrea.values() {
       dm.draw(&mut pass);
     }
 
-    // (b) opaque immediate buffer — tris always back-culled
-    // (`WorldRenderer.cpp:382-391`), lines never culled.
+    // (b) opaque immediate buffer — tris always back-culled, lines never culled.
     pass.set_pipeline(self.pipelines.mesh(false, Some(wgpu::Face::Back)));
     self.opaque_tris.draw(&mut pass);
     pass.set_pipeline(&self.pipelines.line_opaque);
     self.opaque_lines.draw(&mut pass);
 
-    // (c) translucent immediate buffer (`WorldRenderer.cpp:393-403`).
+    // (c) translucent immediate buffer.
     pass.set_pipeline(self.pipelines.mesh(true, Some(wgpu::Face::Back)));
     self.translucent_tris.draw(&mut pass);
     pass.set_pipeline(&self.pipelines.line_translucent);
     self.translucent_lines.draw(&mut pass);
   }
 
-  /// Ports `WorldRenderer::renderImGui` (`WorldRenderer.cpp:408-529`) — the
-  /// "WorldStatus" area/loading table and the "PlayerStatus" pos/vel/look
-  /// readout. egui has no free-floating windows, so both spawn off the passed
-  /// `ui`'s context (the C++ anchors them to screen corners; exact placement is
-  /// a P9.1 concern).
+  /// `WorldRenderer::renderImGui` — the "WorldStatus" area/loading table and the
+  /// "PlayerStatus" pos/vel/look readout. egui has no free-floating windows, so
+  /// both spawn off the passed `ui`'s context.
   pub fn render_status_windows(&self, ctx: &Ctx, ui: &mut egui::Ui) {
     let egui_ctx = ui.ctx().clone();
 
@@ -1765,7 +1716,7 @@ impl WorldRenderer {
       .show(&egui_ctx, |ui| self.render_player_status(ui));
   }
 
-  /// The "WorldStatus" window body (`WorldRenderer.cpp:414-494`).
+  /// The "WorldStatus" window body.
   fn render_world_status(&self, ctx: &Ctx, ui: &mut egui::Ui) {
     let e_chain = ctx.structs.get_enum_by_name("EChain");
     let e_phase = ctx.structs.get_enum_by_name("EPhase");
@@ -1827,7 +1778,7 @@ impl WorldRenderer {
         }
       });
 
-    // Resource load queue (`WorldRenderer.cpp:468-492`).
+    // Resource load queue.
     let loading = get_all_loading_datas(ctx);
     if !loading.is_empty() {
       ui.label(format!("Loading {}", loading.len()));
@@ -1859,7 +1810,7 @@ impl WorldRenderer {
     }
   }
 
-  /// The "PlayerStatus" window body (`WorldRenderer.cpp:506-527`).
+  /// The "PlayerStatus" window body.
   fn render_player_status(&self, ui: &mut egui::Ui) {
     let forward = self.player_look_vec;
     let hforward = Vec2::new(forward.x, forward.y).normalize_or_zero();
@@ -1892,10 +1843,9 @@ impl WorldRenderer {
     ));
   }
 
-  /// Ports the render-config half of `PrimeWatch::doMainMenu`
-  /// (`PrimeWatch.cpp:383-464`) — the Culling / Camera / Triggers / Actors
-  /// menus. Thin forwarder onto [`render_menu_bar`] so the body stays testable
-  /// without a `wgpu::Device`.
+  /// The render-config half of `PrimeWatch::doMainMenu` — the Culling / Camera /
+  /// Triggers / Actors menus. Thin forwarder onto [`render_menu_bar`] so the
+  /// body stays testable without a `wgpu::Device`.
   pub fn render_menu(&mut self, ui: &mut egui::Ui) {
     render_menu_bar(
       ui,
@@ -1909,8 +1859,8 @@ impl WorldRenderer {
     );
   }
 
-  /// Ports the "Camera Controls" window body from `PrimeWatch::doFrame`
-  /// (`PrimeWatch.cpp:322-336`). Thin forwarder onto [`render_camera_controls_ui`].
+  /// The "Camera Controls" window body from `PrimeWatch::doFrame`. Thin
+  /// forwarder onto [`render_camera_controls_ui`].
   pub fn render_camera_controls(&mut self, ui: &mut egui::Ui) {
     render_camera_controls_ui(
       ui,
@@ -1923,10 +1873,10 @@ impl WorldRenderer {
 }
 
 /// Body of the Culling / Camera / Triggers / Actors menus. Free function taking
-/// `&mut` field refs so it type-checks and runs headless (no GPU state). Ports
-/// `PrimeWatch::doMainMenu` (`PrimeWatch.cpp:383-464`) verbatim, including the
-/// intentional Culling label/value skew ("Show Front" -> `Back`).
-#[allow(clippy::too_many_arguments)] // mirrors the flat `worldRenderer.*` field set the C++ menu touches
+/// `&mut` field refs so it type-checks and runs headless (no GPU state). Mirrors
+/// `PrimeWatch::doMainMenu` verbatim, including the intentional Culling
+/// label/value skew ("Show Front" -> `Back`).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn render_menu_bar(
   ui: &mut egui::Ui,
   culling: &mut CullType,
@@ -1937,15 +1887,15 @@ pub(crate) fn render_menu_bar(
   triggers: &mut TriggerRenderConfig,
   actors: &mut ActorRenderConfig,
 ) {
-  // `PrimeWatch.cpp:383-393` — Culling. Labels and value mapping are verbatim:
-  // "Show Front" selects `BACK`, "Show Back" selects `FRONT`.
+  // Culling. Labels and value mapping are verbatim: "Show Front" selects `BACK`,
+  // "Show Back" selects `FRONT`.
   ui.menu_button("Culling", |ui| {
     ui.selectable_value(culling, CullType::Back, "Show Front");
     ui.selectable_value(culling, CullType::Front, "Show Back");
     ui.selectable_value(culling, CullType::None, "Show All");
   });
 
-  // `PrimeWatch.cpp:396-433` — Camera.
+  // Camera.
   ui.menu_button("Camera", |ui| {
     ui.selectable_value(camera_mode, CameraMode::FollowPlayer, "Follow Player");
     if *camera_mode == CameraMode::FollowPlayer {
@@ -1973,8 +1923,8 @@ pub(crate) fn render_menu_bar(
     }
   });
 
-  // `PrimeWatch.cpp:435-453` — Triggers. `TOGGLE_MENU` -> `ui.checkbox`. Field
-  // order follows the struct declaration order (`WorldRenderer.hpp:46-61`).
+  // Triggers. `TOGGLE_MENU` -> `ui.checkbox`. Field order follows the struct
+  // declaration order.
   ui.menu_button("Triggers", |ui| {
     ui.checkbox(&mut triggers.detect_player, "detectPlayer");
     ui.checkbox(&mut triggers.detect_ai, "detectAi");
@@ -1983,8 +1933,6 @@ pub(crate) fn render_menu_bar(
     ui.checkbox(&mut triggers.detect_power_bombs, "detectPowerBombs");
     ui.checkbox(&mut triggers.kill_on_enter, "killOnEnter");
     ui.checkbox(&mut triggers.detect_morphed_player, "detectMorphedPlayer");
-    // C++ label is the misspelled "useCollisionImpluses"; use the corrected
-    // spelling here to match the Rust field name (deviation, noted in P8.4.6).
     ui.checkbox(&mut triggers.use_collision_impulses, "useCollisionImpulses");
     ui.checkbox(&mut triggers.detect_camera, "detectCamera");
     ui.checkbox(
@@ -2004,8 +1952,7 @@ pub(crate) fn render_menu_bar(
     ui.checkbox(&mut triggers.docks, "Docks");
   });
 
-  // `PrimeWatch.cpp:455-464` — Actors. `renderCollisionActors` is deliberately
-  // not exposed (matches C++).
+  // Actors. `renderCollisionActors` is deliberately not exposed.
   ui.menu_button("Actors", |ui| {
     ui.checkbox(&mut actors.render_projectiles, "Render projectiles");
     ui.checkbox(&mut actors.render_ai, "Render AI");
@@ -2016,10 +1963,9 @@ pub(crate) fn render_menu_bar(
   });
 }
 
-/// Body of the "Camera Controls" window (`PrimeWatch.cpp:322-336`). Yaw/Pitch
-/// display **degrees** and write back **radians**; `yaw_deg` is `fmod 360` of
-/// the degree value (Rust `%` matches C++ `fmod` — sign of the dividend). Yaw
-/// and pitch are only written back when the drag actually `.changed()`.
+/// Body of the "Camera Controls" window. Yaw/Pitch display **degrees** and write
+/// back **radians**; `yaw_deg` is `fmod 360` of the degree value. Yaw and pitch are
+/// only written back when the drag actually `.changed()`.
 pub(crate) fn render_camera_controls_ui(
   ui: &mut egui::Ui,
   cam_line_length: &mut f32,
@@ -2418,7 +2364,7 @@ mod tests {
 
   #[test]
   fn item_type_overlay_text_matches_cpp_format() {
-    // Sanity on the string the pickup overlay builds (C++ `drawPickup:956/965`).
+    // Sanity on the string the pickup overlay builds.
     let line1 = format!(
       "{} {}/{}",
       item_type_to_name(EItemType::from_raw(4)),
@@ -2500,7 +2446,7 @@ mod tests {
 
   #[test]
   fn culling_menu_label_value_skew_is_preserved() {
-    // "Show Front" -> BACK, "Show Back" -> FRONT (verbatim C++ skew).
+    // "Show Front" -> BACK, "Show Back" -> FRONT.
     let mut culling = CullType::None;
     egui::__run_test_ui(|ui| {
       ui.selectable_value(&mut culling, CullType::Back, "Show Front");
@@ -2515,7 +2461,7 @@ mod tests {
 
   #[test]
   fn camera_controls_yaw_pitch_deg_rad_roundtrip() {
-    // yaw_deg = to_degrees % 360 (C++ fmod keeps the dividend sign -> Rust `%`).
+    // yaw_deg = to_degrees % 360.
     let yaw = std::f32::consts::PI * 3.0; // 540 deg
     let yaw_deg = yaw.to_degrees() % 360.0;
     assert!((yaw_deg - 180.0).abs() < 1e-3);

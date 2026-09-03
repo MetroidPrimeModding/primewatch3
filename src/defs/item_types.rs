@@ -1,9 +1,7 @@
-//! Ports `../primewatch2/src/defs/EItemType.{hpp,cpp}` — the pickup item-type
-//! enum (`EItemType.hpp:5-51`) and its display-name table
-//! (`EItemType.cpp:3-90`).
+//! The pickup item-type enum and its display-name table.
 
-/// Ports `enum class EItemType` (`EItemType.hpp:5-51`). Discriminants match the
-/// C++ 1:1 (`Invalid = -1`, `PowerBeam = 0` … `Newborn = 40`, `Max = 41`).
+/// The pickup item-type enum. Discriminants match the C++ 1:1 (`Invalid = -1`,
+/// `PowerBeam = 0` … `Newborn = 40`, `Max = 41`).
 #[repr(i32)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EItemType {
@@ -54,9 +52,8 @@ pub enum EItemType {
 }
 
 impl EItemType {
-  /// Ports the C++ `static_cast<EItemType>(pickup["itemType"].read_u32())`
-  /// (`WorldRenderer.cpp:947`): a raw memory value into the enum. Anything not a
-  /// named variant maps to [`EItemType::Invalid`], which
+  /// Converts a raw memory value (`pickup["itemType"]`) into the enum. Anything
+  /// not a named variant maps to [`EItemType::Invalid`], which
   /// [`item_type_to_name`] renders as `"Unknown"` — same as the C++ switch
   /// `default`.
   pub fn from_raw(v: u32) -> Self {
@@ -108,8 +105,7 @@ impl EItemType {
   }
 }
 
-/// Ports `itemTypeToName` (`EItemType.cpp:3-90`). The C++ switch has no cases for
-/// `Invalid` / `Max`, so they fall to `default` -> `"Unknown"`.
+/// The display-name table.
 pub fn item_type_to_name(t: EItemType) -> &'static str {
   match t {
     EItemType::PowerBeam => "Power Beam",

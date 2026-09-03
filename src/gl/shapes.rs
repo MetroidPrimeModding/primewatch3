@@ -1,19 +1,8 @@
-//! Procedural CPU-side vertex generators — ports
-//! `../primewatch2/src/gl/ShapeGenerator.cpp` (whole file) and
-//! `../primewatch2/src/gl/ShapeGenerator.hpp`.
+//! Procedural CPU-side vertex generators.
 //!
 //! Six free functions, each returning a `Vec<`[`Vert`]`>` of geometry ready to be
 //! uploaded by [`crate::gl::immediate::ImmediateModeBuffer`] / a
-//! [`crate::gl::mesh::DynamicMesh`]. No GPU work happens here, mirroring
-//! `gl::immediate` being CPU-only.
-//!
-//! `Vert` default rules (from `gl/OpenGLMesh.hpp:12-17`): a C++
-//! `Vert{.pos = ..., .color = ...}` designated-initializer leaves `normal` value
-//! initialized to `{0,0,0}` and `barycentric` at its in-class initializer
-//! `{-1,-1,-1}`. The [`tri_vert`] / [`line_vert`] / [`pc_vert`] helpers make those
-//! defaults explicit per call site.
-//!
-//! Dead code until P8.4 (`WorldRenderer`) wires it.
+//! [`crate::gl::mesh::DynamicMesh`]. No GPU work happens here; CPU-only.
 
 use crate::gl::Vert;
 use glam::{Mat4, Quat, Vec3, Vec4};
@@ -34,8 +23,7 @@ fn tri_vert(pos: Vec3, color: Vec4, normal: Vec3, bary: [f32; 3]) -> Vert {
   }
 }
 
-/// A line vertex (`Vert{.pos, .color, .normal}`) — `barycentric` takes the C++
-/// in-class default `{-1,-1,-1}`.
+/// A line vertex (`Vert{.pos, .color, .normal}`) — `barycentric` takes the default `{-1,-1,-1}`.
 fn line_vert(pos: Vec3, color: Vec4, normal: Vec3) -> Vert {
   Vert {
     pos: pos.to_array(),
@@ -58,8 +46,8 @@ fn pc_vert(pos: Vec3, color: Vec4) -> Vert {
 
 /// Solid axis-aligned box as 36 triangle vertices (6 faces, 2 tris each).
 ///
-/// Ports `ShapeGenerator::generateCube` (`ShapeGenerator.cpp:20-72`). Vertex
-/// order and per-face normals are transcribed verbatim.
+/// `ShapeGenerator::generateCube`. Vertex order and per-face normals are
+/// transcribed verbatim.
 pub fn generate_cube(min: Vec3, max: Vec3, color: Vec4) -> Vec<Vert> {
   let mut verts = Vec::with_capacity(36);
   let mut push_face = |pts: [Vec3; 6], normal: Vec3| {
@@ -145,17 +133,17 @@ pub fn generate_cube(min: Vec3, max: Vec3, color: Vec4) -> Vec<Vert> {
   verts
 }
 
-/// Solid box specified by centre + full size — ports
-/// `ShapeGenerator::generateCubeFromCenter` (`ShapeGenerator.cpp:74-76`).
+/// Solid box specified by centre + full size —
+/// `ShapeGenerator::generateCubeFromCenter`.
 pub fn generate_cube_from_center(center: Vec3, size: Vec3, color: Vec4) -> Vec<Vert> {
   generate_cube(center - size / 2.0, center + size / 2.0, color)
 }
 
 /// Box wireframe as 24 line vertices (12 edges).
 ///
-/// Ports `ShapeGenerator::generateCubeLines` (`ShapeGenerator.cpp:78-121`).
-/// Verbatim C++ quirk: every vertex gets `normal = {0,0,-1}` regardless of which
-/// edge it belongs to. `barycentric` defaults to `{-1,-1,-1}`.
+/// `ShapeGenerator::generateCubeLines`. Verbatim C++ quirk: every vertex gets
+/// `normal = {0,0,-1}` regardless of which edge it belongs to. `barycentric`
+/// defaults to `{-1,-1,-1}`.
 pub fn generate_cube_lines(min: Vec3, max: Vec3, color: Vec4) -> Vec<Vert> {
   let mut verts = Vec::with_capacity(24);
   let normal = Vec3::new(0.0, 0.0, -1.0);
@@ -222,7 +210,7 @@ pub fn generate_cube_lines(min: Vec3, max: Vec3, color: Vec4) -> Vec<Vert> {
 }
 
 /// Rotate the reference point `{0,0,1}` by `longitude` about +Z then `latitude`
-/// about +Y — ports the `glm::quat(vec3(0,0,lon)) * glm::quat(vec3(0,lat,0)) *
+/// about +Y — the `glm::quat(vec3(0,0,lon)) * glm::quat(vec3(0,lat,0)) *
 /// vec3{0,0,1}` idiom used throughout `generateSphere` / `generateTruncatedSphere`.
 /// Every rotation is single-axis, so there is no euler-order ambiguity.
 fn sphere_point(longitude: f32, latitude: f32) -> Vec3 {
@@ -233,9 +221,8 @@ const SPHERE_LATITUDE_LINES: i32 = 15;
 const SPHERE_LONGITUDE_LINES: i32 = 20;
 
 /// Emit one latitude band (`SPHERE_LONGITUDE_LINES` quads, 6 verts each) — the
-/// shared inner loop of `generateSphere` / `generateTruncatedSphere`
-/// (`ShapeGenerator.cpp:138-172` / `199-231`), including the `latitudeLine == 0`
-/// normal hack. C++ open-codes this loop in both functions.
+/// shared inner loop of `generateSphere` / `generateTruncatedSphere`, including
+/// the `latitudeLine == 0` normal hack.
 fn emit_sphere_band(band: SphereBand<'_>) {
   let SphereBand {
     verts,
@@ -291,8 +278,8 @@ struct SphereBand<'a> {
 
 /// UV sphere as `15 * 20 * 6 = 1800` triangle vertices.
 ///
-/// Ports `ShapeGenerator::generateSphere` (`ShapeGenerator.cpp:124-176`). Keeps
-/// the `latitudeLine == 0` normal hack and the 6-vertex-per-quad winding.
+/// `ShapeGenerator::generateSphere`. Keeps the `latitudeLine == 0` normal hack
+/// and the 6-vertex-per-quad winding.
 pub fn generate_sphere(center: Vec3, radius: f32, color: Vec4) -> Vec<Vert> {
   let mut verts = Vec::with_capacity((SPHERE_LATITUDE_LINES * SPHERE_LONGITUDE_LINES * 6) as usize);
   let radians_per_latitude = std::f32::consts::PI / SPHERE_LATITUDE_LINES as f32;
@@ -320,7 +307,7 @@ pub fn generate_sphere(center: Vec3, radius: f32, color: Vec4) -> Vec<Vert> {
 /// Sphere with everything below `bottom_distance` (a +Z-axis distance from the
 /// centre) removed and replaced by a flat fan cap.
 ///
-/// Ports `ShapeGenerator::generateTruncatedSphere` (`ShapeGenerator.cpp:178-256`).
+/// `ShapeGenerator::generateTruncatedSphere`.
 pub fn generate_truncated_sphere(
   center: Vec3,
   radius: f32,
@@ -333,7 +320,7 @@ pub fn generate_truncated_sphere(
   let radians_per_latitude = std::f32::consts::PI / SPHERE_LATITUDE_LINES as f32;
   let radians_per_longitude = std::f32::consts::PI * 2.0 / SPHERE_LONGITUDE_LINES as f32;
 
-  // C++ `static_cast<int>` truncates toward zero; used as an inclusive `<=` bound.
+  // Truncates toward zero; used as an inclusive `<=` bound.
   let bottom_latitude_line = (bottom_latitude / radians_per_latitude) as i32;
 
   for latitude_line in 0..=bottom_latitude_line {
@@ -370,10 +357,10 @@ pub fn generate_truncated_sphere(
 
     verts.push(tri_vert(center + bottom_left * radius, color, n, BARY_X));
     verts.push(tri_vert(center + bottom_right * radius, color, n, BARY_Y));
+    // TODO: verify if this should be fixed
     // C++ `center + glm::vec3{0, 0, bottomLatitudeZDist}` — the apex is NOT scaled
     // by `radius` (`bottomLatitudeZDist` already carries it) but IS offset by
-    // `center`, unlike what P8.3's step 7 note claimed. Faithful to
-    // `ShapeGenerator.cpp:252`.
+    // `center`. Faithful to the C++.
     verts.push(tri_vert(
       center + Vec3::new(0.0, 0.0, bottom_latitude_z_dist),
       color,
@@ -386,9 +373,7 @@ pub fn generate_truncated_sphere(
 }
 
 /// Project an NDC-space point back through `inv` (an inverse projection matrix)
-/// and perspective-divide — ports `ShapeGenerator::invertHelper`
-/// (`ShapeGenerator.cpp:258-261`). C++ returns the `vec4` `res / res.w`; the
-/// downstream math only uses the `xyz`, so this returns [`Vec3`].
+/// and perspective-divide — `ShapeGenerator::invertHelper`.
 fn invert_helper(inv: Mat4, v: Vec3) -> Vec3 {
   let r = inv * v.extend(1.0);
   (r / r.w).truncate()
@@ -397,8 +382,8 @@ fn invert_helper(inv: Mat4, v: Vec3) -> Vec3 {
 /// Camera frustum as a line set: a coloured centre ray, four corner rays, and the
 /// four far-plane connecting segments.
 ///
-/// Ports `ShapeGenerator::generateCameraLineSegments` (`ShapeGenerator.cpp:263-313`).
-/// `perspective` is the camera projection, `transform` its world matrix.
+/// `ShapeGenerator::generateCameraLineSegments`. `perspective` is the camera
+/// projection, `transform` its world matrix.
 pub fn generate_camera_line_segments(
   perspective: Mat4,
   transform: Mat4,
@@ -407,7 +392,7 @@ pub fn generate_camera_line_segments(
   let mut res: Vec<Vert> = Vec::new();
   let inverted = perspective.inverse();
 
-  // C++ `addCamLine` lambda: emits the two endpoint verts and returns the segment.
+  // Emits the two endpoint verts and returns the segment.
   let add_cam_line =
     |res: &mut Vec<Vert>, a: Vec3, b: Vec3, len: f32, color: Vec4| -> (Vec3, Vec3) {
       let v1 = invert_helper(inverted, a);

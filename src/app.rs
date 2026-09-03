@@ -1,14 +1,9 @@
 //! Application shell: winit event loop + wgpu device/surface + the egui UI.
 //!
-//! Ports `../primewatch2/src/PrimeWatch.cpp` (`mainLoop` / `processInput` /
-//! `doFrame` / `doImGui` / `doMainMenu` / `doMemoryParse`) and
-//! `../primewatch2/src/PrimeWatchInput.cpp` (`PrimeWatch::processInput`).
-//!
-//! Frame order (C++ `mainLoop`): accumulate input -> per-frame memory parse ->
+//! Frame order: accumulate input -> per-frame memory parse ->
 //! walk the live object list -> build the egui UI -> render the 3D world -> paint
 //! egui. winit is event-driven, so input is accumulated from `WindowEvent`s and
-//! consumed at the top of `RedrawRequested` (the polling model the C++ used via
-//! ImGui IO state).
+//! consumed at the top of `RedrawRequested`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::error::Error;
@@ -36,7 +31,7 @@ use crate::toast::Toasts;
 use crate::ui_state;
 use crate::world::renderer::{CameraMode, WorldInput, WorldRenderer};
 
-/// Build the event loop and run the app. Mirrors `main()` in the C++ entrypoint.
+/// Build the event loop and run the app.
 pub fn run() -> Result<(), Box<dyn Error>> {
   let event_loop = EventLoop::new()?;
   let mut app = App::new();
@@ -44,7 +39,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
   Ok(())
 }
 
-/// The five ghost-record hotkeys (`GLFW_KEY_1..5` in `PrimeWatchInput.cpp:144`).
+/// The five ghost-record hotkeys
 const GHOST_KEYS: [KeyCode; 5] = [
   KeyCode::Digit1,
   KeyCode::Digit2,
@@ -53,10 +48,10 @@ const GHOST_KEYS: [KeyCode; 5] = [
   KeyCode::Digit5,
 ];
 
-/// One entry in the "watch this editor ID" list — ports
-/// `../primewatch2/src/PrimeWatch.hpp:14-18` (`struct WatchedEditorId`). Clicking
-/// a row in the "Objects" entity table upserts one of these; each drives its own
-/// egui window and contributes its `last_known_uid` to the world highlight set.
+/// One entry in the "watch this editor ID" list.
+/// Clicking a row in the "Objects" entity table upserts one of these; each
+/// drives its own egui window and contributes its `last_known_uid` to the world
+/// highlight set.
 struct WatchedEditorId {
   eid: u32,
   last_known_uid: u16,
@@ -64,8 +59,7 @@ struct WatchedEditorId {
 }
 
 /// Raw winit input accumulated between frames, then folded into a [`WorldInput`]
-/// (plus camera / ghost side effects) at the top of each frame. Ports the ImGui
-/// IO state that `PrimeWatch::processInput` polled.
+/// (plus camera / ghost side effects) at the top of each frame.
 #[derive(Default)]
 struct InputState {
   keys_down: HashSet<KeyCode>,
@@ -75,12 +69,6 @@ struct InputState {
 /// One-frame-lagged interaction state of the "World" image widget, produced by
 /// the egui pass and consumed by [`InputState::plan`] on the next frame (same
 /// lag pattern as `world_view_px`).
-///
-/// The C++ polled the global `io.MouseDelta` / `io.MouseWheel` because the 3D
-/// view was drawn on the bare window background; here it is an `egui::Image`, so
-/// camera look/zoom is driven by *that widget's* drag/scroll response instead of
-/// a full-window `WantCaptureMouse` gate + `CursorGrabMode` + raw device motion
-/// (the latter isn't delivered on Wayland).
 #[derive(Default, Clone, Copy)]
 struct WorldViewInput {
   /// Pointer drag delta over the image since the last frame, in egui points.
@@ -102,12 +90,11 @@ struct InputPlan {
 }
 
 impl InputState {
-  /// Ports `PrimeWatch::processInput` (`PrimeWatchInput.cpp:126-233`). Pure: the
-  /// caller applies the plan.
+  /// Folds accumulated input into an [`InputPlan`].
+  /// Pure: the caller applies the plan.
   ///
-  /// `world_view` carries last frame's drag/scroll over the "World" image — the
-  /// port's replacement for the C++ `capturedMouse` + global `io.MouseDelta` /
-  /// `io.MouseWheel` polling (see [`WorldViewInput`]).
+  /// `world_view` carries last frame's drag/scroll over the "World" image
+  /// (see [`WorldViewInput`]).
   fn plan(
     &self,
     wants_keyboard: bool,
@@ -116,7 +103,7 @@ impl InputState {
   ) -> InputPlan {
     let mut wi = WorldInput::default();
 
-    // `PrimeWatchInput.cpp:144-157` — Shift+N records ghost N, Ctrl+N clears it.
+    // Shift+N records ghost N, Ctrl+N clears it.
     let mut ghost_record = [false; 5];
     let mut ghost_clear = [false; 5];
     for (i, key) in GHOST_KEYS.iter().enumerate() {
@@ -129,15 +116,14 @@ impl InputState {
       }
     }
 
-    // `PrimeWatchInput.cpp:168-180` — mouse look + wheel zoom, driven by the
-    // "World" image's own drag/scroll response (`world_view`). Yaw uses the C++
-    // `yawSpeed = -0.005` (FPS-style: drag right → look right). `scroll` is in
-    // egui points (~50/notch) vs the C++ `io.MouseWheel` ~1/notch.
+    // Mouse look + wheel zoom, driven by the "World" image's own drag/scroll
+    // response (`world_view`). Yaw uses `yawSpeed = -0.005` (FPS-style:
+    // drag right → look right). `scroll` is in egui points (~50/notch)
     wi.cam_pitch = world_view.drag.1 * 0.005;
     wi.cam_yaw = world_view.drag.0 * -0.005;
     wi.cam_zoom = world_view.scroll / 50.0 * -2.0;
 
-    // `PrimeWatchInput.cpp:182-232` — keyboard camera control.
+    // Keyboard camera control.
     let mut detached_move = (0.0_f32, 0.0_f32, 0.0_f32);
     if !wants_keyboard {
       let down = |k| self.keys_down.contains(&k);
@@ -147,8 +133,6 @@ impl InputState {
       if down(KeyCode::ArrowDown) {
         wi.cam_pitch -= 0.03;
       }
-      // Deviation from C++ (`LEFT += yawSpeed`, `RIGHT -= yawSpeed`): signs
-      // flipped so arrow-key yaw matches the mouse-drag direction.
       if down(KeyCode::ArrowLeft) {
         wi.cam_yaw -= 0.03;
       }
@@ -181,9 +165,7 @@ impl InputState {
 }
 
 /// Deferred menu action — collected during the egui pass (which only holds
-/// shared borrows) and applied afterwards against the mutable game state. Ports
-/// the immediate `MemoryAccess::` / `loadDefs` / file-dialog calls in
-/// `PrimeWatch::doMainMenu` / `doImGui`.
+/// shared borrows) and applied afterwards against the mutable game state.
 enum MenuAction {
   RefreshPids,
   Attach(u32),
@@ -204,64 +186,45 @@ struct FrameState<'a> {
   toasts: &'a mut Toasts,
   pids: &'a mut Vec<Pid>,
   show_raw_data_view: &'a mut bool,
-  show_demo_view: &'a mut bool,
   inspector: &'a mut Inspector,
   /// Live object list (walked in `redraw`, borrowed read-only here). Keyed by
-  /// `TUniqueID` like the C++ `entities` `std::map`.
+  /// `TUniqueID`
   objects: &'a BTreeMap<TUniqueID, GameInstance>,
-  /// Per-editor-ID watch windows (C++ `editorIdsToWatch`).
+  /// Per-editor-ID watch windows.
   editor_ids_to_watch: &'a mut Vec<WatchedEditorId>,
-  /// C++ `showActiveInTableOnly`.
   show_active_in_table_only: &'a mut bool,
-  /// C++ `tableHoveredUid` — reset to `0xFFFF` each frame before the table.
   table_hovered_uid: &'a mut u16,
-  /// C++ `objectFilter` (`ImGuiTextFilter`).
   object_filter: &'a mut ObjectFilter,
   /// Session-persistent set of unknown vtable addresses seen in the object list
-  /// (C++ `static set<uint32_t> unknowns` in `drawObjectsWindow`). Grows only.
   unknown_vtables: &'a mut BTreeSet<u32>,
 }
 
 /// Owns the long-lived game state plus the render state that only exists while
-/// the window is active. No globals — everything is threaded explicitly
-/// (CLAUDE.md).
+/// the window is active. No globals — everything is threaded explicitly.
 struct App {
-  /// Local MEM1 snapshot, refreshed each frame from `dolphin` (P3.2).
+  /// Local MEM1 snapshot, refreshed each frame from `dolphin`.
   mem: GameMemory,
-  /// Live Dolphin process attachment (P2 / P3.2).
   dolphin: DolphinMemoryAccess,
   structs: GameStructs,
-  /// Live object list, walked off `g_stateManager` once per frame (C++
-  /// `PrimeWatch::doMemoryParse` -> `GameObjectUtils::getAllObjects`).
+  /// Live object list, walked off `g_stateManager` once per frame
   objects: BTreeMap<TUniqueID, GameInstance>,
-  /// Whether the `.bs` definitions loaded — drives which egui window is shown,
-  /// mirroring `GameDefinitions::isLoaded()` in C++ `doFrame`.
   defs_loaded: bool,
   /// Either "Loaded N structs and M enums" or the load error string.
   status_text: String,
-  /// Cached Dolphin PID list for the Attach menu (`PrimeWatch::pids`).
+  /// Cached Dolphin PID list for the Attach menu
   pids: Vec<Pid>,
-  /// C++ `PrimeWatch::showRawDataView`.
   show_raw_data_view: bool,
-  /// C++ `PrimeWatch::showDemoView`.
   show_demo_view: bool,
-  /// Generic `GameInstance` tree view (P7) — hosts the "globals" window and the
+  /// Generic `GameInstance` tree view — hosts the "globals" window and the
   /// Tools-menu exact-values toggle (`GameObjectRenderers::render_exact_values`).
   inspector: Inspector,
-  /// Per-editor-ID watch windows (C++ `PrimeWatch::editorIdsToWatch`).
   editor_ids_to_watch: Vec<WatchedEditorId>,
-  /// C++ `PrimeWatch::showActiveInTableOnly` (defaults `true`).
   show_active_in_table_only: bool,
-  /// C++ `PrimeWatch::tableHoveredUid` — the uid the "Objects" table row cursor
-  /// is over, fed into the world highlight set. `0xFFFF` = none.
   table_hovered_uid: u16,
-  /// C++ `PrimeWatch::objectFilter`.
   object_filter: ObjectFilter,
-  /// C++ `static set<uint32_t> unknowns` in `drawObjectsWindow` — session log of
-  /// every unrecognised vtable address. Never shrinks.
+  /// Session log of every unrecognised vtable address. Never shrinks.
   unknown_vtables: BTreeSet<u32>,
-  /// Ephemeral corner notifications (replaces the old always-on "Prime Watch"
-  /// status window). The `NOT LOADED` error panel is still a real window.
+  /// Ephemeral corner notifications
   toasts: Toasts,
   /// Input accumulated between frames.
   input: InputState,
@@ -292,9 +255,9 @@ impl App {
       }
     };
 
-    // Offline dump path (C++ `PrimeWatch::initGlAndImgui`, `PrimeWatch.cpp:99-103`):
-    // auto-load `./mem1.raw` when it sits next to the binary. A later live memcpy
-    // simply overwrites it; a missing/short file is not fatal.
+    // Offline dump path: auto-load
+    // `./mem1.raw` when it sits next to the binary. A later live memcpy simply
+    // overwrites it; a missing/short file is not fatal.
     if std::path::Path::new("./mem1.raw").exists() {
       match mem.load_from_file("./mem1.raw") {
         Ok(()) => println!("Loaded ./mem1.raw"),
@@ -302,8 +265,7 @@ impl App {
       }
     }
 
-    // Auto-attach only when exactly one Dolphin is running (C++
-    // `PrimeWatch::initAndCreateWindow`, `PrimeWatch.cpp:66-70`).
+    // Auto-attach only when exactly one Dolphin is running
     let pids = dolphin.get_dolphin_pids();
     if pids.len() == 1 {
       let pid = pids[0].as_u32() as i32;
@@ -344,8 +306,7 @@ impl App {
   }
 
   /// One `RedrawRequested`: consume accumulated input, refresh memory, walk the
-  /// object list, update + render the world, paint egui. Ports `mainLoop`'s
-  /// `processInput(); doFrame();` pair.
+  /// object list, update + render the world, paint egui
   fn redraw(&mut self) {
     let App {
       window,
@@ -372,12 +333,11 @@ impl App {
     };
 
     if *defs_loaded {
-      // C++ `doMemoryParse` — refresh the snapshot (no-op while detached).
+      // Refresh the snapshot (no-op while detached).
       mem.update_from_dolphin(dolphin);
 
       // Consume accumulated input into a plan, then apply it (ghost record/clear,
-      // detached-camera move). `wants_kb` gates the keyboard the way ImGui's
-      // `WantCaptureKeyboard` did; camera look/zoom comes from last frame's
+      // detached-camera move). Camera look/zoom comes from last frame's
       // drag/scroll over the "World" image (`world_view_input`).
       let wants_kb = window.egui_ctx.egui_wants_keyboard_input();
       let plan = input.plan(wants_kb, window.world.camera_mode, window.world_view_input);
@@ -401,15 +361,8 @@ impl App {
       let ctx = Ctx::new(structs, mem);
       *objects = get_all_objects(&ctx);
       let viewport = window.world_view_px;
-      // The world highlight set (C++ `doFrame:267-272`): the uid the "Objects"
+      // The world highlight set: the uid the "Objects"
       // table row cursor is over, plus every watched editor ID's last-known uid.
-      //
-      // Deviation: `table_hovered_uid` and the `last_known_uid`s are written by
-      // the egui pass in `AppWindow::render`, which runs *after* `world.update`
-      // this frame — so the highlight reflects the previous frame's UI state
-      // (one-frame lag). This matches the existing `world_view_px` lag pattern
-      // and is imperceptible at 60fps; restructuring the frame to remove it is
-      // out of scope.
       let mut highlighted: HashSet<u16> = HashSet::new();
       if *table_hovered_uid != 0xFFFF {
         highlighted.insert(*table_hovered_uid);
@@ -422,8 +375,7 @@ impl App {
         .update(&ctx, &plan.world_input, viewport, objects, &highlighted);
     }
 
-    // `objects` is walked above and consumed (by `&`) by `world.update`; the
-    // "Objects" window (C++ `PrimeWatch::drawObjectsWindow`) reads it again.
+    // `objects` is walked above and consumed (by `&`) by `world.update`
     let mut fs = FrameState {
       dolphin,
       mem,
@@ -433,7 +385,6 @@ impl App {
       toasts,
       pids,
       show_raw_data_view,
-      show_demo_view,
       inspector,
       objects: &*objects,
       editor_ids_to_watch,
@@ -471,10 +422,8 @@ impl App {
   }
 }
 
-/// A minimal read-only hex dump over the MEM1 snapshot. Ports the
-/// `mem_edit.DrawContents(GameMemory::memory...)` viewer in `doImGui:340-345`
-/// (a small custom table rather than adding `egui_memory_editor`). Offsets are
-/// raw snapshot offsets (base 0), matching the C++ `MemoryEditor`.
+/// A minimal read-only hex dump over the MEM1 snapshot — a small custom table
+/// rather than adding `egui_memory_editor`. Offsets are raw snapshot offsets (base 0)
 fn render_raw_data_view(ui: &mut egui::Ui, data: &[u8]) {
   const BYTES_PER_ROW: usize = 16;
   let rows = data.len().div_ceil(BYTES_PER_ROW);
@@ -509,9 +458,8 @@ fn render_raw_data_view(ui: &mut egui::Ui, data: &[u8]) {
     });
 }
 
-/// Ports `../primewatch2/src/PrimeWatch.cpp::drawObjectsWindow` — the "Objects"
-/// window (count, vtable aggregation, "List of types" table, filter + entity
-/// table) plus the per-`WatchedEditorId` watch-window loop.
+/// The "Objects" window (count, vtable aggregation, "List of types" table,
+/// filter + entity table) plus the per-`WatchedEditorId` watch-window loop
 ///
 /// All state mutated here is local UI state (no memory writes), so it mutates
 /// the passed `&mut` refs directly rather than deferring like `MenuAction`.
@@ -527,8 +475,7 @@ fn render_objects_window(
   object_filter: &mut ObjectFilter,
   unknown_vtables: &mut BTreeSet<u32>,
 ) {
-  // C++ `drawObjectsWindow:504-520` — build the lookup maps and vtable
-  // histogram from the live object list.
+  // Build the lookup maps and vtable histogram from the live object list.
   let mut vtables: BTreeMap<u32, (u32, u32)> = BTreeMap::new();
   let mut eid_to_entity: HashMap<u32, &GameInstance> = HashMap::new();
   let mut uid_to_entity: HashMap<u16, &GameInstance> = HashMap::new();
@@ -547,7 +494,7 @@ fn render_objects_window(
     uid_to_entity.insert(uid, entity);
   }
 
-  // C++ `:525-531` — accumulate never-before-seen vtable addresses. The
+  // Accumulate never-before-seen vtable addresses. The
   // `> 0x80000000 && < 0x80700000` window skips the "not up to date yet"
   // sub-0x80000000 garbage.
   for &vtable in vtables.keys() {
@@ -556,14 +503,13 @@ fn render_objects_window(
     }
   }
 
-  // C++ iterates a uid-keyed `std::map`; `objects` is now a `BTreeMap` with the
-  // same ordering, so `iter()` is already sorted by `TUniqueID`.
+  // `objects` is now a `BTreeMap`, so `iter()` is already sorted by `TUniqueID`.
   let ordered: Vec<(&TUniqueID, &GameInstance)> = objects.iter().collect();
 
   egui::Window::new("Objects").show(egui_ctx, |ui| {
     ui.label(format!("Current object count: {}", objects.len()));
 
-    // C++ `:533-539` — "Copy unknowns (N)".
+    // "Copy unknowns (N)".
     if ui
       .button(format!("Copy unknowns ({})", unknown_vtables.len()))
       .clicked()
@@ -575,7 +521,7 @@ fn render_objects_window(
       ui.ctx().copy_text(clip);
     }
 
-    // C++ `:541-583` — "List of types" 4-col table.
+    // "List of types" 4-col table.
     egui::CollapsingHeader::new("List of types").show(ui, |ui| {
       egui::Grid::new("objects_vtables")
         .striped(true)
@@ -600,16 +546,16 @@ fn render_objects_window(
         });
     });
 
-    // C++ `:585-588` — filter hint, filter box, "show active only".
+    // Filter hint, filter box, "show active only".
     ui.label("Editor ID: #38 Class: @CPlayer name: &name");
     ui.label("(or just type what you're looking for)");
     object_filter.ui(ui);
     ui.checkbox(show_active_in_table_only, "Show active only");
 
-    // C++ `:590` — reset before the table; row hover sets it.
+    // Reset before the table; row hover sets it.
     *table_hovered_uid = 0xFFFF;
 
-    // C++ `:592-664` — the 5-col scrolling entity table.
+    // The 5-col scrolling entity table.
     egui::ScrollArea::vertical()
       .max_height(400.0)
       .auto_shrink([false, false])
@@ -636,16 +582,14 @@ fn render_objects_window(
                 .read_string(ctx)
                 .unwrap_or_default();
 
-              // C++ `:613` — probe string; sigils `#`/`@`/`&` let a user filter
-              // by editor ID / class / name. First `{:08x}` is hex eid, second
-              // `{:08}` is decimal eid zero-padded.
+              // Probe string; sigils `#`/`@`/`&` let a user filter by editor ID
+              // / class / name. First `{:08x}` is hex eid, second `{:08}` is
+              // decimal eid zero-padded.
               let probe = format!("#{eid:08x}#{eid:08}@{}&{}", entity.type_name, name);
               if !object_filter.passes(&probe) {
                 continue;
               }
 
-              // C++ `:619-639` — a span-all-columns Selectable; egui has no
-              // equivalent flag, so a plain selectable label in the first cell.
               let resp = ui.selectable_label(false, entity.type_name.as_str());
               if resp.clicked() {
                 if let Some(watch) = editor_ids_to_watch.iter_mut().find(|w| w.eid == eid) {
@@ -675,8 +619,8 @@ fn render_objects_window(
     ui.label(format!("tableHoveredUid: {}", *table_hovered_uid));
   });
 
-  // C++ `:670-704` — one window per watched editor ID. Index-based loop so a
-  // window closing (removing its entry) can't skip or panic on the next.
+  // One window per watched editor ID. Index-based loop so a window closing
+  // (removing its entry) can't skip or panic on the next.
   let mut i = 0;
   while i < editor_ids_to_watch.len() {
     let (eid, last_known_uid, type_name) = {
@@ -695,8 +639,7 @@ fn render_objects_window(
         egui::ScrollArea::vertical()
           .auto_shrink([false, true])
           .show(ui, |ui| {
-            // C++ `:678-696` — resolve by last-known uid, then by editor ID, then
-            // give up.
+            // Resolve by last-known uid, then by editor ID, then give up.
             let mut handled = false;
             if let Some(entity) = uid_to_entity.get(&last_known_uid) {
               let e_eid = entity.member(ctx, "editorID").read_u32(ctx).unwrap_or(0);
@@ -751,8 +694,7 @@ impl ApplicationHandler for App {
     _window_id: WindowId,
     event: WindowEvent,
   ) {
-    // Route to egui first so it can claim the event (C++ `ImGui_ImplGlfw`
-    // callbacks run before `processInput` reads IO state).
+    // Route to egui first so it can claim the event
     if let Some(window) = self.window.as_mut() {
       let _ = window.egui_state.on_window_event(&window.window, &event);
     } else {
@@ -779,7 +721,7 @@ impl ApplicationHandler for App {
   }
 
   fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-    // TODO(P9): only redraw on demand / frame-pace instead of spinning.
+    // TODO: only redraw on demand / frame-pace instead of spinning.
     if let Some(window) = self.window.as_ref() {
       window.window.request_redraw();
     }
@@ -804,8 +746,6 @@ struct AppWindow {
   egui_ctx: egui::Context,
   egui_state: egui_winit::State,
   egui_renderer: egui_wgpu::Renderer,
-  /// The live 3D world view (P8.4), rendered to an offscreen texture and
-  /// composited into the egui UI as an `egui::Image` (P1.3 "pattern B").
   world: WorldRenderer,
   /// egui user-texture id for `world`'s colour target. `None` until the first
   /// `register_native_texture`; reused via `update_egui_texture_from_wgpu_texture`
@@ -902,7 +842,7 @@ impl AppWindow {
     })
   }
 
-  /// Reconfigure the swapchain on window resize (C++ `framebuffer_size_cb`).
+  /// Reconfigure the swapchain on window resize
   fn resize(&mut self, size: PhysicalSize<u32>) {
     if size.width > 0 && size.height > 0 {
       self.config.width = size.width;
@@ -913,8 +853,7 @@ impl AppWindow {
   }
 
   /// One frame: build the egui UI, render the 3D world, clear to black, paint
-  /// egui (C++ `doFrame` / `doImGui`). `fs` carries the game/UI state owned by
-  /// [`App`].
+  /// egui. `fs` carries the game/UI state owned by [`App`].
   fn render(&mut self, fs: &mut FrameState) {
     let defs_loaded = *fs.defs_loaded;
 
@@ -939,8 +878,7 @@ impl AppWindow {
         label: Some("primewatch"),
       });
 
-    // 3D world first, into its own offscreen target (C++ `doFrame` renders the
-    // world before the egui draw data). Separate pass, same encoder + submit.
+    // 3D world first, into its own offscreen target. Separate pass, same encoder + submit.
     self.world.render(&self.device, &self.queue, &mut encoder);
 
     // Register (first use / after resize) or reuse the egui user texture that
@@ -977,18 +915,18 @@ impl AppWindow {
       None
     };
 
-    // --- menu bar (C++ `PrimeWatch::doMainMenu`) -------------------------------
+    // --- menu bar --------------------------------------------------------------
     //
-    // Deviation: egui 0.36 has no context-level `TopBottomPanel`, so the bar is
-    // a top-anchored `Area` + `Frame::menu` (P8.4.6 decision). The render-config
-    // menus live on `WorldRenderer::render_menu`; Attach + Tools are here.
+    // egui 0.36 has no context-level `TopBottomPanel`, so the bar is
+    // a top-anchored `Area` + `Frame::menu`. The render-config menus live on
+    // `WorldRenderer::render_menu`; Attach + Tools are here.
     if defs_loaded {
       egui::Area::new(egui::Id::new("menu_bar"))
         .fixed_pos(egui::pos2(0.0, 0.0))
         .show(&egui_ctx, |ui| {
           egui::Frame::menu(ui.style()).show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
-              // Attach (`PrimeWatch.cpp:353-381`).
+              // Attach.
               let attached = fs.dolphin.get_attached_pid();
               let attach_title = if attached > 0 {
                 format!("Attached ({attached})")
@@ -1018,16 +956,15 @@ impl AppWindow {
                 }
               });
 
-              // Culling / Camera / Triggers / Actors (P8.4.6).
+              // Culling / Camera / Triggers / Actors.
               self.world.render_menu(ui);
 
-              // Tools (`PrimeWatch.cpp:466-478`).
+              // Tools.
               ui.menu_button("Tools", |ui| {
                 if ui.button("Reload Definitions").clicked() {
                   menu_actions.push(MenuAction::ReloadDefs);
                 }
                 ui.checkbox(fs.show_raw_data_view, "Raw Data View");
-                ui.checkbox(fs.show_demo_view, "Raw Demo View");
                 ui.checkbox(
                   &mut fs.inspector.exact_values,
                   "Show exact floating point values",
@@ -1037,7 +974,7 @@ impl AppWindow {
           });
         });
 
-      // "Camera Controls" window (C++ `doImGui:322-336`).
+      // "Camera Controls" window
       if self.world.show_exact_camera_controls {
         let mut open = true;
         egui::Window::new("Camera Controls")
@@ -1050,7 +987,7 @@ impl AppWindow {
       }
     }
 
-    // --- NOT LOADED error panel (C++ `doFrame:247-256`) ---------------------
+    // --- NOT LOADED error panel -------------------------------------
     //
     // Only shown while defs are missing — it's a blocking error with a Reload
     // action. The former loaded-state "Prime Watch" window was pure noise; the
@@ -1101,8 +1038,7 @@ impl AppWindow {
           world_view_input.scroll = ui.input(|i| i.smooth_scroll_delta.y);
         }
 
-        // Paint the queued overlays (C++ `ImDrawList::AddText` in the per-class
-        // draw fns). `screen_pos` is in world-target physical pixels (Y-down,
+        // Paint the queued overlays. `screen_pos` is in world-target physical pixels (Y-down,
         // already flipped by `getScreenspacePosFor*`); map it into the image
         // rect. Exact glyph centering is approximate — no shared font metrics.
         let (tw, th) = self.world_view_px;
@@ -1122,7 +1058,7 @@ impl AppWindow {
       });
     self.world_view_input = world_view_input;
 
-    // --- globals inspector (C++ `doImGui:314-320`) -------------------------
+    // --- globals inspector --------------- -------------------------
     if let Some(ctx) = ctx.as_ref() {
       egui::Window::new("globals").show(&egui_ctx, |ui| {
         egui::ScrollArea::vertical()
@@ -1141,8 +1077,7 @@ impl AppWindow {
           });
       });
 
-      // --- Objects window + per-editor-ID watch windows (C++
-      //     `PrimeWatch::drawObjectsWindow`) -----------------------------------
+      // --- Objects window + per-editor-ID watch windows --------------
       render_objects_window(
         &egui_ctx,
         ctx,
@@ -1156,7 +1091,7 @@ impl AppWindow {
       );
     }
 
-    // --- Raw Data View (C++ `doImGui:340-345`) ----------------------------
+    // --- Raw Data View --------------------------------------------
     if *fs.show_raw_data_view {
       let mut open = true;
       egui::Window::new("Raw view")
@@ -1167,23 +1102,8 @@ impl AppWindow {
       }
     }
 
-    // --- Demo window (C++ `doImGui:281-283`) ----------------------------
-    // Deviation: `egui_demo_lib` is not a dependency, so this is a placeholder.
-    if *fs.show_demo_view {
-      let mut open = true;
-      egui::Window::new("Demo")
-        .open(&mut open)
-        .show(&egui_ctx, |ui| {
-          ui.label("The egui demo window is not bundled in this build.");
-          ui.label("(C++ used ImGui::ShowDemoWindow for debugging.)");
-        });
-      if !open {
-        *fs.show_demo_view = false;
-      }
-    }
 
-    // --- WorldStatus / PlayerStatus overlays (C++ `doFrame` ->
-    //     `worldRenderer.renderImGui()`), only while the memory parse is live.
+    // --- WorldStatus / PlayerStatus overlays, only while the memory parse is live.
     if let Some(ctx) = ctx.as_ref() {
       egui::Area::new(egui::Id::new("world-status-host"))
         .fixed_pos(egui::pos2(0.0, 24.0))
@@ -1234,7 +1154,6 @@ impl AppWindow {
             depth_slice: None,
             resolve_target: None,
             ops: wgpu::Operations {
-              // == C++ glClearColor(0, 0, 0, 1)
               load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
               store: wgpu::StoreOp::Store,
             },
@@ -1261,8 +1180,7 @@ impl AppWindow {
     self.window.pre_present_notify();
     self.queue.present(frame);
 
-    // Apply the menu actions collected during the egui pass (C++ does these
-    // inline; deferred here so the pass only needs shared borrows).
+    // Apply the menu actions collected during the egui pass
     for action in menu_actions {
       apply_menu_action(action, fs);
     }
@@ -1301,8 +1219,7 @@ fn apply_menu_action(action: MenuAction, fs: &mut FrameState) {
     }
     MenuAction::Detach => fs.dolphin.detach_from_process(),
     MenuAction::LoadFromFile => {
-      // C++ `ImGuiFileDialog` -> `rfd` native picker; detach before loading a
-      // dump (`PrimeWatch.cpp:305-311`).
+      // `rfd` native picker; detach before loading a dump.
       if let Some(path) = rfd::FileDialog::new()
         .add_filter("Memory dump", &["raw"])
         .set_directory(".")
@@ -1316,8 +1233,7 @@ fn apply_menu_action(action: MenuAction, fs: &mut FrameState) {
       }
     }
     MenuAction::ReloadDefs => {
-      // Fresh registry so removed `.bs` entries don't linger (C++
-      // `loadDefinitionsFromPath` rebuilds from scratch).
+      // Fresh registry so removed `.bs` entries don't linger
       *fs.structs = GameStructs::new_empty();
       match fs.structs.load_from_dir("prime_defs") {
         Ok(()) => {
@@ -1406,7 +1322,6 @@ mod tests {
 
     let plan = s.plan(false, CameraMode::FollowPlayer, WorldViewInput::default());
     assert_eq!(plan.detached_move, (0.0, 0.0, 0.0));
-    // ArrowLeft → negative yaw (flipped from the C++ sign to match mouse drag).
     assert!((plan.world_input.cam_yaw - -0.03).abs() < 1e-6);
 
     let plan = s.plan(false, CameraMode::Detached, WorldViewInput::default());

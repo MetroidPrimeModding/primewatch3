@@ -1,9 +1,8 @@
-//! `ImmediateModeBuffer` — ports
-//! `../primewatch2/src/gl/ImmediateModeBuffer.{hpp,cpp}`, **CPU-only**.
+//! `ImmediateModeBuffer`, **CPU-only**.
 //!
 //! **Deviation (sanctioned, for testability):** the C++ class owns two
 //! `OpenGLMesh`es and does its own `drawTris` / `drawLines` upload+draw. This
-//! port is pure CPU — it accumulates `Vec<Vert>` and exposes them; P8.4's
+//! port is pure CPU — it accumulates `Vec<Vert>` and exposes them; the
 //! `WorldRenderer` owns the [`crate::gl::mesh::DynamicMesh`] pair and does
 //! `mesh.upload(dev, q, imm.tri_verts()); mesh.draw(pass)` each frame. The
 //! "push-vertices-per-frame" pattern is preserved, the GPU half is lifted to the
@@ -14,8 +13,6 @@ use glam::{Mat3, Mat4, Vec3, Vec4};
 
 use crate::gl::Vert;
 
-/// The C++ `Vert{-1,-1,-1}` in-class default for `barycentric`, used by the
-/// `glm::vec3` overloads of `addLine`.
 const NO_BARYCENTRIC: [f32; 3] = [-1.0, -1.0, -1.0];
 
 pub struct ImmediateModeBuffer {
@@ -33,8 +30,7 @@ impl Default for ImmediateModeBuffer {
 }
 
 impl ImmediateModeBuffer {
-  /// Ports the ctor (`ImmediateModeBuffer.cpp:6-17`), minus the two
-  /// `make_unique<OpenGLMesh>`.
+  /// The ctor, minus the two `make_unique<OpenGLMesh>`.
   pub fn new() -> Self {
     Self {
       line_verts: Vec::new(),
@@ -45,35 +41,34 @@ impl ImmediateModeBuffer {
     }
   }
 
-  /// Ports `clear()` (`cpp:19-22`).
+  /// `clear()`.
   pub fn clear(&mut self) {
     self.tri_verts.clear();
     self.line_verts.clear();
   }
 
-  /// Accumulated triangle verts — replaces `drawTris` (`cpp:24-27`).
+  /// Accumulated triangle verts — replaces `drawTris`.
   pub fn tri_verts(&self) -> &[Vert] {
     &self.tri_verts
   }
 
-  /// Accumulated line verts — replaces `drawLines` (`cpp:29-32`).
+  /// Accumulated line verts — replaces `drawLines`.
   pub fn line_verts(&self) -> &[Vert] {
     &self.line_verts
   }
 
-  /// Ports `setColor` (`cpp:34-36`).
+  /// `setColor`.
   pub fn set_color(&mut self, color: [f32; 4]) {
     self.current_color = color;
   }
 
-  /// Ports `setTransform` (`cpp:38-41`):
-  /// `normalTransform = transpose(inverse(vertTransform))`.
+  /// `setTransform`: `normalTransform = transpose(inverse(vertTransform))`.
   pub fn set_transform(&mut self, tf: Mat4) {
     self.vert_transform = tf;
     self.normal_transform = Mat3::from_mat4(tf).inverse().transpose();
   }
 
-  /// Ports `addLine(vec3, vec3)` (`cpp:44-61`).
+  /// `addLine(vec3, vec3)`.
   pub fn add_line(&mut self, start: Vec3, end: Vec3) {
     let a = Vert {
       pos: start.to_array(),
@@ -90,12 +85,12 @@ impl ImmediateModeBuffer {
     self.add_line_vert(a, b);
   }
 
-  /// Ports `addLine(Vert, Vert)` (`cpp:59-61`).
+  /// `addLine(Vert, Vert)`.
   pub fn add_line_vert(&mut self, a: Vert, b: Vert) {
     self.add_lines(&[a, b]);
   }
 
-  /// Ports `addTri(vec3, vec3, vec3)` (`cpp:63-85`).
+  /// `addTri(vec3, vec3, vec3)`.
   pub fn add_tri(&mut self, a: Vec3, b: Vec3, c: Vec3) {
     let n = (a - b).cross(a - c).normalize();
     let mk = |pos: Vec3, bary: [f32; 3]| Vert {
@@ -110,13 +105,13 @@ impl ImmediateModeBuffer {
     self.add_tri_vert(va, vb, vc);
   }
 
-  /// Ports `addTri(Vert, Vert, Vert)` (`cpp:87-89`).
+  /// `addTri(Vert, Vert, Vert)`.
   pub fn add_tri_vert(&mut self, a: Vert, b: Vert, c: Vert) {
     self.add_tris(&[a, b, c]);
   }
 
-  /// Ports `addQuad(vec3, vec3, vec3, vec3)` (`cpp:91-119`) — note `d` reuses
-  /// the `[1, 0, 0]` barycentric.
+  /// `addQuad(vec3, vec3, vec3, vec3)` — note `d` reuses the `[1, 0, 0]`
+  /// barycentric.
   pub fn add_quad(&mut self, a: Vec3, b: Vec3, c: Vec3, d: Vec3) {
     let n = (a - b).cross(a - c).normalize();
     let mk = |pos: Vec3, bary: [f32; 3]| Vert {
@@ -132,12 +127,12 @@ impl ImmediateModeBuffer {
     self.add_quad_vert(va, vb, vc, vd);
   }
 
-  /// Ports `addQuad(Vert, Vert, Vert, Vert)` (`cpp:121-123`).
+  /// `addQuad(Vert, Vert, Vert, Vert)`.
   pub fn add_quad_vert(&mut self, a: Vert, b: Vert, c: Vert, d: Vert) {
     self.add_tris(&[a, b, c, c, d, a]);
   }
 
-  /// Ports `addLines` (`cpp:125-140`): push a transformed copy of each input.
+  /// `addLines`: push a transformed copy of each input.
   pub fn add_lines(&mut self, verts: &[Vert]) {
     let vt = self.vert_transform;
     let nt = self.normal_transform;
@@ -146,7 +141,7 @@ impl ImmediateModeBuffer {
       .extend(verts.iter().map(|v| transform_vert(vt, nt, v)));
   }
 
-  /// Ports `addTris` (`cpp:142-157`): push a transformed copy of each input.
+  /// `addTris`: push a transformed copy of each input.
   pub fn add_tris(&mut self, verts: &[Vert]) {
     let vt = self.vert_transform;
     let nt = self.normal_transform;
@@ -156,8 +151,8 @@ impl ImmediateModeBuffer {
   }
 }
 
-/// The per-vertex transform in the C++ `std::transform` lambdas
-/// (`cpp:130-138` / `cpp:147-154`): `pos = (vertTransform * vec4(pos, 1)).xyz`,
+/// The per-vertex transform:
+/// `pos = (vertTransform * vec4(pos, 1)).xyz`,
 /// `normal = normalize(normalTransform * normal)`, colour + barycentric passed
 /// through.
 fn transform_vert(vt: Mat4, nt: Mat3, v: &Vert) -> Vert {

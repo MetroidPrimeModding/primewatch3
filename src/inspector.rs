@@ -1,45 +1,31 @@
 //! Generic egui tree view over any [`GameInstance`].
 //!
-//! Ports `../primewatch2/src/defs/GameObjectRenderers.cpp` — the recursive
-//! primitive / enum / array / nested-struct / `rstl::vector` walk plus the pure
-//! `fmt::format` string helpers, and the special-type table (`CVector3f` /
-//! `CQuaternion` / `CTransform` / `CMatrix4f` / `SObjectTag`) dispatched behind
-//! the [`SPECIAL_TYPES`] guard.
-//!
-//! No call site yet — Phase 9 wires this into the watch windows.
+//! The recursive primitive / enum / array / nested-struct / `rstl::vector` walk
+//! plus the pure string-formatting helpers, and the special-type table
+//! (`CVector3f` / `CQuaternion` / `CTransform` / `CMatrix4f` / `SObjectTag`)
+//! dispatched behind the [`SPECIAL_TYPES`] guard.
 //!
 //! ## Deviations from the C++
-//! - Reads are fallible (`Option`, P4.2). This module is the callsite that
-//!   finally applies the C++ total-read default (`getRealPtr` clamps OOB to 0):
-//!   `unwrap_or(0)` / `unwrap_or_default()`. "Unreadable" and "zero" render
-//!   identically, exactly as they did in C++.
-//! - The top-level `derefPointer` branch of C++ `render` is dropped: Rust
-//!   instances arrive already-deref'd from [`GameInstance::get_member`] /
-//!   `globals.rs`, and the carried [`GameInstance::pointer`] bit is used only for
-//!   display (`*` prefix, null check, `u8*` C-string), never to re-deref.
-//! - Click-to-copy copies the rendered label text. C++ sometimes copied a
+//! - TODO: Click-to-copy copies the rendered label text. C++ sometimes copied a
 //!   slightly different `clip` string (e.g. decimal-only for integers, raw hex
 //!   bits for floats); that nicety is not reproduced.
 //! - `CollapsingHeader` ids are salted with `(name, address)` rather than
 //!   address alone, so sibling `extends` bases (same address, different name)
 //!   don't collide. C++ keyed its `###` id on `name + offset`.
-//! - `ARRAY_CAP` bounds the array loop; C++ has no failsafe against a corrupt
-//!   `array_length` from a bad `.bs`.
 
 use crate::ctx::Ctx;
 use crate::mem::game_object_utils::object_tag_to_string;
 use crate::structs::prime_structs::GameInstance;
 
-/// Primitive leaf types — C++ `specialRenderers` maps each of these to
-/// `primitiveRenderer` (`GameObjectRenderers.cpp:15-25`).
+/// Primitive leaf types — `specialRenderers` maps each of these to `primitiveRenderer`.
 const PRIMITIVE_TYPES: &[&str] = &[
   "u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "f32", "f64", "bool",
 ];
 
-/// Types with a bespoke renderer in C++ `specialRenderers`
-/// (`GameObjectRenderers.cpp:26-30`), dispatched from [`Inspector::render`] to
-/// the `render_*` methods below. Kept as an explicit guard so P9's unknown-type
-/// UI can still tell "handled specially" from "generic struct".
+/// Types with a bespoke renderer, dispatched from
+/// [`Inspector::render`] to the `render_*` methods below. Kept as an explicit
+/// guard so the unknown-type UI can still tell "handled specially" from
+/// "generic struct".
 pub const SPECIAL_TYPES: &[&str] = &[
   "CVector3f",
   "CQuaternion",
@@ -48,12 +34,9 @@ pub const SPECIAL_TYPES: &[&str] = &[
   "SObjectTag",
 ];
 
-/// Upper bound on rendered array elements per frame (C++ has none).
+/// Upper bound on rendered array elements per frame.
 const ARRAY_CAP: u32 = 4096;
 
-/// Port of the file-scope `bool GameObjectRenderers::render_exact_values`
-/// (`GameObjectRenderers.cpp:12`). The "Show exact floating point values" menu
-/// toggle that flips it is P9 (`PrimeWatch.cpp:476`).
 pub struct Inspector {
   pub exact_values: bool,
 }
@@ -86,9 +69,9 @@ fn c_hex_i64(v: i64) -> String {
   }
 }
 
-/// Ports `primitiveRenderer` (`GameObjectRenderers.cpp:165-245`). `name` already
-/// includes any `*` pointer prefix. A failed read substitutes the C++
-/// total-read default here (`0` / `0.0` / `""` / `false`).
+/// Renders a primitive leaf. `name` already includes any `*` pointer prefix. A
+/// failed read substitutes the C++ total-read default here (`0` / `0.0` / `""` /
+/// `false`).
 pub fn format_primitive(ctx: &Ctx, name: &str, inst: &GameInstance, exact: bool) -> String {
   let typ = inst.type_name.as_str();
   match typ {
@@ -101,9 +84,9 @@ pub fn format_primitive(ctx: &Ctx, name: &str, inst: &GameInstance, exact: bool)
       let v = inst.read_bool(ctx).unwrap_or(false);
       format!("{name} {v}")
     }
-    // Signed: no `GameInstance::read_i*` exists (P4.2) — read unsigned through
-    // the bitfield path, then sign-extend. `i64` / unknown widths fall to the
-    // `read_u64` branch, matching the C++ `else`.
+    // Signed: no `GameInstance::read_i*` exists — read unsigned through the
+    // bitfield path, then sign-extend. `i64` / unknown widths fall to the
+    // `read_u64` branch.
     "i8" => {
       let v = inst.read_u8(ctx).unwrap_or(0) as i8 as i64;
       format!("{name} {v}/{}", c_hex_i64(v))
@@ -156,8 +139,6 @@ pub fn format_primitive(ctx: &Ctx, name: &str, inst: &GameInstance, exact: bool)
   }
 }
 
-/// Ports `renderEnum` (`GameObjectRenderers.cpp:83-103`). Unknown enum type ->
-/// `"Unknown enum {type}"`; unknown value -> `"unknown"`.
 pub fn format_enum(ctx: &Ctx, name: &str, inst: &GameInstance) -> String {
   let Some(game_enum) = ctx.structs.get_enum_by_name(&inst.type_name) else {
     return format!("Unknown enum {}", inst.type_name);
@@ -169,9 +150,6 @@ pub fn format_enum(ctx: &Ctx, name: &str, inst: &GameInstance) -> String {
   format!("{name} {ename} ({value}/{value:#x}/{value:#b})")
 }
 
-/// Ports `CVector3fRenderer` (`GameObjectRenderers.cpp:247-275`). Three `f32` at
-/// `inst.address + {0, 4, 8}`; an unreadable component defaults to `0.0` here.
-/// 8dp when `exact` else 3dp — matches the C++ `{:0.8f}` / `{:0.3f}`.
 pub fn format_vec3(ctx: &Ctx, name: &str, inst: &GameInstance, exact: bool) -> String {
   let a = inst.address;
   let x = ctx.mem.read_f32(a).unwrap_or(0.0);
@@ -184,8 +162,6 @@ pub fn format_vec3(ctx: &Ctx, name: &str, inst: &GameInstance, exact: bool) -> S
   }
 }
 
-/// Ports `CQuaternionRenderer` (`GameObjectRenderers.cpp:277-307`). Four `f32` at
-/// `inst.address + {0, 4, 8, 12}` rendered `[x, y, z, w]`.
 pub fn format_quat(ctx: &Ctx, name: &str, inst: &GameInstance, exact: bool) -> String {
   let a = inst.address;
   let x = ctx.mem.read_f32(a).unwrap_or(0.0);
@@ -199,15 +175,14 @@ pub fn format_quat(ctx: &Ctx, name: &str, inst: &GameInstance, exact: bool) -> S
   }
 }
 
-/// The inner cell loop shared by `CTransformRenderer` (`:309-341`, `cols = 3`)
-/// and `CMatrix4fRenderer` (`:343-375`, `cols = 4`): for row `r`, reads a `f32`
-/// per column at `base + (c * 4 + r) * 4` and appends `"{v}, "` — 8dp when
-/// `exact` else 2dp. The **trailing `", "`** is emitted on every cell verbatim,
-/// exactly as the C++ does (no join / trim).
+/// The inner cell loop shared by the `CTransform` renderer (`cols = 3`) and the
+/// `CMatrix4f` renderer (`cols = 4`): for row `r`, reads a `f32` per column at
+/// `base + (c * 4 + r) * 4` and appends `"{v}, "` — 8dp when `exact` else 2dp.
+/// The **trailing `", "`** is emitted on every cell verbatim.
 ///
 /// The offset arithmetic `(c * 4 + r) * 4` is ported literally: for `CTransform`
 /// (`c in 0..3`, `r in 0..4`) it reaches byte 44 (`posZ`), so the header column
-/// reads the translation components — this is the C++ behavior, not a bug.
+/// reads the translation components.
 pub fn format_matrix_row(ctx: &Ctx, base: u32, cols: u32, r: u32, exact: bool) -> String {
   use std::fmt::Write as _;
   let mut row = String::new();
@@ -223,10 +198,9 @@ pub fn format_matrix_row(ctx: &Ctx, base: u32, cols: u32, r: u32, exact: bool) -
   row
 }
 
-/// Ports `hoverTooltip` (`GameObjectRenderers.cpp:63-81`): optional `*`, the
-/// type name, optional `[{array_length}]`, ` {address:#08x}`, and an optional
-/// `[bit {bit}; len {bit_length}]` when either is set. (C++ never uses the
-/// member name here, so the port drops that parameter.)
+/// Builds the hover tooltip: optional `*`, the type name, optional
+/// `[{array_length}]`, ` {address:#08x}`, and an optional
+/// `[bit {bit}; len {bit_length}]` when either is set.
 pub fn hover_text(inst: &GameInstance) -> String {
   use std::fmt::Write as _;
   let mut msg = String::new();
@@ -251,7 +225,6 @@ pub fn hover_text(inst: &GameInstance) -> String {
 // ---------------------------------------------------------------------------
 
 /// A clickable label that copies its own text to the clipboard on click
-/// (C++ `ImGui::Text` + `IsItemClicked` -> `SetClipboardText`).
 fn copyable_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
   let resp = ui.add(egui::Label::new(text).sense(egui::Sense::click()));
   if resp.clicked() {
@@ -261,9 +234,9 @@ fn copyable_label(ui: &mut egui::Ui, text: &str) -> egui::Response {
 }
 
 impl Inspector {
-  /// Ports `render` (`GameObjectRenderers.cpp:33-61`) minus the top-level
-  /// pointer-deref branch (done upstream in [`GameInstance::get_member`]).
-  /// Dispatch order: array -> primitive/special -> `rstl::vector` -> enum/struct.
+  /// The recursive entry point, minus the top-level pointer-deref branch (done
+  /// upstream in [`GameInstance::get_member`]). Dispatch order: array ->
+  /// primitive/special -> `rstl::vector` -> enum/struct.
   pub fn render(
     &self,
     ui: &mut egui::Ui,
@@ -286,8 +259,6 @@ impl Inspector {
     }
 
     if SPECIAL_TYPES.contains(&typ) {
-      // Mirrors C++ `specialRenderers.count(typeName)` winning over the
-      // `rstl::vector<` / enum-struct branches.
       match typ {
         "CVector3f" => self.render_vec3(ui, ctx, name, inst),
         "CQuaternion" => self.render_quat(ui, ctx, name, inst),
@@ -309,7 +280,6 @@ impl Inspector {
     self.render_enum_or_struct(ui, ctx, name, inst, add_tree);
   }
 
-  /// Ports `renderEnumOrStruct` (`GameObjectRenderers.cpp:105-155`).
   fn render_enum_or_struct(
     &self,
     ui: &mut egui::Ui,
@@ -342,13 +312,13 @@ impl Inspector {
     }
   }
 
-  /// The body of a struct subtree (`GameObjectRenderers.cpp:127-150`): "null" for
-  /// a zero address, otherwise each `extends` base as its own subtree followed by
-  /// every member in offset order.
+  /// The body of a struct subtree: "null" for a zero address, otherwise each
+  /// `extends` base as its own subtree followed by every member in offset order.
   ///
   /// Deviation: C++ iterates `members_by_order` (declaration order); the Rust
   /// `GameStruct` only keeps `members_by_offset`. Offset order matches
   /// declaration order for every well-formed `.bs`.
+  /// TODO: determine if this is acceptable
   fn render_struct_body(
     &self,
     ui: &mut egui::Ui,
@@ -379,8 +349,8 @@ impl Inspector {
     }
   }
 
-  /// Ports `renderArray` (`GameObjectRenderers.cpp:425-451`). `element` already
-  /// strides by `element_size` and clears `array_length` on the child (P4.3).
+  /// Renders a fixed-length array. `element` already strides by `element_size`
+  /// and clears `array_length` on the child.
   fn render_array(&self, ui: &mut egui::Ui, ctx: &Ctx, name: &str, inst: &GameInstance) {
     let count = inst.array_length.unwrap_or(0).max(0) as u32;
     let resp = egui::CollapsingHeader::new(name)
@@ -394,10 +364,8 @@ impl Inspector {
     resp.header_response.on_hover_text(hover_text(inst));
   }
 
-  /// Ports `renderVector` (`GameObjectRenderers.cpp:377-423`). `end` is the live
-  /// count, `size` the capacity (rstl naming is inverted vs `std::vector` — the
-  /// C++ label text `size: {end} max size: {size}` is kept verbatim). A
-  /// per-vector `InputInt` index selects the one element rendered.
+  /// Renders an `rstl::vector`. `end` is the live count, `size` the capacity
+  /// A per-vector `InputInt` index selects the one element rendered.
   fn render_vector(&self, ui: &mut egui::Ui, ctx: &Ctx, name: &str, inst: &GameInstance) {
     let resp = egui::CollapsingHeader::new(name)
       .id_salt((name, inst.address))
@@ -422,26 +390,20 @@ impl Inspector {
     resp.header_response.on_hover_text(hover_text(inst));
   }
 
-  /// Ports `CVector3fRenderer` (`GameObjectRenderers.cpp:247-275`).
   fn render_vec3(&self, ui: &mut egui::Ui, ctx: &Ctx, name: &str, inst: &GameInstance) {
     let text = format_vec3(ctx, name, inst, self.exact_values);
     copyable_label(ui, &text).on_hover_text(hover_text(inst));
   }
 
-  /// Ports `CQuaternionRenderer` (`GameObjectRenderers.cpp:277-307`).
   fn render_quat(&self, ui: &mut egui::Ui, ctx: &Ctx, name: &str, inst: &GameInstance) {
     let text = format_quat(ctx, name, inst, self.exact_values);
     copyable_label(ui, &text).on_hover_text(hover_text(inst));
   }
 
-  /// Ports `CTransformRenderer` (`GameObjectRenderers.cpp:309-341`) — 4 rows x 3
-  /// columns.
   fn render_transform(&self, ui: &mut egui::Ui, ctx: &Ctx, name: &str, inst: &GameInstance) {
     self.render_matrix_rows(ui, ctx, name, inst, 3);
   }
 
-  /// Ports `CMatrix4fRenderer` (`GameObjectRenderers.cpp:343-375`) — 4 rows x 4
-  /// columns.
   fn render_matrix4f(&self, ui: &mut egui::Ui, ctx: &Ctx, name: &str, inst: &GameInstance) {
     self.render_matrix_rows(ui, ctx, name, inst, 4);
   }
@@ -467,7 +429,6 @@ impl Inspector {
     resp.header_response.on_hover_text(hover_text(inst));
   }
 
-  /// Ports `SObjectTagRenderer` (`GameObjectRenderers.cpp:453-464`).
   fn render_object_tag(&self, ui: &mut egui::Ui, ctx: &Ctx, name: &str, inst: &GameInstance) {
     let text = format!("{name} {}", object_tag_to_string(ctx, inst));
     copyable_label(ui, &text).on_hover_text(hover_text(inst));

@@ -1,12 +1,9 @@
-//! Ports `../primewatch2/src/defs/GameOffsets.hpp` — the fixed global
-//! `GameMember` roots the app traverses from every frame.
+//! The fixed global roots the app traverses from every frame.
 //!
-//! In C++ each entry is a `GameDefinitions::GameMember` whose `.offset` doubles
-//! as the live address. The non-pointer roots (`g_stateManager`, `g_main`) map
-//! straight to a `GameInstance` at that address. The pointer roots
-//! (`gp_MemoryCard`, `gp_TweakPlayer`) hold a `u32` pointer *at* the fixed
-//! address — C++ derefs them via `GameObjectRenderers::render(m, true, true)`
-//! (`GameObjectRenderers.cpp:34-42`). Here that deref is explicit and can fail
+//! Each root's address doubles as its live address. The non-pointer roots
+//! (`g_stateManager`, `g_main`) map straight to a `GameInstance` at that
+//! address. The pointer roots (`gp_MemoryCard`, `gp_TweakPlayer`) hold a `u32`
+//! pointer *at* the fixed address; here that deref is explicit and can fail
 //! (unreadable memory / null), so those return `Option<GameInstance>`.
 
 use crate::ctx::Ctx;

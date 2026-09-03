@@ -1,21 +1,13 @@
 //! glam readers for the game's math structs.
 //!
-//! Ports `../primewatch2/src/utils/MathUtils.cpp` (`readAsCVector3f` /
-//! `readAsCQuaternion` / `readAsCMatrix4f` / `readAsCTransform`). Each takes the
-//! live `GameInstance` for the member (address + type) and unpacks its floats
-//! into a glam type.
-//!
-//! Deviation from C++: the C++ reads are total (`GameMemory::read_float` clamps
-//! OOB to 0) and `operator[]` panics on a missing sub-member. These compose the
-//! fallible `get_member` / `read_f32` with `?`, so a missing member or an
-//! out-of-bounds address yields `None` rather than a panic or a silent 0. The
-//! P8.4.2+ call sites own the `.unwrap_or_default()` policy.
+//! Each reader takes the live `GameInstance` for the member (address + type)
+//! and unpacks its floats into a glam type.
 
 use crate::ctx::Ctx;
 use crate::structs::prime_structs::GameInstance;
 use glam::{Mat4, Quat, Vec3};
 
-/// C++ `MathUtils::readAsCVector3f` — `member["x" / "y" / "z"]` as three f32s.
+/// `member["x" / "y" / "z"]` as three f32s.
 pub fn read_as_vec3(ctx: &Ctx, member: &GameInstance) -> Option<Vec3> {
   Some(Vec3::new(
     member.get_member(ctx, "x")?.read_f32(ctx)?,
@@ -24,9 +16,7 @@ pub fn read_as_vec3(ctx: &Ctx, member: &GameInstance) -> Option<Vec3> {
   ))
 }
 
-/// C++ `MathUtils::readAsCQuaternion` — `member["x" / "y" / "z" / "w"]` as four
-/// f32s, in `(x, y, z, w)` order (matching the C++ `glm::quat{x, y, z, w}`
-/// brace-init).
+/// `member["x" / "y" / "z" / "w"]` as four f32s, in `(x, y, z, w)` order
 pub fn read_as_quat(ctx: &Ctx, member: &GameInstance) -> Option<Quat> {
   Some(Quat::from_xyzw(
     member.get_member(ctx, "x")?.read_f32(ctx)?,
@@ -36,11 +26,11 @@ pub fn read_as_quat(ctx: &Ctx, member: &GameInstance) -> Option<Quat> {
   ))
 }
 
-/// C++ `MathUtils::readAsCMatrix4f` — 16 raw floats off `member["matrix"]` with
-/// the C++ `RC(r, c) = (r + c * 4) * 4` byte offset. The 16 values are handed to
-/// `glm::mat4` (and here `Mat4::from_cols_array`) in the *same* order: the first
-/// four form column 0, the next four column 1, and so on — both constructors are
-/// column-major, so the byte layout matches C++ exactly.
+/// 16 raw floats off `member["matrix"]` with the `RC(r, c) = (r + c * 4) * 4`
+/// byte offset. The 16 values are handed to `Mat4::from_cols_array`
+/// in the *same* order: the first four form column 0, the next
+/// four column 1, and so on — both constructors are column-major, so the byte
+/// layout matches C++ exactly.
 pub fn read_as_matrix4f(ctx: &Ctx, member: &GameInstance) -> Option<Mat4> {
   let base = member.get_member(ctx, "matrix")?.address;
   let rc = |r: u32, c: u32| ctx.mem.read_f32(base.wrapping_add((r + c * 4) * 4));
@@ -64,10 +54,9 @@ pub fn read_as_matrix4f(ctx: &Ctx, member: &GameInstance) -> Option<Mat4> {
   ]))
 }
 
-/// C++ `MathUtils::readAsCTransform` — 12 raw floats off `member["m0"]` with the
-/// same `RC(r, c) = (r + c * 4) * 4` offset, with the fourth element of the
-/// first three columns hardcoded `0.0` and the fourth column's `w` hardcoded
-/// `1.0` (C++ lines 60/65/70/75 — `w` is *not* read from memory).
+/// 12 raw floats off `member["m0"]` with the same `RC(r, c) = (r + c * 4) * 4`
+/// offset, with the fourth element of the first three columns hardcoded `0.0`
+/// and the fourth column's `w` hardcoded `1.0` — `w` is *not* read from memory.
 pub fn read_as_transform(ctx: &Ctx, member: &GameInstance) -> Option<Mat4> {
   let base = member.get_member(ctx, "m0")?.address;
   let rc = |r: u32, c: u32| ctx.mem.read_f32(base.wrapping_add((r + c * 4) * 4));

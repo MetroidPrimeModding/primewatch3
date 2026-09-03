@@ -1,26 +1,23 @@
-//! Reusable wgpu building blocks — ports `../primewatch2/src/gl/*`.
+//! Reusable wgpu building blocks.
 //!
-//! - [`Vert`] + its [`wgpu::VertexBufferLayout`] — ports `gl/OpenGLMesh.hpp` +
-//!   the four `glVertexAttribPointer` calls in `gl/OpenGLMesh.cpp:14-21`.
-//! - [`mesh::DynamicMesh`] — ports `OpenGLMesh`.
-//! - [`shader::WorldPipelines`] / [`shader::WorldUniforms`] — ports
-//!   `OpenGLShader` + the three GLSL shader strings in `WorldRenderer.cpp:31-113`.
-//! - [`immediate::ImmediateModeBuffer`] — ports `ImmediateModeBuffer` (CPU-only).
-//! - [`shapes`] — ports `ShapeGenerator` (CPU-only procedural geometry).
-//!
-//! Everything here is library code: dead until P8.4 (`WorldRenderer`) wires it.
+//! - [`Vert`] + its [`wgpu::VertexBufferLayout`].
+//! - [`mesh::DynamicMesh`] — a growable vertex buffer.
+//! - [`shader::WorldPipelines`] / [`shader::WorldUniforms`] — the world shader
+//!   and its render pipelines.
+//! - [`immediate::ImmediateModeBuffer`] (CPU-only).
+//! - [`shapes`] — CPU-only procedural geometry.
 
 pub mod immediate;
 pub mod mesh;
 pub mod shader;
 pub mod shapes;
 
-/// Packed interleaved vertex — ports `gl/OpenGLMesh.hpp:12-17` `Vert`.
+/// Packed interleaved vertex.
 ///
 /// Every field is `f32`, so `#[repr(C)]` reproduces the C++ `packed` layout
 /// byte-for-byte (there is no padding to pack away).
 ///
-/// No `Default`: the C++ `barycentric{-1,-1,-1}` in-class initializer is always
+/// No `Default`: The `barycentric{-1,-1,-1}` in-class initializer is always
 /// overwritten by [`crate::world::collision_mesh::CollisionMesh::build_vertices`].
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -31,10 +28,9 @@ pub struct Vert {
   pub barycentric: [f32; 3],
 }
 
-/// Vertex attributes — ports the four `glVertexAttribPointer` calls in
-/// `gl/OpenGLMesh.cpp:14-21` (location 0 `pos` vec3, 1 `color` vec4, 2 `normal`
-/// vec3, 3 `barycentric` vec3). A `const` the layout borrows — same pattern as
-/// `scene.rs::VERTEX_ATTRS`.
+/// Vertex attributes — the four `glVertexAttribPointer` calls (location 0 `pos`
+/// vec3, 1 `color` vec4, 2 `normal` vec3, 3 `barycentric` vec3). A `const` the
+/// layout borrows.
 const VERTEX_ATTRS: [wgpu::VertexAttribute; 4] =
   wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4, 2 => Float32x3, 3 => Float32x3];
 
@@ -50,28 +46,25 @@ impl Vert {
 
 /// The world view's offscreen colour target format.
 ///
-/// P1.3 decision: egui-wgpu hard-requires a linear `Rgba8Unorm` texture for
+/// egui-wgpu hard-requires a linear `Rgba8Unorm` texture for
 /// `register_native_texture`, so the world pass renders into that (not the
-/// surface's sRGB format) and does its own linear→sRGB in the shader. Same value
-/// as the private `COLOR_FORMAT` in `scene.rs`; P8.4 unifies the copies.
+/// surface's sRGB format) and does its own linear→sRGB in the shader.
 pub const WORLD_COLOR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// The world view's own depth target format — ports `glEnable(GL_DEPTH_TEST)`.
-/// Same value as the private `DEPTH_FORMAT` in `scene.rs`; P8.4 unifies.
 pub const WORLD_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// Reinterpret a slice of plain-old-data as bytes for GPU upload. `u8` has
-/// alignment 1 so any `[T]` is validly viewable as `[u8]`. Copied verbatim from
-/// `scene.rs::as_bytes` (P1.3 decision: no `bytemuck` dep).
+/// alignment 1 so any `[T]` is validly viewable as `[u8]`. (No `bytemuck` dep.)
 pub(crate) fn as_bytes<T: Copy>(data: &[T]) -> &[u8] {
   // SAFETY: `T: Copy` POD, read-only view, size in bytes is exact.
   unsafe { std::slice::from_raw_parts(data.as_ptr().cast::<u8>(), std::mem::size_of_val(data)) }
 }
 
-/// Primitive topology — ports the used subset of `gl/OpenGLMesh.hpp:22-30`
-/// `RenderType`. The other five GL modes (`POINTS`, `LINE_LOOP`, `LINE_STRIP`,
-/// `TRIANGLE_STRIP`, `TRIANGLE_FAN`) are unused in the codebase, and
-/// `LINE_LOOP` / `TRIANGLE_FAN` have no wgpu-core equivalent.
+/// Primitive topology — the used subset of the GL `RenderType`. The other five
+/// GL modes (`POINTS`, `LINE_LOOP`, `LINE_STRIP`, `TRIANGLE_STRIP`,
+/// `TRIANGLE_FAN`) are unused in the codebase, and `LINE_LOOP` / `TRIANGLE_FAN`
+/// have no wgpu-core equivalent.
 ///
 /// `BufferUpdateType` (`STATIC` / `DYNAMIC` / `STREAM`) is dropped: a wgpu
 /// dynamic buffer is just `VERTEX | COPY_DST` + `queue.write_buffer`, the GL

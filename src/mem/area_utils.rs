@@ -1,5 +1,3 @@
-//! Ports `../primewatch2/src/utils/AreaUtils.cpp`.
-//!
 //! Walks `g_stateManager -> world -> areas` (an
 //! `rstl::vector<rstl::autoptr<CGameArea>>`) and hands back one `CGameArea`
 //! handle per live area, in area-index order.
@@ -9,15 +7,8 @@ use crate::mem::globals::get_state_manager;
 use crate::structs::prime_structs::GameInstance;
 
 /// Defensive upper bound on the area count.
-///
-/// Deviation from C++ `AreaUtils::getAreas`, which loops `for (int i = 0; i <
-/// end; i++)` with no failsafe — a garbage `end` from an unloaded / partway
-/// world would spin the frame. Mirrors the 1024 clamp `GameObjectUtils::
-/// getAllObjects` already applies to its list size.
 const AREA_CAP: u32 = 1024;
 
-/// Ports `AreaUtils::getAreas` (`AreaUtils.cpp:8-27`).
-///
 /// `g_stateManager["world"]` (auto-derefs `*CWorld`) -> `["areas"]` (the
 /// `rstl::vector<rstl::autoptr<CGameArea>>` value member at `CWorld` +0x18).
 /// `areas["end"]` is — despite the name — the element count (`rstl.bs`
@@ -28,13 +19,8 @@ const AREA_CAP: u32 = 1024;
 ///
 /// Deviations from C++:
 /// - C++ sets `area.name = fmt::format("area {}", i)`. `GameInstance` has no
-///   `name` field (P6.1 precedent); the returned `Vec` index *is* the label and
-///   formatting it is a P7 render-layer concern.
-/// - The loop is bounded by [`AREA_CAP`] (see its docs).
-/// - Per the P4.2 / P5.1 convention these reads are `Option` with no default
-///   substitution: a `None` on any structural / value read bails with what was
-///   gathered so far rather than fabricating a `0`. With a valid snapshot this
-///   never triggers.
+///   `name` field; the returned `Vec` index *is* the label and formatting it is
+///   a render-layer concern.
 pub fn get_areas(ctx: &Ctx) -> Vec<GameInstance> {
   let sm = get_state_manager();
   let Some(world) = sm.get_member(ctx, "world") else {

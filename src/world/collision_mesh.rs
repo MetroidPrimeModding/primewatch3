@@ -1,9 +1,5 @@
-//! Ports `../primewatch2/src/world/CollisionMesh.{hpp,cpp}` and
-//! `WorldRenderer::loadMesh` (`../primewatch2/src/world/WorldRenderer.cpp:170-246`).
-//!
 //! The memory -> struct parse ([`load_mesh`]) and the triangle-soup build
-//! ([`CollisionMesh::build_vertices`], porting `CollisionMesh::initGlMesh`).
-//! No GPU code — `CollisionMesh::draw()` and the `OpenGLMesh` upload are P8.2.
+//! ([`CollisionMesh::build_vertices`]). No GPU code lives here.
 
 use glam::Vec3;
 
@@ -11,16 +7,11 @@ use crate::ctx::Ctx;
 use crate::gl::Vert;
 use crate::structs::prime_structs::GameInstance;
 
-/// Collision-surface material bitflags — ports `world/CollisionMesh.hpp:8-55`
-/// (mirrored by `enum CollisionMaterial` in
+/// Collision-surface material bitflags (mirrored by `enum CollisionMaterial` in
 /// `prime_defs/prime1/CAreaOctTree.bs`).
 ///
 /// A native bitflag newtype rather than a `GameEnum`: the game ORs these
-/// together and the C++ tests them with `!!(a & b)`. [`contains`] is that idiom.
-///
-/// `REDUNDANT_EDGE` and `FLIPPED_TRI` share the value `0x2000000` — verbatim
-/// from the C++ enum. Only `FLOOR` / `WALL` / `CEILING` / `FLIPPED_TRI` are read
-/// by [`CollisionMesh::build_vertices`]; the full set is ported for completeness.
+/// together and tests them with `!!(a & b)`. [`contains`] is that idiom.
 ///
 /// [`contains`]: ECollisionMaterial::contains
 #[repr(transparent)]
@@ -68,12 +59,11 @@ impl ECollisionMaterial {
   }
 }
 
-/// CPU-side collision geometry — ports `world/CollisionMesh.hpp:57-78` minus the
-/// `unique_ptr<OpenGLMesh> mesh` (P8.2 owns GPU state).
+/// CPU-side collision geometry.
 ///
 /// `raw_*` are the arrays copied straight out of the game's `CAreaOctTree`;
-/// [`build_vertices`] resolves them into [`verts`], the triangle soup P8.2 / P8.4
-/// upload.
+/// [`build_vertices`] resolves them into [`verts`], the triangle soup the
+/// renderer uploads.
 ///
 /// [`build_vertices`]: CollisionMesh::build_vertices
 /// [`verts`]: CollisionMesh::verts
@@ -88,12 +78,11 @@ pub struct CollisionMesh {
   pub min: Vec3,
   pub max: Vec3,
   pub materials: Vec<ECollisionMaterial>,
-  /// Filled by [`CollisionMesh::build_vertices`] — the tri soup P8.2 / P8.4 upload.
+  /// Filled by [`CollisionMesh::build_vertices`] — the tri soup the renderer uploads.
   pub verts: Vec<Vert>,
 }
 
-/// Mini-port of `MathUtils::readAsCVector3f` (`../primewatch2/src/utils/MathUtils.cpp:4-10`):
-/// read `x` / `y` / `z` `f32` members off a `CVector3f`-shaped handle.
+/// Read `x` / `y` / `z` `f32` members off a `CVector3f`-shaped handle.
 fn read_cvector3f(ctx: &Ctx, m: &GameInstance) -> Vec3 {
   Vec3::new(
     m.member(ctx, "x").read_f32(ctx).unwrap_or(0.0),
@@ -102,26 +91,22 @@ fn read_cvector3f(ctx: &Ctx, m: &GameInstance) -> Vec3 {
   )
 }
 
-/// Defensive sanity cap on each of the four `CAreaOctTree` counts — ports the
-/// C++ `if (... > 50000) return {}` gate (`WorldRenderer.cpp:181-184`).
+/// Defensive sanity cap on each of the four `CAreaOctTree` counts.
 const COUNT_SANITY_CAP: u32 = 50_000;
 
-/// Ports `WorldRenderer::loadMesh` (`../primewatch2/src/world/WorldRenderer.cpp:170-246`).
-///
 /// Walks `area -> postConstructed -> collision["value"]` (a `*CAreaOctTree`),
 /// copies its material / vertex / edge / poly arrays out of game memory, records
 /// the area AABB, then runs [`CollisionMesh::build_vertices`].
 ///
 /// Returns `None` on a structural miss (missing member, null `collision`,
-/// unreadable count, an out-of-range count). Per the P4.2 / P5.1 convention the
-/// bulk array reads use `.unwrap_or(0)` / `.unwrap_or(0.0)` — matching the C++
-/// total reads (OOB -> 0); a valid snapshot never misses there.
+/// unreadable count, an out-of-range count). The bulk array reads use
+/// `.unwrap_or(0)` / `.unwrap_or(0.0)` - preventing panics.
 pub fn load_mesh(ctx: &Ctx, area: &GameInstance) -> Option<CollisionMesh> {
   // 1. `*CPostConstructed` (auto-deref'd by `get_member`).
   let post_constructed = area.get_member(ctx, "postConstructed")?;
 
   // 2. `collision` (`rstl::autoptr<CAreaOctTree>` inline) -> `["value"]`
-  //    (auto-derefs `*CAreaOctTree`). C++: `if (collision.offset == 0) return {};`
+  //    (auto-derefs `*CAreaOctTree`).
   let collision = post_constructed
     .get_member(ctx, "collision")?
     .get_member(ctx, "value")?;
@@ -131,7 +116,7 @@ pub fn load_mesh(ctx: &Ctx, area: &GameInstance) -> Option<CollisionMesh> {
 
   let mut res = CollisionMesh::default();
 
-  // 3. Element counts + C++ sanity gate.
+  // 3. Element counts + sanity gate.
   let mat_count = collision.get_member(ctx, "matCount")?.read_u32(ctx)?;
   let edge_count = collision.get_member(ctx, "edgeCount")?.read_u32(ctx)?;
   let poly_count = collision.get_member(ctx, "polyCount")?.read_u32(ctx)?;
@@ -147,13 +132,13 @@ pub fn load_mesh(ctx: &Ctx, area: &GameInstance) -> Option<CollisionMesh> {
   }
 
   // 4. Array base addresses. `get_member` auto-derefs the pointer members, so
-  //    `.address` is the array base (matching C++ `.offset` on those members).
+  //    `.address` is the array base.
   let material_start = collision.get_member(ctx, "materials")?.address;
   let edge_start = collision.get_member(ctx, "edges")?.address;
   let poly_start = collision.get_member(ctx, "polyEdges")?.address;
   let vert_start = collision.get_member(ctx, "verts")?.address;
 
-  // NOTE: C++ `WorldRenderer::loadMesh:191` reads the per-vertex materials from
+  // TODO: the C++ `WorldRenderer::loadMesh` reads the per-vertex materials from
   // the `polyEdges` pointer, not `vertMats` — an apparent bug in the original.
   // Preserved verbatim; `raw_vert_materials` is unused by `build_vertices`.
   let vert_material_start = collision.get_member(ctx, "polyEdges")?.address;
@@ -179,7 +164,7 @@ pub fn load_mesh(ctx: &Ctx, area: &GameInstance) -> Option<CollisionMesh> {
       mem.read_f32(base.wrapping_add(8)).unwrap_or(0.0),
     ));
   }
-  // separate loop for locality reasons (matches C++)
+  // separate loop for locality reasons
   for i in 0..vert_count {
     res.raw_vert_materials.push(
       mem
@@ -230,13 +215,9 @@ pub fn load_mesh(ctx: &Ctx, area: &GameInstance) -> Option<CollisionMesh> {
 }
 
 impl CollisionMesh {
-  /// Ports `CollisionMesh::initGlMesh` (`../primewatch2/src/world/CollisionMesh.cpp:5-87`)
-  /// exactly, except it fills [`CollisionMesh::verts`] instead of constructing an
-  /// `OpenGLMesh`.
+  /// Fills [`CollisionMesh::verts`]
   ///
-  /// Deviation: the C++ indexes `materials` / `raw_edges` / `raw_verts` with the
-  /// unchecked `std::vector::operator[]` on indices that come from game memory.
-  /// Here every such lookup is `.get(..).copied().unwrap_or_default()` (or
+  /// Every lookup is `.get(..).copied().unwrap_or_default()` (or
   /// `unwrap_or(ECollisionMaterial(0))`) so a corrupt index degrades to a
   /// zero/origin value instead of panicking — the repo "OOB -> skip, never
   /// panic" convention.

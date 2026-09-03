@@ -1,22 +1,11 @@
-//! `WorldUniforms` + WGSL + `WorldPipelines` — ports
-//! `../primewatch2/src/gl/OpenGLShader.{hpp,cpp}` and the three GLSL shader
-//! strings in `WorldRenderer.cpp:31-113` (plus the per-frame uniform poke block
-//! at `WorldRenderer.cpp:338-406`).
+//! `WorldUniforms` + WGSL + `WorldPipelines` — the uniform block, the world
+//! shader, and the render pipelines (opaque + translucent, mesh + line), plus
+//! the per-frame uniform upload.
 
 use crate::gl::{Vert, as_bytes};
 
-/// Uniforms poked by `meshShader->setMat4` / `setVec3` in `WorldRenderer::render`
-/// (`WorldRenderer.cpp:338-350`): `model`, `view`, `projection`, `viewPos`,
-/// `lightDir`.
-///
-/// The C++ vertex shader computes the normal matrix in-shader via
-/// `transpose(inverse(model))`. WGSL has no `inverse()`, so it moves to a
-/// CPU-supplied `normal_matrix` uniform (sanctioned deviation, standard
-/// practice).
-///
-/// C++ passes `lightDir` already normalized
-/// (`setVec3("lightDir", glm::normalize(lightDir))`) — that stays the caller's
-/// (P8.4) job.
+/// Uniforms poked by `meshShader->setMat4` / `setVec3` in
+/// `WorldRenderer::render`: `model`, `view`, `projection`, `viewPos`, `lightDir`.
 ///
 /// `size_of::<WorldUniforms>() == 288`, align 16; field offsets match the WGSL
 /// `Uniforms` struct layout (see the module test).
@@ -52,8 +41,7 @@ impl Default for WorldUniforms {
 
 impl WorldUniforms {
   /// Build the uniform block from the matrices the caller already has, filling
-  /// `normal_matrix` from `model`. `light_dir` is taken as-is (caller normalizes,
-  /// per the C++ `glm::normalize(lightDir)`).
+  /// `normal_matrix` from `model`. `light_dir` is taken as-is (caller normalizes).
   pub fn from_matrices(
     model: glam::Mat4,
     view: glam::Mat4,
@@ -75,8 +63,8 @@ impl WorldUniforms {
   }
 }
 
-/// One WGSL module: `vs_main` (ports `meshVertShader`, shared), `fs_mesh` (ports
-/// `meshFragShader`) and `fs_line` (ports `lineFragShader`).
+/// One WGSL module: `vs_main` (from `meshVertShader`, shared), `fs_mesh` (from
+/// `meshFragShader`) and `fs_line` (from `lineFragShader`).
 ///
 /// **Gamma:** the fragment shaders write raw linear values, exactly like the
 /// C++ (which rendered into a plain, non-sRGB GL backbuffer). An earlier port
@@ -148,19 +136,17 @@ fn fs_line(in: VsOut) -> @location(0) vec4<f32> {
 "#;
 
 /// Cull-mode order for the mesh-pipeline arrays: `[0]` = no culling, `[1]` =
-/// back-face, `[2]` = front-face. Ports the `switch (culling)` in
-/// `WorldRenderer.cpp:357-369` — P8.4 selects a variant per `CullType` at draw
+/// back-face, `[2]` = front-face. Mirrors the `switch (culling)` in
+/// `WorldRenderer` — a variant is selected per `CullType` at draw
 /// (`front_face: Cw` is baked; lines are never culled).
 pub const CULL_MODES: [Option<wgpu::Face>; 3] =
   [None, Some(wgpu::Face::Back), Some(wgpu::Face::Front)];
 
 /// The mesh + line pipelines (opaque + translucent variants) plus the shared
-/// uniform buffer / bind group — ports `OpenGLShader`'s compile+link
-/// (`OpenGLShader.cpp:8-45`) and the GL state set in
-/// `WorldRenderer.cpp:352-403`.
+/// uniform buffer / bind group
 ///
-/// The two mesh pipelines exist in all three [`CULL_MODES`] variants (the GL
-/// code toggled `glCullFace` at draw time); pick one with [`WorldPipelines::mesh`].
+/// The two mesh pipelines exist in all three [`CULL_MODES`] variants
+/// pick one with [`WorldPipelines::mesh`].
 pub struct WorldPipelines {
   pub uniform_buffer: wgpu::Buffer,
   pub bind_group: wgpu::BindGroup,
@@ -217,8 +203,6 @@ impl WorldPipelines {
       }],
     });
 
-    // ports `glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)`
-    // (`WorldRenderer.cpp:394-395`).
     let alpha_blend = wgpu::BlendState {
       color: wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::SrcAlpha,
@@ -245,22 +229,19 @@ impl WorldPipelines {
         },
         primitive: wgpu::PrimitiveState {
           topology,
-          // ports `glFrontFace(GL_CW)` (`WorldRenderer.cpp:355`).
           front_face: wgpu::FrontFace::Cw,
-          // P8.4: `CullType` BACK/FRONT/NONE selected per draw via `CULL_MODES`.
+          // `CullType` BACK/FRONT/NONE selected per draw via `CULL_MODES`.
           cull_mode,
           ..Default::default()
         },
         depth_stencil: Some(wgpu::DepthStencilState {
           format: depth_format,
-          // ports `glEnable(GL_DEPTH_TEST)` + `glDepthFunc(GL_LESS)` + the
-          // translucent `glDepthMask(GL_FALSE)` (`WorldRenderer.cpp:352-403`).
           depth_write_enabled: Some(depth_write),
           depth_compare: Some(wgpu::CompareFunction::Less),
           stencil: wgpu::StencilState::default(),
           bias: wgpu::DepthBiasState::default(),
         }),
-        // TODO(P8.4): MSAA — single-sample for now (matches `scene.rs`).
+        // MSAA — single-sample for now.
         multisample: wgpu::MultisampleState::default(),
         fragment: Some(wgpu::FragmentState {
           module: &shader,
@@ -320,8 +301,7 @@ impl WorldPipelines {
     }
   }
 
-  /// Ports the per-frame `setMat4` / `setVec3` block
-  /// (`WorldRenderer.cpp:338-350`).
+  /// The per-frame `setMat4` / `setVec3` block.
   pub fn set_uniforms(&self, queue: &wgpu::Queue, u: &WorldUniforms) {
     queue.write_buffer(&self.uniform_buffer, 0, as_bytes(std::slice::from_ref(u)));
   }
