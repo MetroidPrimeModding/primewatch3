@@ -643,7 +643,7 @@ impl WorldRenderer {
     let pipelines = WorldPipelines::new(device, WORLD_COLOR_FORMAT, WORLD_DEPTH_FORMAT);
     Self {
       aspect: 0.0,
-      fov: 45.0,
+      fov: 45.0f32.to_radians(),
       z_near: 0.1,
       z_far: 10000.0,
       yaw: 0.0,
