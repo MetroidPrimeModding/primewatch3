@@ -28,38 +28,15 @@ or whether some other path compensated). Easiest to judge once D2's world view i
 ### D2 — Scaffold + world view render correctness
 _(covers the old P1.2 / P1.3 / P8.4.2 checklists)_
 
-- [X] `cargo run` opens a 1200×800 window titled "Prime Watch 2" with a black background.
-- [X] An egui window titled "Prime Watch" shows `Loaded 211 structs and 36 enums`; stdout prints
-      the same line on startup.
-- [X] Resizing the window does not panic and egui content is not stretched/garbled; closing the
-      window exits cleanly (exit code 0).
-- [X] The "World" panel shows 3D content (in the P1.3 spike: a rotating cube on a dark-blue clear,
-      distinct from the black window background). Resizing the OS window / panel resizes the 3D
-      content within ~1 frame with no stretching, garbling, aspect distortion, or panic.
-- [X] Collapsing / shrinking the "World" panel to near-zero does not panic.
-- [X] With `mem1.raw` loaded, the World view shows room collision geometry (grey/green/tinted tris
-      with dark edge lines), white AABB wireframe boxes around loaded areas, and the coloured
-      camera-frustum line set.
-- [X] The translucent pink "last known non-colliding" box renders at the player position.
 - [ ] Colours look right — the world view is **not** double-gamma'd (too dark / washed out) vs the
       egui chrome. (P8.2 applies `linear_to_srgb` in the world shader for the linear `Rgba8Unorm`
       egui composite target; confirm the composite does not double-encode.)
-- [X] Cube / mesh winding is not inside-out (winding vs `cull_mode` never analytically verified).
 
 ---
 
 ## Manual verification — needs a live Dolphin + Metroid Prime 1
 
 ### P2.3 — Memory-access attach against a live Dolphin — `BLOCKED (needs user + live Dolphin)`
-
-**POSIX (Linux/macOS):**
-- [ ] With MP1 running in Dolphin: `get_dolphin_pids()` returns its pid; `attach_to_process(pid)`
-      returns `true`.
-- [X] `dolphin_memcpy(&mut buf, 0, 0x1800000)` fills a `0x1800000`-byte buffer; `&buf[0..6] ==
-      b"GM8E01"` (matches `../primewatch2/mem1.raw` first bytes) and a live field (e.g. the
-      `g_stateManager` chain) reads sanely.
-- [X] Dropping / re-attaching does not leak (check `/proc/<our-pid>/maps` shrinks after
-      `detach_from_process`).
 
 **Windows:**
 - [ ] `get_dolphin_pids()` returns Dolphin's pid; `attach_to_process(pid)` returns `true` and logs
@@ -72,17 +49,7 @@ _(covers the old P1.2 / P1.3 / P8.4.2 checklists)_
 ### D3 — Camera modes, menus, and Camera Controls window
 _(old P8.4.2 / P8.4.6 checklists)_
 
-- [X] `CameraMode::GameCam` matches the in-game camera; `FollowPlayer` frames the player (subject
-      to D1).
-- [X] Menu bar renders at the top; Culling / Camera / Triggers / Actors menus open and their items
-      toggle.
-- [X] Selecting a Culling item visibly changes collision-mesh face culling.
-- [X] Camera → Follow Player shows Top/Center/Bottom; Detached shows the Speed slider + "Show camera
-      controls"; toggling the latter opens/closes the Camera Controls window.
-- [X] Camera Controls Yaw/Pitch drags read out in degrees and move the detached camera correctly;
-      yaw wraps at ±360, pitch clamps at ±89.
 - [ ] Camera orbit/zoom responds to input (arrow keys all modes, WASD/QE in Detached).
-- [X] Trigger / Actor checkboxes change which entities draw in the world view.
 
 ### D4 — Entity rendering
 _(old P8.4.3 / P8.4.4 / P8.4.5 checklists)_
@@ -118,7 +85,6 @@ _(old P7.1 / P9.1 / P9.2 checklists)_
 - [ ] Shift+1–5 record player ghosts and Ctrl+1–5 clear them.
 - [ ] "Reload Definitions" / the NOT-LOADED "Reload" button reload `prime_defs/` and update the
       status text.
-- [X] Live-Dolphin attach path works end-to-end (only the `.raw` load path is verified).
 - [ ] Mouse capture grabs/hides the cursor only on the button-down→capture transition, not every
       frame.
 

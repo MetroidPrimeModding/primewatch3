@@ -1,5 +1,14 @@
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
+/// Lowercased `exe` file-stem prefix identifying a Dolphin process.
+/// Linux/macOS: the emulator binary is `dolphin-emu` (also `dolphin-emu-nogui`,
+/// `dolphin-emu-qt2`, …) — must NOT be just `dolphin`, which is KDE's file manager.
+/// Windows: the binary is `Dolphin.exe`, whose stem is `dolphin`.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const DOLPHIN_STEM_PREFIX: &str = "dolphin-emu";
+#[cfg(target_os = "windows")]
+const DOLPHIN_STEM_PREFIX: &str = "dolphin";
+
 /// Copy cap: the amount of emulated RAM (MEM1) the game snapshot mirrors.
 /// C++ `MemoryAccess.hpp:7` — `constexpr int DOLPHIN_MEMORY_SIZE = 0x1800000`.
 pub const DOLPHIN_MEMORY_SIZE: usize = 0x1800000;
@@ -59,13 +68,19 @@ impl DolphinMemoryAccess {
       .processes()
       .iter()
       .filter_map(|(&pid, process)| {
+        // On Linux, sysinfo lists every thread (`/proc/<pid>/task/<tid>`) as its
+        // own `Process` sharing the parent's `exe()`. Those have a `thread_kind`;
+        // real processes have `None`. Skip threads so we return one PID per
+        // Dolphin instance, not one per Dolphin thread.
+        if process.thread_kind().is_some() {
+          return None;
+        }
         let exe = process.exe()?;
         // C++ `getDolphinPids` matches the Linux binary `dolphin-emu`
-        // (`MemoryAccess.cpp:44`) or the Windows `Dolphin.exe` (`:230`). Match the
-        // lowercased file stem against `dolphin` so a single path covers both plus
-        // `dolphin-emu-nogui` etc.
+        // (`MemoryAccess.cpp:44`) or the Windows `Dolphin.exe` (`:230`).
         let stem = exe.file_stem()?.to_str()?.to_ascii_lowercase();
-        if stem.starts_with("dolphin") {
+
+        if stem.starts_with(DOLPHIN_STEM_PREFIX) {
           Some(pid)
         } else {
           None
