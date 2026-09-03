@@ -50,8 +50,8 @@ _(covers the old P1.2 / P1.3 / P8.4.2 checklists)_
 _(old P8.4.2 / P8.4.6 checklists)_
 
 - [ ] Camera orbit/zoom responds to input (arrow keys all modes, WASD/QE in Detached).
-- [ ] Mouse look: **drag on the "World" image** orbits the camera ("grab-the-world" — drag right
-      carries the scene right); **scroll while hovering it** zooms. (Reworked 2026-09-02: camera
+- [ ] Mouse look: **drag on the "World" image** orbits the camera (FPS-style — drag right looks
+      right); arrow-key yaw matches that direction; **scroll while hovering it** zooms. (Reworked 2026-09-02: camera
       look/zoom is now driven by that image widget's own egui drag/scroll response, one-frame
       lagged like `world_view_px`. The old cursor-grab + raw `DeviceEvent::MouseMotion` +
       global `egui_wants_pointer_input()` path is gone — it never delivered motion on Wayland

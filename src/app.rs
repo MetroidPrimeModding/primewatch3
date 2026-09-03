@@ -127,12 +127,11 @@ impl InputState {
     }
 
     // `PrimeWatchInput.cpp:168-180` — mouse look + wheel zoom, driven by the
-    // "World" image's own drag/scroll response (`world_view`). Yaw sign is
-    // "grab-the-world": dragging right carries the scene right (opposite of the
-    // C++ `yawSpeed = -0.005`, which assumed FPS-style look). `scroll` is in
+    // "World" image's own drag/scroll response (`world_view`). Yaw uses the C++
+    // `yawSpeed = -0.005` (FPS-style: drag right → look right). `scroll` is in
     // egui points (~50/notch) vs the C++ `io.MouseWheel` ~1/notch.
     wi.cam_pitch = world_view.drag.1 * 0.005;
-    wi.cam_yaw = world_view.drag.0 * 0.005;
+    wi.cam_yaw = world_view.drag.0 * -0.005;
     wi.cam_zoom = world_view.scroll / 50.0 * -2.0;
 
     // `PrimeWatchInput.cpp:182-232` — keyboard camera control.
@@ -145,11 +144,13 @@ impl InputState {
       if down(KeyCode::ArrowDown) {
         wi.cam_pitch -= 0.03;
       }
+      // Deviation from C++ (`LEFT += yawSpeed`, `RIGHT -= yawSpeed`): signs
+      // flipped so arrow-key yaw matches the mouse-drag direction.
       if down(KeyCode::ArrowLeft) {
-        wi.cam_yaw += 0.03;
+        wi.cam_yaw -= 0.03;
       }
       if down(KeyCode::ArrowRight) {
-        wi.cam_yaw -= 0.03;
+        wi.cam_yaw += 0.03;
       }
       if down(KeyCode::PageUp) {
         wi.cam_zoom -= 0.5;
@@ -1290,15 +1291,15 @@ mod tests {
   }
 
   #[test]
-  fn world_drag_drives_yaw_pitch_grab_the_world_sign() {
+  fn world_drag_drives_yaw_pitch() {
     let s = state();
     let wv = WorldViewInput {
       drag: (10.0, 4.0),
       scroll: 0.0,
     };
     let plan = s.plan(false, CameraMode::FollowPlayer, wv);
-    // Yaw is positive with a rightward drag ("grab-the-world").
-    assert!((plan.world_input.cam_yaw - (10.0 * 0.005)).abs() < 1e-6);
+    // Rightward drag → negative yaw (FPS-style: look right).
+    assert!((plan.world_input.cam_yaw - (10.0 * -0.005)).abs() < 1e-6);
     assert!((plan.world_input.cam_pitch - (4.0 * 0.005)).abs() < 1e-6);
   }
 
@@ -1345,7 +1346,8 @@ mod tests {
 
     let plan = s.plan(false, CameraMode::FollowPlayer, WorldViewInput::default());
     assert_eq!(plan.detached_move, (0.0, 0.0, 0.0));
-    assert!((plan.world_input.cam_yaw - 0.03).abs() < 1e-6);
+    // ArrowLeft → negative yaw (flipped from the C++ sign to match mouse drag).
+    assert!((plan.world_input.cam_yaw - -0.03).abs() < 1e-6);
 
     let plan = s.plan(false, CameraMode::Detached, WorldViewInput::default());
     assert_eq!(plan.detached_move, (1.0, 0.0, 0.0));
