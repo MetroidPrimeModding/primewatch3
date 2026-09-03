@@ -6,6 +6,7 @@ mod inspector;
 mod mem;
 mod object_filter;
 mod structs;
+mod toast;
 mod ui_state;
 mod world;
 

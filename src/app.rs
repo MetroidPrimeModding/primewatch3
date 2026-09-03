@@ -32,6 +32,7 @@ use crate::mem::globals::{get_main, get_memory_card, get_state_manager, get_twea
 use crate::mem::vtables::vtable_class_name;
 use crate::object_filter::ObjectFilter;
 use crate::structs::prime_structs::{GameInstance, GameStructs};
+use crate::toast::Toasts;
 use crate::ui_state;
 use crate::world::renderer::{CameraMode, WorldInput, WorldRenderer};
 
@@ -200,6 +201,7 @@ struct FrameState<'a> {
   structs: &'a mut GameStructs,
   defs_loaded: &'a mut bool,
   status_text: &'a mut String,
+  toasts: &'a mut Toasts,
   pids: &'a mut Vec<Pid>,
   show_raw_data_view: &'a mut bool,
   show_demo_view: &'a mut bool,
@@ -258,6 +260,9 @@ struct App {
   /// C++ `static set<uint32_t> unknowns` in `drawObjectsWindow` — session log of
   /// every unrecognised vtable address. Never shrinks.
   unknown_vtables: BTreeSet<u32>,
+  /// Ephemeral corner notifications (replaces the old always-on "Prime Watch"
+  /// status window). The `NOT LOADED` error panel is still a real window.
+  toasts: Toasts,
   /// Input accumulated between frames.
   input: InputState,
   /// Render state — `None` until `resumed` (Wayland/macOS require deferred creation).
@@ -311,6 +316,11 @@ impl App {
       println!("{} Dolphin processes found; not auto-attaching", pids.len());
     }
 
+    let mut toasts = Toasts::default();
+    if defs_loaded {
+      toasts.info(&status_text);
+    }
+
     Self {
       mem,
       dolphin,
@@ -319,6 +329,7 @@ impl App {
       defs_loaded,
       status_text,
       pids,
+      toasts,
       show_raw_data_view: false,
       show_demo_view: false,
       inspector: Inspector::new(),
@@ -344,6 +355,7 @@ impl App {
       objects,
       defs_loaded,
       status_text,
+      toasts,
       pids,
       show_raw_data_view,
       show_demo_view,
@@ -418,6 +430,7 @@ impl App {
       structs,
       defs_loaded,
       status_text,
+      toasts,
       pids,
       show_raw_data_view,
       show_demo_view,
@@ -1038,19 +1051,16 @@ impl AppWindow {
       }
     }
 
-    // --- status / NOT LOADED window (C++ `doFrame:247-256`) ------------------
-    let title = if defs_loaded {
-      "Prime Watch"
-    } else {
-      "NOT LOADED"
-    };
-    egui::Window::new(title)
-      .resizable(false)
-      .collapsible(false)
-      .show(&egui_ctx, |ui| {
-        if defs_loaded {
-          ui.label(fs.status_text.as_str());
-        } else {
+    // --- NOT LOADED error panel (C++ `doFrame:247-256`) ---------------------
+    //
+    // Only shown while defs are missing — it's a blocking error with a Reload
+    // action. The former loaded-state "Prime Watch" window was pure noise; the
+    // "Loaded N structs" confirmation is a toast now (`App::new` / `ReloadDefs`).
+    if !defs_loaded {
+      egui::Window::new("NOT LOADED")
+        .resizable(false)
+        .collapsible(false)
+        .show(&egui_ctx, |ui| {
           ui.label("Script definitions are not currently loaded.");
           ui.label("These are required to function.");
           ui.label("Current error:");
@@ -1058,8 +1068,8 @@ impl AppWindow {
           if ui.button("Reload").clicked() {
             menu_actions.push(MenuAction::ReloadDefs);
           }
-        }
-      });
+        });
+    }
 
     // --- the offscreen 3D target + screen-space text overlays ---------------
     //
@@ -1182,6 +1192,9 @@ impl AppWindow {
           self.world.render_status_windows(ctx, ui);
         });
     }
+
+    // Ephemeral notifications, on top of everything else.
+    fs.toasts.ui(&egui_ctx);
 
     let mut full_output = self.egui_ctx.end_pass();
 
@@ -1316,10 +1329,12 @@ fn apply_menu_action(action: MenuAction, fs: &mut FrameState) {
           );
           *fs.defs_loaded = true;
           println!("{}", fs.status_text);
+          fs.toasts.info(fs.status_text.as_str());
         }
         Err(err) => {
           *fs.defs_loaded = false;
           eprintln!("Error loading structs: {err}");
+          fs.toasts.error(format!("Failed to load definitions: {err}"));
           *fs.status_text = err;
         }
       }
