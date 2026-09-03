@@ -46,23 +46,6 @@ _(covers the old P1.2 / P1.3 / P8.4.2 checklists)_
       recovers without a leak (Task Manager handle count stable).
 - [ ] Linux/macOS behaviour is unchanged (POSIX path untouched).
 
-### D5 — Inspector tree + object table + watch windows
-_(old P7.1 / P9.1 / P9.2 checklists)_
-
-- [ ] A `CStateManager` tree in a watch window expands; primitive leaves show `{dec}/{hex}`; enums
-      resolve names; `rstl::vector` shows `size/max size` + a working index spinner; click-to-copy
-      puts the label on the clipboard.
-- [ ] "Objects" window shows a non-zero count; "List of types" lists vtables with sane
-      active/inactive splits; clicking an address row copies `{0x...., ""},`.
-- [ ] "Copy unknowns (N)" grows N only as new unknown vtables appear; copies the block.
-- [ ] Filter box: `@CPlayer` narrows to the player row; `-Effect` excludes; empty shows all
-      (respecting "Show active only").
-- [ ] Clicking an entity row opens a watch window titled `<Type> <eid hex>`; it tracks the entity
-      across frames (via `last_known_uid`, then `eid`), shows "Not loaded" when the entity despawns,
-      and closes cleanly via the titlebar X (no panic when several close at once).
-- [ ] Hovering an entity row / having a watch window open highlights that entity in the 3D view
-      (one-frame lag not perceptible).
-
 ### D6 — P9.1 items still untested (had a partial pass 2026-09-01)
 
 - [ ] "Reload Definitions" / the NOT-LOADED "Reload" button reload `prime_defs/` and update the

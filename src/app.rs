@@ -678,25 +678,29 @@ fn render_objects_window(
       .id(egui::Id::new(("watch", eid)))
       .min_size([240.0, 200.0])
       .show(egui_ctx, |ui| {
-        // C++ `:678-696` — resolve by last-known uid, then by editor ID, then
-        // give up.
-        let mut handled = false;
-        if let Some(entity) = uid_to_entity.get(&last_known_uid) {
-          let e_eid = entity.member(ctx, "editorID").read_u32(ctx).unwrap_or(0);
-          if e_eid == eid && entity.type_name == type_name {
-            inspector.render(ui, ctx, &type_name, entity, false);
-            handled = true;
-          }
-        }
-        if !handled && let Some(entity) = eid_to_entity.get(&eid) {
-          let uid = entity.member(ctx, "uniqueID").read_u16(ctx).unwrap_or(0);
-          new_last_known = Some(uid);
-          inspector.render(ui, ctx, &type_name, entity, false);
-          handled = true;
-        }
-        if !handled {
-          ui.label("Not loaded");
-        }
+        egui::ScrollArea::vertical()
+          .auto_shrink([false, true])
+          .show(ui, |ui| {
+            // C++ `:678-696` — resolve by last-known uid, then by editor ID, then
+            // give up.
+            let mut handled = false;
+            if let Some(entity) = uid_to_entity.get(&last_known_uid) {
+              let e_eid = entity.member(ctx, "editorID").read_u32(ctx).unwrap_or(0);
+              if e_eid == eid && entity.type_name == type_name {
+                inspector.render(ui, ctx, &type_name, entity, false);
+                handled = true;
+              }
+            }
+            if !handled && let Some(entity) = eid_to_entity.get(&eid) {
+              let uid = entity.member(ctx, "uniqueID").read_u16(ctx).unwrap_or(0);
+              new_last_known = Some(uid);
+              inspector.render(ui, ctx, &type_name, entity, false);
+              handled = true;
+            }
+            if !handled {
+              ui.label("Not loaded");
+            }
+          });
       });
 
     if let Some(uid) = new_last_known {
@@ -1095,16 +1099,20 @@ impl AppWindow {
     // --- globals inspector (C++ `doImGui:314-320`) -------------------------
     if let Some(ctx) = ctx.as_ref() {
       egui::Window::new("globals").show(&egui_ctx, |ui| {
-        let sm = get_state_manager();
-        fs.inspector.render(ui, ctx, "g_stateManager", &sm, true);
-        let main = get_main();
-        fs.inspector.render(ui, ctx, "g_main", &main, true);
-        if let Some(mc) = get_memory_card(ctx) {
-          fs.inspector.render(ui, ctx, "gp_MemoryCard", &mc, true);
-        }
-        if let Some(tp) = get_tweak_player(ctx) {
-          fs.inspector.render(ui, ctx, "gp_TweakPlayer", &tp, true);
-        }
+        egui::ScrollArea::vertical()
+          .auto_shrink([false, true])
+          .show(ui, |ui| {
+            let sm = get_state_manager();
+            fs.inspector.render(ui, ctx, "g_stateManager", &sm, true);
+            let main = get_main();
+            fs.inspector.render(ui, ctx, "g_main", &main, true);
+            if let Some(mc) = get_memory_card(ctx) {
+              fs.inspector.render(ui, ctx, "gp_MemoryCard", &mc, true);
+            }
+            if let Some(tp) = get_tweak_player(ctx) {
+              fs.inspector.render(ui, ctx, "gp_TweakPlayer", &tp, true);
+            }
+          });
       });
 
       // --- Objects window + per-editor-ID watch windows (C++
