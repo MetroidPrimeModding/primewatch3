@@ -50,6 +50,12 @@ _(covers the old P1.2 / P1.3 / P8.4.2 checklists)_
 _(old P8.4.2 / P8.4.6 checklists)_
 
 - [ ] Camera orbit/zoom responds to input (arrow keys all modes, WASD/QE in Detached).
+- [ ] Mouse look: **drag on the "World" image** orbits the camera ("grab-the-world" — drag right
+      carries the scene right); **scroll while hovering it** zooms. (Reworked 2026-09-02: camera
+      look/zoom is now driven by that image widget's own egui drag/scroll response, one-frame
+      lagged like `world_view_px`. The old cursor-grab + raw `DeviceEvent::MouseMotion` +
+      global `egui_wants_pointer_input()` path is gone — it never delivered motion on Wayland
+      and left scroll-to-zoom dead over the World window.)
 
 ### D4 — Entity rendering
 _(old P8.4.3 / P8.4.4 / P8.4.5 checklists)_
@@ -85,13 +91,12 @@ _(old P7.1 / P9.1 / P9.2 checklists)_
 - [ ] Shift+1–5 record player ghosts and Ctrl+1–5 clear them.
 - [ ] "Reload Definitions" / the NOT-LOADED "Reload" button reload `prime_defs/` and update the
       status text.
-- [ ] Mouse capture grabs/hides the cursor only on the button-down→capture transition, not every
-      frame.
 
 **Known non-blocking gaps from P9.1 (polish, not verification):**
 1. Camera Controls window has no titlebar-X `.open()` binding — dismiss via the Camera menu toggle.
-2. Scroll-to-zoom is dead while the pointer merely hovers the "World" egui window
-   (`egui_wants_pointer_input()` is global; gate on the World `Image` response instead).
+2. ~~Scroll-to-zoom dead over the "World" window~~ — fixed 2026-09-02 (see D3); camera
+   look/zoom now reads the World `Image` widget's own drag/scroll response, and the
+   cursor-grab / raw-device-motion path was removed.
 3. `rfd 0.15` pulls a heavy `zbus`/`ashpd` async tree and `LoadFromFile` blocks the event loop —
    revisit feature-trimming / the async API (see D7).
 

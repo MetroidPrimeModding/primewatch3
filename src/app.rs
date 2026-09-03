@@ -17,12 +17,10 @@ use std::sync::Arc;
 use sysinfo::Pid;
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::{
-  DeviceEvent, DeviceId, ElementState, MouseButton, MouseScrollDelta, WindowEvent,
-};
+use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
-use winit::window::{CursorGrabMode, Window, WindowId};
+use winit::window::{Window, WindowId};
 
 use crate::ctx::Ctx;
 use crate::inspector::Inspector;
@@ -69,14 +67,23 @@ struct WatchedEditorId {
 struct InputState {
   keys_down: HashSet<KeyCode>,
   modifiers: ModifiersState,
-  /// Accumulated raw mouse motion since the last frame (`io.MouseDelta`).
-  mouse_delta: (f32, f32),
-  /// Accumulated scroll-wheel lines since the last frame (`io.MouseWheel`).
+}
+
+/// One-frame-lagged interaction state of the "World" image widget, produced by
+/// the egui pass and consumed by [`InputState::plan`] on the next frame (same
+/// lag pattern as `world_view_px`).
+///
+/// The C++ polled the global `io.MouseDelta` / `io.MouseWheel` because the 3D
+/// view was drawn on the bare window background; here it is an `egui::Image`, so
+/// camera look/zoom is driven by *that widget's* drag/scroll response instead of
+/// a full-window `WantCaptureMouse` gate + `CursorGrabMode` + raw device motion
+/// (the latter isn't delivered on Wayland).
+#[derive(Default, Clone, Copy)]
+struct WorldViewInput {
+  /// Pointer drag delta over the image since the last frame, in egui points.
+  drag: (f32, f32),
+  /// Scroll delta while hovering the image, in egui points.
   scroll: f32,
-  left_down: bool,
-  right_down: bool,
-  /// `PrimeWatchInput::capturedMouse` — sticky while a button is held.
-  captured_mouse: bool,
 }
 
 /// Result of [`InputState::plan`] — a [`WorldInput`] plus the direct
@@ -84,7 +91,6 @@ struct InputState {
 /// detached-camera movement) and the resolved mouse-capture state.
 struct InputPlan {
   world_input: WorldInput,
-  captured_mouse: bool,
   ghost_record: [bool; 5],
   ghost_clear: [bool; 5],
   /// Net WASD/QE contribution for `CameraMode::Detached` (`forward = W - S`,
@@ -94,17 +100,17 @@ struct InputPlan {
 
 impl InputState {
   /// Ports `PrimeWatch::processInput` (`PrimeWatchInput.cpp:126-233`). Pure: the
-  /// caller applies the plan and clears the accumulated deltas.
-  fn plan(&self, wants_keyboard: bool, wants_mouse: bool, camera_mode: CameraMode) -> InputPlan {
-    // `PrimeWatchInput.cpp:133-140` — sticky capture.
-    let mut captured = self.captured_mouse;
-    if !wants_mouse && (self.left_down || self.right_down) {
-      captured = true;
-    }
-    if !self.left_down && !self.right_down {
-      captured = false;
-    }
-
+  /// caller applies the plan.
+  ///
+  /// `world_view` carries last frame's drag/scroll over the "World" image — the
+  /// port's replacement for the C++ `capturedMouse` + global `io.MouseDelta` /
+  /// `io.MouseWheel` polling (see [`WorldViewInput`]).
+  fn plan(
+    &self,
+    wants_keyboard: bool,
+    camera_mode: CameraMode,
+    world_view: WorldViewInput,
+  ) -> InputPlan {
     let mut wi = WorldInput::default();
 
     // `PrimeWatchInput.cpp:144-157` — Shift+N records ghost N, Ctrl+N clears it.
@@ -120,14 +126,14 @@ impl InputState {
       }
     }
 
-    // `PrimeWatchInput.cpp:168-180` — mouse look + wheel zoom.
-    if captured {
-      wi.cam_pitch = self.mouse_delta.1 * 0.005;
-      wi.cam_yaw = self.mouse_delta.0 * -0.005;
-    }
-    if !wants_mouse {
-      wi.cam_zoom = self.scroll * -2.0;
-    }
+    // `PrimeWatchInput.cpp:168-180` — mouse look + wheel zoom, driven by the
+    // "World" image's own drag/scroll response (`world_view`). Yaw sign is
+    // "grab-the-world": dragging right carries the scene right (opposite of the
+    // C++ `yawSpeed = -0.005`, which assumed FPS-style look). `scroll` is in
+    // egui points (~50/notch) vs the C++ `io.MouseWheel` ~1/notch.
+    wi.cam_pitch = world_view.drag.1 * 0.005;
+    wi.cam_yaw = world_view.drag.0 * 0.005;
+    wi.cam_zoom = world_view.scroll / 50.0 * -2.0;
 
     // `PrimeWatchInput.cpp:182-232` — keyboard camera control.
     let mut detached_move = (0.0_f32, 0.0_f32, 0.0_f32);
@@ -163,7 +169,6 @@ impl InputState {
 
     InputPlan {
       world_input: wi,
-      captured_mouse: captured,
       ghost_record,
       ghost_clear,
       detached_move,
@@ -356,15 +361,11 @@ impl App {
       mem.update_from_dolphin(dolphin);
 
       // Consume accumulated input into a plan, then apply it (ghost record/clear,
-      // detached-camera move, mouse grab). `wants_*` gate keyboard/mouse the way
-      // ImGui's `WantCapture*` did.
+      // detached-camera move). `wants_kb` gates the keyboard the way ImGui's
+      // `WantCaptureKeyboard` did; camera look/zoom comes from last frame's
+      // drag/scroll over the "World" image (`world_view_input`).
       let wants_kb = window.egui_ctx.egui_wants_keyboard_input();
-      let wants_mouse = window.egui_ctx.egui_wants_pointer_input();
-      let prev_captured = input.captured_mouse;
-      let plan = input.plan(wants_kb, wants_mouse, window.world.camera_mode);
-      input.captured_mouse = plan.captured_mouse;
-      input.mouse_delta = (0.0, 0.0);
-      input.scroll = 0.0;
+      let plan = input.plan(wants_kb, window.world.camera_mode, window.world_view_input);
 
       for (i, &rec) in plan.ghost_record.iter().enumerate() {
         if rec {
@@ -379,9 +380,6 @@ impl App {
       let (mf, mr, mu) = plan.detached_move;
       if mf != 0.0 || mr != 0.0 || mu != 0.0 {
         window.world.move_detached_camera(mf, mr, mu);
-      }
-      if plan.captured_mouse != prev_captured {
-        apply_cursor_grab(&window.window, plan.captured_mouse);
       }
 
       // Walk the live object list, then update the world.
@@ -448,43 +446,12 @@ impl App {
         }
       }
       WindowEvent::ModifiersChanged(m) => self.input.modifiers = m.state(),
-      WindowEvent::MouseInput { state, button, .. } => {
-        let pressed = *state == ElementState::Pressed;
-        match button {
-          MouseButton::Left => self.input.left_down = pressed,
-          MouseButton::Right => self.input.right_down = pressed,
-          _ => {}
-        }
-      }
-      WindowEvent::MouseWheel { delta, .. } => {
-        let dy = match delta {
-          MouseScrollDelta::LineDelta(_, y) => *y,
-          // ImGui reports wheel in "lines"; approximate pixel deltas.
-          MouseScrollDelta::PixelDelta(p) => (p.y / 50.0) as f32,
-        };
-        self.input.scroll += dy;
-      }
       WindowEvent::Focused(false) => {
-        // Drop held keys/buttons so nothing sticks while unfocused.
+        // Drop held keys so nothing sticks while unfocused.
         self.input.keys_down.clear();
-        self.input.left_down = false;
-        self.input.right_down = false;
       }
       _ => {}
     }
-  }
-}
-
-/// Grab/release the pointer for detached-camera mouse look.
-fn apply_cursor_grab(window: &Window, captured: bool) {
-  if captured {
-    let _ = window
-      .set_cursor_grab(CursorGrabMode::Locked)
-      .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
-    window.set_cursor_visible(false);
-  } else {
-    let _ = window.set_cursor_grab(CursorGrabMode::None);
-    window.set_cursor_visible(true);
   }
 }
 
@@ -792,20 +759,6 @@ impl ApplicationHandler for App {
     }
   }
 
-  fn device_event(
-    &mut self,
-    _event_loop: &ActiveEventLoop,
-    _device_id: DeviceId,
-    event: DeviceEvent,
-  ) {
-    // Raw mouse motion — used for detached-camera look while the pointer is
-    // grabbed (`io.MouseDelta` in `PrimeWatchInput.cpp:172`).
-    if let DeviceEvent::MouseMotion { delta } = event {
-      self.input.mouse_delta.0 += delta.0 as f32;
-      self.input.mouse_delta.1 += delta.1 as f32;
-    }
-  }
-
   fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
     // TODO(P9): only redraw on demand / frame-pace instead of spinning.
     if let Some(window) = self.window.as_ref() {
@@ -835,6 +788,9 @@ struct AppWindow {
   /// `WorldRenderer::update` this frame (documented one-frame lag). Seeded with
   /// the initial target size.
   world_view_px: (u32, u32),
+  /// Last frame's drag/scroll over the "World" image — fed to [`InputState::plan`]
+  /// this frame (same one-frame lag as `world_view_px`).
+  world_view_input: WorldViewInput,
 }
 
 impl AppWindow {
@@ -908,6 +864,7 @@ impl AppWindow {
       world,
       world_texture: None,
       world_view_px: (800, 600),
+      world_view_input: WorldViewInput::default(),
     })
   }
 
@@ -1079,13 +1036,26 @@ impl AppWindow {
 
     // --- the offscreen 3D target + screen-space text overlays ---------------
     let mut world_view_size_pts: Option<egui::Vec2> = None;
+    let mut world_view_input = WorldViewInput::default();
     egui::Window::new("World")
       .default_size([640.0, 480.0])
       .show(&egui_ctx, |ui| {
         let avail = ui.available_size();
         world_view_size_pts = Some(avail);
-        let resp = ui.image(egui::load::SizedTexture::new(world_texture, avail));
+        // Sense drag/scroll on the image itself — this is the camera look/zoom
+        // input (see `WorldViewInput`), consumed next frame by `InputState::plan`.
+        let resp = ui.add(
+          egui::Image::new(egui::load::SizedTexture::new(world_texture, avail))
+            .sense(egui::Sense::click_and_drag()),
+        );
         let rect = resp.rect;
+        if resp.dragged() {
+          let d = resp.drag_delta();
+          world_view_input.drag = (d.x, d.y);
+        }
+        if resp.hovered() {
+          world_view_input.scroll = ui.input(|i| i.smooth_scroll_delta.y);
+        }
 
         // Paint the queued overlays (C++ `ImDrawList::AddText` in the per-class
         // draw fns). `screen_pos` is in world-target physical pixels (Y-down,
@@ -1106,6 +1076,7 @@ impl AppWindow {
           );
         }
       });
+    self.world_view_input = world_view_input;
 
     // --- globals inspector (C++ `doImGui:314-320`) -------------------------
     if let Some(ctx) = ctx.as_ref() {
@@ -1319,37 +1290,36 @@ mod tests {
   }
 
   #[test]
-  fn capture_engages_on_button_when_egui_idle_and_releases_on_button_up() {
-    let mut s = state();
-    s.left_down = true;
-    let plan = s.plan(false, false, CameraMode::FollowPlayer);
-    assert!(plan.captured_mouse);
-
-    s.captured_mouse = true;
-    s.left_down = false;
-    let plan = s.plan(false, false, CameraMode::FollowPlayer);
-    assert!(!plan.captured_mouse);
-  }
-
-  #[test]
-  fn egui_wanting_mouse_blocks_capture_and_zoom() {
-    let mut s = state();
-    s.left_down = true;
-    s.scroll = 3.0;
-    let plan = s.plan(false, true, CameraMode::FollowPlayer);
-    assert!(!plan.captured_mouse);
-    assert_eq!(plan.world_input.cam_zoom, 0.0);
-  }
-
-  #[test]
-  fn mouse_delta_drives_pitch_yaw_only_while_captured() {
-    let mut s = state();
-    s.captured_mouse = true;
-    s.left_down = true;
-    s.mouse_delta = (10.0, 4.0);
-    let plan = s.plan(false, false, CameraMode::FollowPlayer);
-    assert!((plan.world_input.cam_yaw - (10.0 * -0.005)).abs() < 1e-6);
+  fn world_drag_drives_yaw_pitch_grab_the_world_sign() {
+    let s = state();
+    let wv = WorldViewInput {
+      drag: (10.0, 4.0),
+      scroll: 0.0,
+    };
+    let plan = s.plan(false, CameraMode::FollowPlayer, wv);
+    // Yaw is positive with a rightward drag ("grab-the-world").
+    assert!((plan.world_input.cam_yaw - (10.0 * 0.005)).abs() < 1e-6);
     assert!((plan.world_input.cam_pitch - (4.0 * 0.005)).abs() < 1e-6);
+  }
+
+  #[test]
+  fn world_scroll_drives_zoom() {
+    let s = state();
+    let wv = WorldViewInput {
+      drag: (0.0, 0.0),
+      scroll: 50.0,
+    };
+    let plan = s.plan(false, CameraMode::FollowPlayer, wv);
+    assert!((plan.world_input.cam_zoom - (50.0 / 50.0 * -2.0)).abs() < 1e-6);
+  }
+
+  #[test]
+  fn no_world_view_input_means_no_camera_motion() {
+    let s = state();
+    let plan = s.plan(false, CameraMode::FollowPlayer, WorldViewInput::default());
+    assert_eq!(plan.world_input.cam_yaw, 0.0);
+    assert_eq!(plan.world_input.cam_pitch, 0.0);
+    assert_eq!(plan.world_input.cam_zoom, 0.0);
   }
 
   #[test]
@@ -1357,12 +1327,12 @@ mod tests {
     let mut s = state();
     s.keys_down.insert(KeyCode::Digit3);
     s.modifiers = ModifiersState::SHIFT;
-    let plan = s.plan(false, false, CameraMode::FollowPlayer);
+    let plan = s.plan(false, CameraMode::FollowPlayer, WorldViewInput::default());
     assert_eq!(plan.ghost_record, [false, false, true, false, false]);
     assert_eq!(plan.ghost_clear, [false; 5]);
 
     s.modifiers = ModifiersState::CONTROL;
-    let plan = s.plan(false, false, CameraMode::FollowPlayer);
+    let plan = s.plan(false, CameraMode::FollowPlayer, WorldViewInput::default());
     assert_eq!(plan.ghost_clear, [false, false, true, false, false]);
     assert_eq!(plan.ghost_record, [false; 5]);
   }
@@ -1373,11 +1343,11 @@ mod tests {
     s.keys_down.insert(KeyCode::KeyW);
     s.keys_down.insert(KeyCode::ArrowLeft);
 
-    let plan = s.plan(false, false, CameraMode::FollowPlayer);
+    let plan = s.plan(false, CameraMode::FollowPlayer, WorldViewInput::default());
     assert_eq!(plan.detached_move, (0.0, 0.0, 0.0));
     assert!((plan.world_input.cam_yaw - 0.03).abs() < 1e-6);
 
-    let plan = s.plan(false, false, CameraMode::Detached);
+    let plan = s.plan(false, CameraMode::Detached, WorldViewInput::default());
     assert_eq!(plan.detached_move, (1.0, 0.0, 0.0));
   }
 
@@ -1386,7 +1356,7 @@ mod tests {
     let mut s = state();
     s.keys_down.insert(KeyCode::KeyW);
     s.keys_down.insert(KeyCode::ArrowUp);
-    let plan = s.plan(true, false, CameraMode::Detached);
+    let plan = s.plan(true, CameraMode::Detached, WorldViewInput::default());
     assert_eq!(plan.detached_move, (0.0, 0.0, 0.0));
     assert_eq!(plan.world_input.cam_pitch, 0.0);
   }
