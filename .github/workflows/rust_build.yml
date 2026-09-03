@@ -81,7 +81,7 @@ jobs:
         tar -czf "${{ matrix.archive }}" primewatch3
 
     - name: Upload Artifacts
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
         name: primewatch3-${{ matrix.os }}
         path: primewatch3/**
