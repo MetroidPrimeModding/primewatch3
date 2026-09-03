@@ -902,14 +902,19 @@ impl WorldRenderer {
         Vec4::new(1.0, 0.5, 0.5, 0.5),
       ));
 
-    self.render_buff.set_transform(Mat4::IDENTITY);
-    self
-      .render_buff
-      .add_lines(&shapes::generate_camera_line_segments(
-        self.game_cam.perspective,
-        self.game_cam.transform,
-        self.cam_line_length,
-      ));
+    // Deviation from C++ (which always drew this): in GameCam mode the view *is*
+    // the game camera, so the frustum lines sit exactly on the screen edge and
+    // flicker in and out. Skip them in that mode.
+    if self.camera_mode != CameraMode::GameCam {
+      self.render_buff.set_transform(Mat4::IDENTITY);
+      self
+        .render_buff
+        .add_lines(&shapes::generate_camera_line_segments(
+          self.game_cam.perspective,
+          self.game_cam.transform,
+          self.cam_line_length,
+        ));
+    }
 
     // --- entities + player (`WorldRenderer.cpp:312-336`) ---
     self.render_entities(ctx, objects, highlighted);
