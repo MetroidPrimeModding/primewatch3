@@ -46,18 +46,6 @@ _(covers the old P1.2 / P1.3 / P8.4.2 checklists)_
       recovers without a leak (Task Manager handle count stable).
 - [ ] Linux/macOS behaviour is unchanged (POSIX path untouched).
 
-### D4 — Entity rendering
-_(old P8.4.3 / P8.4.4 / P8.4.5 checklists)_
-
-- [ ] On-screen entity boxes / lines render for player, triggers, docks, actors, physics actors.
-- [ ] Player cube/sphere + speed indicator render; trigger / dock / actor colours look right.
-- [ ] Projectile / bomb / power-bomb / AI / pickup / chozo-ghost / collision-actor geometry renders
-      in the right place.
-- [ ] Bomb / AI / pickup text overlays land on-screen near their entities (HP / item / fuse-frame
-      labels via the P9.1 overlay painter).
-- [ ] WorldStatus window populates with sane area / chain / phase rows and the loading-resource
-      list; PlayerStatus window shows sane player pos / vel / look-direction.
-
 ### D5 — Inspector tree + object table + watch windows
 _(old P7.1 / P9.1 / P9.2 checklists)_
 
@@ -81,8 +69,7 @@ _(old P7.1 / P9.1 / P9.2 checklists)_
       status text.
 
 **Known non-blocking gaps from P9.1 (polish, not verification):**
-1. Camera Controls window has no titlebar-X `.open()` binding — dismiss via the Camera menu toggle.
-2. `rfd 0.15` pulls a heavy `zbus`/`ashpd` async tree and `LoadFromFile` blocks the event loop —
+1. `rfd 0.15` pulls a heavy `zbus`/`ashpd` async tree and `LoadFromFile` blocks the event loop —
    revisit feature-trimming / the async API (see D7).
 
 ---

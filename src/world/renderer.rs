@@ -536,17 +536,27 @@ pub(crate) fn projectile_world_vel(local_to_world: Mat4, local_xf: Mat4, velocit
 /// ([0, 1] clip depth) rather than GL's [-1, 1] — the x/y screen mapping is
 /// identical either way, and callers only consume `.x` / `.y` (the returned `.z`
 /// is the raw NDC depth and is unused).
-pub(crate) fn project(pos: Vec3, view: Mat4, projection: Mat4, viewport: [f32; 4]) -> Vec3 {
+///
+/// Returns `None` when the point is on or behind the camera plane (`clip.w <= 0`).
+/// The C++ (and glm) divided by a negative `w` there, mirroring points from behind
+/// the camera onto the screen — this is that latent bug fixed: callers skip the
+/// overlay instead of drawing it at a bogus position.
+pub(crate) fn project(
+  pos: Vec3,
+  view: Mat4,
+  projection: Mat4,
+  viewport: [f32; 4],
+) -> Option<Vec3> {
   let clip = projection * view * pos.extend(1.0);
-  if clip.w == 0.0 {
-    return Vec3::ZERO;
+  if clip.w <= 0.0 {
+    return None;
   }
   let ndc = clip.truncate() / clip.w;
-  Vec3::new(
+  Some(Vec3::new(
     viewport[0] + (ndc.x + 1.0) * 0.5 * viewport[2],
     viewport[1] + (ndc.y + 1.0) * 0.5 * viewport[3],
     ndc.z,
-  )
+  ))
 }
 
 /// A screen-space text label accumulated during `update` and painted by the app
@@ -1214,7 +1224,7 @@ impl WorldRenderer {
       .get_member(ctx, "transform")
       .and_then(|m| read_as_transform(ctx, &m))?;
     let pos = transform.w_axis.truncate();
-    let s = project(pos, self.cam_view, self.cam_projection, self.cam_viewport);
+    let s = project(pos, self.cam_view, self.cam_projection, self.cam_viewport)?;
     Some(Vec2::new(s.x, self.cam_viewport[3] - s.y))
   }
 
@@ -1246,7 +1256,7 @@ impl WorldRenderer {
       self.cam_view,
       self.cam_projection,
       self.cam_viewport,
-    );
+    )?;
     Some(Vec2::new(s.x, self.cam_viewport[3] - s.y))
   }
 
@@ -2363,10 +2373,11 @@ mod tests {
   fn project_maps_center_and_corners_to_pixel_viewport() {
     let vp = [0.0, 0.0, 800.0, 600.0];
     // With identity view+proj, the origin sits at NDC (0,0) -> viewport centre.
-    let c = project(Vec3::ZERO, Mat4::IDENTITY, Mat4::IDENTITY, vp);
+    let c = project(Vec3::ZERO, Mat4::IDENTITY, Mat4::IDENTITY, vp).unwrap();
     approx(c, Vec3::new(400.0, 300.0, 0.0));
     // NDC (1,1) -> far corner (before the caller's Y flip).
-    let corner = project(Vec3::new(1.0, 1.0, 0.0), Mat4::IDENTITY, Mat4::IDENTITY, vp);
+    let corner =
+      project(Vec3::new(1.0, 1.0, 0.0), Mat4::IDENTITY, Mat4::IDENTITY, vp).unwrap();
     approx(corner, Vec3::new(800.0, 600.0, 0.0));
     // NDC (-1,-1) -> origin corner.
     let origin = project(
@@ -2374,8 +2385,19 @@ mod tests {
       Mat4::IDENTITY,
       Mat4::IDENTITY,
       vp,
-    );
+    )
+    .unwrap();
     approx(origin, Vec3::new(0.0, 0.0, 0.0));
+  }
+
+  #[test]
+  fn project_rejects_points_behind_the_camera() {
+    // RH perspective looking down -Z: a point at +Z is behind the camera and
+    // projects with clip.w <= 0. Previously this mirrored onto the screen.
+    let proj = perspective(45.0, 4.0 / 3.0, 0.1, 1000.0);
+    let vp = [0.0, 0.0, 800.0, 600.0];
+    assert!(project(Vec3::new(0.0, 0.0, 5.0), Mat4::IDENTITY, proj, vp).is_none());
+    assert!(project(Vec3::new(0.0, 0.0, -5.0), Mat4::IDENTITY, proj, vp).is_some());
   }
 
   #[test]
@@ -2388,7 +2410,7 @@ mod tests {
       glam::Vec4::new(0.0, 0.0, 0.0, 0.0),
     );
     let vp = [0.0, 0.0, 200.0, 200.0];
-    let s = project(Vec3::new(1.0, 0.0, 2.0), Mat4::IDENTITY, proj, vp);
+    let s = project(Vec3::new(1.0, 0.0, 2.0), Mat4::IDENTITY, proj, vp).unwrap();
     // clip = (1, 0, 2, 2) -> ndc.x = 0.5 -> screen.x = (0.5+1)*0.5*200 = 150.
     approx(s, Vec3::new(150.0, 100.0, 1.0));
   }

@@ -1006,9 +1006,14 @@ impl AppWindow {
 
       // "Camera Controls" window (C++ `doImGui:322-336`).
       if self.world.show_exact_camera_controls {
+        let mut open = true;
         egui::Window::new("Camera Controls")
           .resizable(false)
+          .open(&mut open)
           .show(&egui_ctx, |ui| self.world.render_camera_controls(ui));
+        if !open {
+          self.world.show_exact_camera_controls = false;
+        }
       }
     }
 
