@@ -1036,12 +1036,20 @@ impl AppWindow {
       });
 
     // --- the offscreen 3D target + screen-space text overlays ---------------
+    //
+    // Drawn as a full-window background: an `Area` in egui's background layer
+    // pinned to the screen rect, so every `Window`/`Area` floats above it and the
+    // camera look/zoom drag is picked up on any part of the view not covered by
+    // another window (no more fighting a monitored-object window for the pointer).
     let mut world_view_size_pts: Option<egui::Vec2> = None;
     let mut world_view_input = WorldViewInput::default();
-    egui::Window::new("World")
-      .default_size([640.0, 480.0])
+    let screen_rect = egui_ctx.content_rect();
+    egui::Area::new(egui::Id::new("world-background"))
+      .order(egui::Order::Background)
+      .fixed_pos(screen_rect.min)
       .show(&egui_ctx, |ui| {
-        let avail = ui.available_size();
+        ui.set_min_size(screen_rect.size());
+        let avail = screen_rect.size();
         world_view_size_pts = Some(avail);
         // Sense drag/scroll on the image itself — this is the camera look/zoom
         // input (see `WorldViewInput`), consumed next frame by `InputState::plan`.
