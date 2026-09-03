@@ -4,12 +4,38 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bevy = "0.15.2"
-bevy_egui = "0.33.0"
 sysinfo = "0.33.1"
 log = { version = "*", features = ["max_level_debug", "release_max_level_warn"] }
 bstruct = { path = "bstruct" }
+libc = "0.2"
 walkdir = "2.5.0"
+bimap = "0.6.3"
+egui = { version = "0.36", features = ["persistence"] }
+egui-wgpu = { version = "0.36", features = ["winit"] }
+egui-winit = "0.36"
+# Serialize `egui::Memory` (window rects, collapsing-header + scroll state) to
+# disk so the UI layout survives a restart (see src/ui_state.rs). Same format
+# eframe uses internally; pinned to the version egui already locks.
+ron = "0.12"
+glam = "0.33"
+pollster = "1.0"
+wgpu = "30"
+winit = "0.30"
+# Native file picker for the "Load from file" menu item (ports the C++
+# ImGuiFileDialog integration in PrimeWatch.cpp:305-312 / 376-378).
+rfd = "0.15"
+
+# Windows-only: real Dolphin process attach (OpenProcess / VirtualQueryEx / ReadProcessMemory).
+# Target-gated so it never touches the Linux/macOS build. Ports the Win32 headers used in
+# ../primewatch2/src/MemoryAccess.cpp:25-27 (windows.h + psapi.h + ReadProcessMemory).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+  "Win32_Foundation",
+  "Win32_System_Threading",
+  "Win32_System_Memory",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Diagnostics_Debug",
+] }
 
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]

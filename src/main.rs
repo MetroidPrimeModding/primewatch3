@@ -1,50 +1,15 @@
+mod app;
+mod ctx;
+mod defs;
+mod gl;
+mod inspector;
 mod mem;
+mod object_filter;
 mod structs;
+mod toast;
+mod ui_state;
+mod world;
 
-use bevy::prelude::*;
-use bevy_egui::{EguiContexts, EguiPlugin, egui};
-use crate::mem::dolphin_memory::DolphinMemoryAccess;
-use crate::mem::game_memory::GameMemory;
-use crate::structs::prime_structs::PrimeStructs;
-
-fn main() {
-  let default_plugins = DefaultPlugins.set(WindowPlugin {
-    primary_window: Some(Window {
-      title: "Prime Watch 3".to_string(),
-      ..Default::default()
-    }),
-    ..Default::default()
-  });
-
-  let mem = GameMemory::new();
-  let v = mem.read_u16(0x80000000);
-  println!("Value: {:?}", v);
-
-  let mut dma = DolphinMemoryAccess::new();
-  let pids = dma.get_dolphin_pids();
-  println!("PIDs: {:?}", pids);
-
-  let mut structs = PrimeStructs::new_empty();
-  let loadResult = structs.load_from_dir("prime_defs");
-  match loadResult {
-    Ok(_) => println!("Loaded {} structs and {} enums", structs.structs.len(), structs.enums.len()),
-    Err(err) => println!("Error loading structs: {}", err),
-  }
-
-  App::new()
-    .add_plugins(default_plugins)
-    .add_plugins(EguiPlugin)
-    .insert_resource(structs)
-    .add_systems(Update, ui_example_system)
-    .run();
-}
-
-fn ui_example_system(mut contexts: EguiContexts) {
-  egui::Window::new("Hello").show(contexts.ctx_mut(), |ui| {
-    ui.label("world");
-
-    if ui.button("Click me!").clicked() {
-      println!("Button clicked!");
-    }
-  });
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+  app::run()
 }
