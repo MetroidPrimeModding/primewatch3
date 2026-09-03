@@ -10,9 +10,13 @@ bstruct = { path = "bstruct" }
 libc = "0.2"
 walkdir = "2.5.0"
 bimap = "0.6.3"
-egui = "0.36"
+egui = { version = "0.36", features = ["persistence"] }
 egui-wgpu = { version = "0.36", features = ["winit"] }
 egui-winit = "0.36"
+# Serialize `egui::Memory` (window rects, collapsing-header + scroll state) to
+# disk so the UI layout survives a restart (see src/ui_state.rs). Same format
+# eframe uses internally; pinned to the version egui already locks.
+ron = "0.12"
 glam = "0.33"
 pollster = "1.0"
 wgpu = "30"

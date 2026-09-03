@@ -432,7 +432,7 @@ mod tests {
   /// Skip-if-absent loader for the offline BE dump.
   fn load_mem1() -> Option<GameMemory> {
     let path = std::env::var("PRIMEWATCH_MEM1_RAW")
-      .unwrap_or_else(|_| format!("{}/../primewatch2/mem1.raw", env!("CARGO_MANIFEST_DIR")));
+      .unwrap_or_else(|_| format!("{}/mem1.raw", env!("CARGO_MANIFEST_DIR")));
     if !std::path::Path::new(&path).exists() {
       eprintln!("skipping collision_mesh mem1.raw test: {path} not found");
       return None;

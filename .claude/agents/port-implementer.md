@@ -28,7 +28,7 @@ You implement one conversion task for the PrimeWatch C++ → Rust port.
    - 2-space indent; run `cargo fmt` before finishing.
 3. Fix any known carried-over bug the task names (e.g. `GameStruct::extends` recursion).
 4. Add or update tests where the task's **Done when** calls for one. Prefer tests that read against
-   `../primewatch2/mem1.raw` for anything in the memory/defs layers.
+   `./mem1.raw` for anything in the memory/defs layers.
 5. Get it clean:
    ```sh
    cargo fmt

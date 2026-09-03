@@ -193,10 +193,10 @@ mod tests {
   }
 
   /// Skip-if-absent loader for the offline BE dump. Honours `PRIMEWATCH_MEM1_RAW`,
-  /// else looks next to the crate at `../primewatch2/mem1.raw`.
+  /// else looks next to the crate at `./mem1.raw`.
   fn load_mem1() -> Option<GameMemory> {
     let path = std::env::var("PRIMEWATCH_MEM1_RAW")
-      .unwrap_or_else(|_| format!("{}/../primewatch2/mem1.raw", env!("CARGO_MANIFEST_DIR")));
+      .unwrap_or_else(|_| format!("{}/mem1.raw", env!("CARGO_MANIFEST_DIR")));
     if !std::path::Path::new(&path).exists() {
       eprintln!("skipping game_memory mem1.raw tests: {path} not found");
       return None;

@@ -13,6 +13,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::error::Error;
 use std::sync::Arc;
+use std::time::Instant;
 
 use sysinfo::Pid;
 use winit::application::ApplicationHandler;
@@ -31,6 +32,7 @@ use crate::mem::globals::{get_main, get_memory_card, get_state_manager, get_twea
 use crate::mem::vtables::vtable_class_name;
 use crate::object_filter::ObjectFilter;
 use crate::structs::prime_structs::{GameInstance, GameStructs};
+use crate::ui_state;
 use crate::world::renderer::{CameraMode, WorldInput, WorldRenderer};
 
 /// Build the event loop and run the app. Mirrors `main()` in the C++ entrypoint.
@@ -770,6 +772,14 @@ impl ApplicationHandler for App {
       window.window.request_redraw();
     }
   }
+
+  fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+    // Authoritative UI-layout save: covers window-close, menu quit, and any
+    // other clean exit (`render` also autosaves for the crash case).
+    if let Some(window) = self.window.as_ref() {
+      ui_state::save(&window.egui_ctx);
+    }
+  }
 }
 
 /// wgpu + egui render state. Created in `resumed`, dropped when the app exits.
@@ -796,6 +806,10 @@ struct AppWindow {
   /// Last frame's drag/scroll over the "World" image — fed to [`InputState::plan`]
   /// this frame (same one-frame lag as `world_view_px`).
   world_view_input: WorldViewInput,
+  /// Last time the egui UI layout was flushed to disk (see [`crate::ui_state`]).
+  /// Re-saved at most once per [`ui_state::AUTOSAVE_INTERVAL`] from `render`,
+  /// plus a final save in `App::exiting`.
+  last_ui_save: Instant,
 }
 
 impl AppWindow {
@@ -841,6 +855,8 @@ impl AppWindow {
     surface.configure(&device, &config);
 
     let egui_ctx = egui::Context::default();
+    // Restore window positions/sizes and collapsed/scroll state from the last run.
+    ui_state::load(&egui_ctx);
     let egui_state = egui_winit::State::new(
       egui_ctx.clone(),
       egui::ViewportId::ROOT,
@@ -870,6 +886,7 @@ impl AppWindow {
       world_texture: None,
       world_view_px: (800, 600),
       world_view_input: WorldViewInput::default(),
+      last_ui_save: Instant::now(),
     })
   }
 
@@ -1246,6 +1263,13 @@ impl AppWindow {
       let h = (sz.y * ppp).round().max(1.0) as u32;
       self.world_view_px = (w, h);
       let _recreated = self.world.resize(&self.device, (w, h));
+    }
+
+    // Flush the UI layout to disk periodically so a crash doesn't lose it (the
+    // authoritative save is in `App::exiting`).
+    if self.last_ui_save.elapsed() >= ui_state::AUTOSAVE_INTERVAL {
+      ui_state::save(&self.egui_ctx);
+      self.last_ui_save = Instant::now();
     }
   }
 }

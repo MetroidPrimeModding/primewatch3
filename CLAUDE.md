@@ -44,7 +44,7 @@ fails on a missing linker, that's the cause. (Note: the file is `.cargo/cargo.to
 `.cargo/config.toml`, so it's currently inert; rename it if you want the override to apply.)
 
 No live Dolphin is available in this environment for most work. Use the `.raw` dump path
-(`../primewatch2/mem1.raw`, 0x1800000 bytes of big-endian emulated RAM) for offline testing.
+(`mem1.raw`, 0x1800000 bytes of big-endian emulated RAM) for offline testing.
 Memory-access code that needs a live process must be manually verified by the user.
 
 ## Porting conventions (decided in RUST_CONVERSION.md — keep consistent across every layer)

@@ -79,7 +79,7 @@ mod tests {
   /// `game_object_utils.rs` / `globals.rs` tests).
   fn load_mem1() -> Option<GameMemory> {
     let path = std::env::var("PRIMEWATCH_MEM1_RAW")
-      .unwrap_or_else(|_| format!("{}/../primewatch2/mem1.raw", env!("CARGO_MANIFEST_DIR")));
+      .unwrap_or_else(|_| format!("{}/mem1.raw", env!("CARGO_MANIFEST_DIR")));
     if !std::path::Path::new(&path).exists() {
       eprintln!("skipping area_utils mem1.raw tests: {path} not found");
       return None;

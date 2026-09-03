@@ -69,7 +69,7 @@ mod tests {
   #[test]
   fn pointer_roots_deref_live_dump_when_present() {
     let path = std::env::var("PRIMEWATCH_MEM1_RAW")
-      .unwrap_or_else(|_| format!("{}/../primewatch2/mem1.raw", env!("CARGO_MANIFEST_DIR")));
+      .unwrap_or_else(|_| format!("{}/mem1.raw", env!("CARGO_MANIFEST_DIR")));
     if !std::path::Path::new(&path).exists() {
       eprintln!("skipping globals mem1.raw test: {path} not found");
       return;
