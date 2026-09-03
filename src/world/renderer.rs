@@ -17,7 +17,7 @@
 //! - `glm::decompose` -> `cam_eye = cam_view.inverse().w_axis` (only `cam_eye`
 //!   is consumed this phase).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 
@@ -541,12 +541,7 @@ pub(crate) fn projectile_world_vel(local_to_world: Mat4, local_xf: Mat4, velocit
 /// The C++ (and glm) divided by a negative `w` there, mirroring points from behind
 /// the camera onto the screen — this is that latent bug fixed: callers skip the
 /// overlay instead of drawing it at a bogus position.
-pub(crate) fn project(
-  pos: Vec3,
-  view: Mat4,
-  projection: Mat4,
-  viewport: [f32; 4],
-) -> Option<Vec3> {
+pub(crate) fn project(pos: Vec3, view: Mat4, projection: Mat4, viewport: [f32; 4]) -> Option<Vec3> {
   let clip = projection * view * pos.extend(1.0);
   if clip.w <= 0.0 {
     return None;
@@ -770,7 +765,7 @@ impl WorldRenderer {
     ctx: &Ctx,
     input: &WorldInput,
     viewport_size: (u32, u32),
-    objects: &HashMap<TUniqueID, GameInstance>,
+    objects: &BTreeMap<TUniqueID, GameInstance>,
     highlighted: &HashSet<u16>,
   ) {
     self.clear_text_overlays();
@@ -992,7 +987,7 @@ impl WorldRenderer {
   fn render_entities(
     &mut self,
     ctx: &Ctx,
-    objects: &HashMap<TUniqueID, GameInstance>,
+    objects: &BTreeMap<TUniqueID, GameInstance>,
     highlighted: &HashSet<u16>,
   ) {
     self.render_buff.set_transform(Mat4::IDENTITY);
@@ -1436,7 +1431,7 @@ impl WorldRenderer {
     ctx: &Ctx,
     entity: &GameInstance,
     is_highlighted: bool,
-    objects: &HashMap<TUniqueID, GameInstance>,
+    objects: &BTreeMap<TUniqueID, GameInstance>,
   ) {
     self.draw_ai(ctx, entity, is_highlighted);
 
@@ -2376,8 +2371,7 @@ mod tests {
     let c = project(Vec3::ZERO, Mat4::IDENTITY, Mat4::IDENTITY, vp).unwrap();
     approx(c, Vec3::new(400.0, 300.0, 0.0));
     // NDC (1,1) -> far corner (before the caller's Y flip).
-    let corner =
-      project(Vec3::new(1.0, 1.0, 0.0), Mat4::IDENTITY, Mat4::IDENTITY, vp).unwrap();
+    let corner = project(Vec3::new(1.0, 1.0, 0.0), Mat4::IDENTITY, Mat4::IDENTITY, vp).unwrap();
     approx(corner, Vec3::new(800.0, 600.0, 0.0));
     // NDC (-1,-1) -> origin corner.
     let origin = project(

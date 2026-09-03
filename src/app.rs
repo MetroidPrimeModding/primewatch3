@@ -208,7 +208,7 @@ struct FrameState<'a> {
   inspector: &'a mut Inspector,
   /// Live object list (walked in `redraw`, borrowed read-only here). Keyed by
   /// `TUniqueID` like the C++ `entities` `std::map`.
-  objects: &'a HashMap<TUniqueID, GameInstance>,
+  objects: &'a BTreeMap<TUniqueID, GameInstance>,
   /// Per-editor-ID watch windows (C++ `editorIdsToWatch`).
   editor_ids_to_watch: &'a mut Vec<WatchedEditorId>,
   /// C++ `showActiveInTableOnly`.
@@ -233,7 +233,7 @@ struct App {
   structs: GameStructs,
   /// Live object list, walked off `g_stateManager` once per frame (C++
   /// `PrimeWatch::doMemoryParse` -> `GameObjectUtils::getAllObjects`).
-  objects: HashMap<TUniqueID, GameInstance>,
+  objects: BTreeMap<TUniqueID, GameInstance>,
   /// Whether the `.bs` definitions loaded — drives which egui window is shown,
   /// mirroring `GameDefinitions::isLoaded()` in C++ `doFrame`.
   defs_loaded: bool,
@@ -325,7 +325,7 @@ impl App {
       mem,
       dolphin,
       structs,
-      objects: HashMap::new(),
+      objects: BTreeMap::new(),
       defs_loaded,
       status_text,
       pids,
@@ -520,7 +520,7 @@ fn render_objects_window(
   egui_ctx: &egui::Context,
   ctx: &Ctx,
   inspector: &Inspector,
-  objects: &HashMap<TUniqueID, GameInstance>,
+  objects: &BTreeMap<TUniqueID, GameInstance>,
   editor_ids_to_watch: &mut Vec<WatchedEditorId>,
   show_active_in_table_only: &mut bool,
   table_hovered_uid: &mut u16,
@@ -556,10 +556,9 @@ fn render_objects_window(
     }
   }
 
-  // Stable row order — C++ iterates a uid-keyed `std::map`; our `HashMap` is
-  // unordered, so sort by the map key (`TUniqueID`).
-  let mut ordered: Vec<(&TUniqueID, &GameInstance)> = objects.iter().collect();
-  ordered.sort_by_key(|(uid, _)| **uid);
+  // C++ iterates a uid-keyed `std::map`; `objects` is now a `BTreeMap` with the
+  // same ordering, so `iter()` is already sorted by `TUniqueID`.
+  let ordered: Vec<(&TUniqueID, &GameInstance)> = objects.iter().collect();
 
   egui::Window::new("Objects").show(egui_ctx, |ui| {
     ui.label(format!("Current object count: {}", objects.len()));
@@ -1334,7 +1333,8 @@ fn apply_menu_action(action: MenuAction, fs: &mut FrameState) {
         Err(err) => {
           *fs.defs_loaded = false;
           eprintln!("Error loading structs: {err}");
-          fs.toasts.error(format!("Failed to load definitions: {err}"));
+          fs.toasts
+            .error(format!("Failed to load definitions: {err}"));
           *fs.status_text = err;
         }
       }

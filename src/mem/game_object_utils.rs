@@ -7,7 +7,7 @@
 //! `getAllLoadingDatas` (the resource-load queue walk, P8.4.5) is here too.
 //! `getAllCObjectReferences` still belongs to a later phase.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::ctx::Ctx;
 use crate::mem::globals::{get_main, get_state_manager};
@@ -34,8 +34,12 @@ const LIST_END: u16 = 0xFFFF;
 /// substitution, so a `None` on any structural/value read mid-walk stops the
 /// walk and returns what was gathered so far rather than fabricating a `0`. With
 /// a valid snapshot this never triggers.
-pub fn get_all_objects(ctx: &Ctx) -> HashMap<TUniqueID, GameInstance> {
-  let mut objects: HashMap<TUniqueID, GameInstance> = HashMap::new();
+/// Returns a `BTreeMap` (not a `HashMap`) to match the C++ `std::map<TUniqueID,
+/// GameMember>`: the world renderer's translucent pass has no depth write and
+/// blends in iteration order, so a stable, id-sorted order is load-bearing —
+/// a per-frame `HashMap` reshuffle makes overlapping triggers flicker.
+pub fn get_all_objects(ctx: &Ctx) -> BTreeMap<TUniqueID, GameInstance> {
+  let mut objects: BTreeMap<TUniqueID, GameInstance> = BTreeMap::new();
 
   let Some(global_list) = get_state_manager().get_member(ctx, "allObjects") else {
     return objects;
