@@ -78,11 +78,14 @@ impl WorldUniforms {
 /// One WGSL module: `vs_main` (ports `meshVertShader`, shared), `fs_mesh` (ports
 /// `meshFragShader`) and `fs_line` (ports `lineFragShader`).
 ///
-/// **Gamma (flag for reviewer):** the `linear_to_srgb` on every final output is
-/// *new* — the C++ wrote raw values to a plain GL backbuffer. It implements the
-/// P1.3 contract ("the real renderer must do its own linear→sRGB") because egui
-/// composites the linear `Rgba8Unorm` target without re-encoding. If P8.4
-/// compositing shows double-encoding, revisit here.
+/// **Gamma:** the fragment shaders write raw linear values, exactly like the
+/// C++ (which rendered into a plain, non-sRGB GL backbuffer). An earlier port
+/// applied `linear_to_srgb` here, but egui-wgpu composites the `Rgba8Unorm`
+/// world texture through `fs_main_linear_framebuffer` (`linear_from_gamma` on
+/// the sample) and the swapchain is an sRGB surface, so that encode became a
+/// *second* one on top of the hardware's — the world view came out visibly
+/// brighter than the C++. With the raw output, egui's decode and the surface's
+/// encode cancel and the texture reaches the screen verbatim.
 ///
 /// The frag shaders use the interpolated `normal` *without* re-normalizing —
 /// preserved from the GLSL. Constants (`0.015`, `0.7`, `0.5`, `0.2`, `256`) are
@@ -119,18 +122,12 @@ fn vs_main(@location(0) a_pos: vec3<f32>, @location(1) a_color: vec4<f32>,
   return out;
 }
 
-fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
-  let lo = c * 12.92;
-  let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
-  return select(hi, lo, c < vec3<f32>(0.0031308));
-}
-
 @fragment
 fn fs_mesh(in: VsOut) -> @location(0) vec4<f32> {
   let edge_thickness = 0.015;
   let min_bary = min(min(in.barycentric.x, in.barycentric.y), in.barycentric.z);
   if (min_bary > 0.0 && min_bary < edge_thickness) {
-    return vec4<f32>(linear_to_srgb(vec3<f32>(0.2)), 1.0);
+    return vec4<f32>(vec3<f32>(0.2), 1.0);
   }
   let light_color = vec3<f32>(1.0, 1.0, 1.0);
   let ambient = 0.7 * light_color;
@@ -141,13 +138,12 @@ fn fs_mesh(in: VsOut) -> @location(0) vec4<f32> {
   let spec = pow(max(dot(view_dir, reflect_dir), 0.0), 256.0);
   let specular = 0.2 * spec * light_color;
   let lit = vec4<f32>(ambient + diffuse + specular, 1.0) * in.color;
-  return vec4<f32>(linear_to_srgb(lit.rgb), lit.a);
+  return lit;
 }
 
 @fragment
 fn fs_line(in: VsOut) -> @location(0) vec4<f32> {
-  let out = vec4<f32>(1.0, 1.0, 1.0, 1.0) * in.color;
-  return vec4<f32>(linear_to_srgb(out.rgb), out.a);
+  return vec4<f32>(1.0, 1.0, 1.0, 1.0) * in.color;
 }
 "#;
 
