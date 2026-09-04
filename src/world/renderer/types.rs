@@ -164,6 +164,51 @@ impl Default for PlayerClipConfig {
   }
 }
 
+/// The player-cast ground shadow: a small orthographic shadow map rasterizing
+/// only the live player's opaque model, sampled by `fs_mesh` when shading every
+/// other opaque/translucent surface. Marshalled into `WorldUniforms::shadow_params`
+/// (`light_view_proj` is derived fresh each frame from the player position).
+#[derive(Clone, Copy, Debug)]
+pub struct ShadowConfig {
+  /// Feature toggle.
+  pub enabled: bool,
+  /// How much direct light the shadow blocks: `0.0` = no darkening, `1.0` =
+  /// shadowed fragments fall back to ambient-only lighting.
+  pub strength: f32,
+  /// Light-space NDC depth bias, to avoid self-shadowing acne on the caster's
+  /// own silhouette edge.
+  pub bias: f32,
+  /// Half-width/height (world units) of the light's orthographic frustum,
+  /// centered on the player. Must comfortably cover the player's footprint.
+  pub half_extent: f32,
+  /// When `true`, the shadow is cast along `azimuth`/`elevation` instead of
+  /// the scene light's own angle. Useful on its own terms: a shadow directly
+  /// beneath the player (`elevation = FRAC_PI_2`) is a handy on-screen
+  /// position readout for TAS work, independent of how the scene is lit.
+  pub independent_angle: bool,
+  /// Shadow azimuth (radians, rotation around Z), used only when
+  /// `independent_angle`. Irrelevant at `elevation == FRAC_PI_2`.
+  pub azimuth: f32,
+  /// Shadow elevation (radians from the horizon), used only when
+  /// `independent_angle`. `FRAC_PI_2` (the default) casts the shadow
+  /// straight down the world Z axis.
+  pub elevation: f32,
+}
+
+impl Default for ShadowConfig {
+  fn default() -> Self {
+    Self {
+      enabled: true,
+      strength: 0.6,
+      bias: 0.0015,
+      half_extent: 2.5,
+      independent_angle: true,
+      azimuth: 0.0,
+      elevation: std::f32::consts::FRAC_PI_2,
+    }
+  }
+}
+
 /// A screen-space text label accumulated during `update` and painted by the app
 /// shell's overlay pass. From the `ImDrawList::AddText` calls in the per-class
 /// draw functions.

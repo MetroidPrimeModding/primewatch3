@@ -21,6 +21,7 @@
 mod camera;
 mod entities;
 mod gpu;
+mod shadow;
 mod ui;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -40,7 +41,7 @@ use crate::world::collision_mesh::CollisionMesh;
 pub use camera::quat_from_euler;
 pub use types::{
   ActorRenderConfig, CameraMode, CullType, GameCamera, OrbitPlayerCameraOrigin, PlayerClipConfig,
-  PlayerGhost, TextOverlay, TriggerRenderConfig, WorldInput,
+  PlayerGhost, ShadowConfig, TextOverlay, TriggerRenderConfig, WorldInput,
 };
 
 mod types;
@@ -60,7 +61,12 @@ pub struct WorldRenderer {
   pub distance: f32,
   pub up: Vec3,
   pub manual_camera_pos: Vec3,
-  pub light_dir: Vec3,
+  /// Scene light azimuth (radians, rotation around Z). See
+  /// [`shadow::dir_from_azimuth_elevation`].
+  pub light_azimuth: f32,
+  /// Scene light elevation (radians from the horizon; `FRAC_PI_2` = straight
+  /// up). See [`shadow::dir_from_azimuth_elevation`].
+  pub light_elevation: f32,
   pub cam_line_length: f32,
   pub culling: CullType,
   pub camera_mode: CameraMode,
@@ -68,6 +74,7 @@ pub struct WorldRenderer {
   pub trigger_render_config: TriggerRenderConfig,
   pub actor_render_config: ActorRenderConfig,
   pub player_clip_config: PlayerClipConfig,
+  pub shadow_config: ShadowConfig,
   /// The detached-camera move-speed multiplier, driven by the "Speed" slider in
   /// the Camera menu.
   pub manual_camera_speed: f32,
@@ -136,7 +143,9 @@ impl WorldRenderer {
       distance: 10.0,
       up: Vec3::new(0.0, 0.0, 1.0),
       manual_camera_pos: Vec3::ZERO,
-      light_dir: Vec3::new(0.1, 0.2, 0.9),
+      // Matches the pre-refactor fixed `light_dir` of `(0.1, 0.2, 0.9)`.
+      light_azimuth: 1.1071487,
+      light_elevation: 1.3272751,
       cam_line_length: 10.0,
       culling: CullType::Back,
       camera_mode: CameraMode::FollowPlayer,
@@ -144,6 +153,7 @@ impl WorldRenderer {
       trigger_render_config: TriggerRenderConfig::default(),
       actor_render_config: ActorRenderConfig::default(),
       player_clip_config: PlayerClipConfig::default(),
+      shadow_config: ShadowConfig::default(),
       manual_camera_speed: 1.0,
       show_exact_camera_controls: false,
       cam_projection: Mat4::IDENTITY,

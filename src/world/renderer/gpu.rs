@@ -2,7 +2,7 @@
 //! `gpu_mesh_by_mrea` collision-mesh cache (`WorldRenderer::updateAreas`), and
 //! the render pass itself (`WorldRenderer::render`, minus `renderEntities`).
 
-use glam::{Mat4, Vec4};
+use glam::{Mat4, Vec3, Vec4};
 
 use crate::ctx::Ctx;
 use crate::gl::mesh::DynamicMesh;
@@ -157,6 +157,9 @@ impl WorldRenderer {
     let mut player_pos = self.last_known_non_colliding_pos;
     player_pos.z += orbit_z_nudge(OrbitPlayerCameraOrigin::Center, self.player.is_morphed);
 
+    let light_dir =
+      super::shadow::dir_from_azimuth_elevation(self.light_azimuth, self.light_elevation);
+
     // model is identity for every draw: the immediate buffers bake per-vertex
     // transforms and collision verts are already world-space.
     let mut uniforms = WorldUniforms::from_matrices(
@@ -164,7 +167,7 @@ impl WorldRenderer {
       self.cam_view,
       self.cam_projection,
       self.cam_eye,
-      self.light_dir.normalize(),
+      light_dir,
       player_pos,
     );
     let clip = &self.player_clip_config;
@@ -175,7 +178,53 @@ impl WorldRenderer {
       if clip.enabled { 1.0 } else { 0.0 },
     );
     uniforms.clip_params2 = Vec4::new(clip.min_visibility, 0.0, 0.0, 0.0);
+
+    let shadow = &self.shadow_config;
+    // The shadow can be pointed straight down (or anywhere else) independent
+    // of how the scene is actually lit -- e.g. for TAS positioning, where a
+    // shadow dropped straight along world Z under the player is more useful
+    // than one skewed by the visual light angle.
+    let shadow_dir = if shadow.independent_angle {
+      super::shadow::dir_from_azimuth_elevation(shadow.azimuth, shadow.elevation)
+    } else {
+      light_dir
+    };
+    uniforms.light_view_proj = super::shadow::player_light_view_proj(
+      player_pos + Vec3::new(0.0, 0.0, 1.35),
+      shadow_dir,
+      shadow.half_extent,
+    );
+    uniforms.shadow_params = Vec4::new(
+      shadow.strength,
+      shadow.bias,
+      if shadow.enabled { 1.0 } else { 0.0 },
+      0.0,
+    );
     self.pipelines.set_uniforms(queue, &uniforms);
+
+    // Shadow pre-pass: rasterize only the live player's opaque model into the
+    // shadow map from the light's point of view. Skipped entirely when the
+    // feature is off (the map is left stale, but `fs_mesh` won't sample it).
+    if shadow.enabled {
+      let mut shadow_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("shadow-pass"),
+        color_attachments: &[],
+        depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+          view: self.pipelines.shadow_view(),
+          depth_ops: Some(wgpu::Operations {
+            load: wgpu::LoadOp::Clear(1.0),
+            store: wgpu::StoreOp::Store,
+          }),
+          stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+      });
+      shadow_pass.set_pipeline(self.pipelines.shadow_pipeline());
+      shadow_pass.set_bind_group(0, &self.pipelines.bind_group, &[]);
+      self.player_tris.draw(&mut shadow_pass);
+    }
 
     let mesh_cull = match self.culling {
       super::types::CullType::Back => Some(wgpu::Face::Back),
@@ -208,6 +257,7 @@ impl WorldRenderer {
     });
 
     pass.set_bind_group(0, &self.pipelines.bind_group, &[]);
+    pass.set_bind_group(1, &self.pipelines.shadow_tex_bind_group, &[]);
 
     // (a) collision meshes — honour `self.culling`.
     pass.set_pipeline(self.pipelines.mesh(false, mesh_cull));

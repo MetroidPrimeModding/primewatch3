@@ -13,7 +13,7 @@ use crate::mem::game_object_utils::{get_all_loading_datas, object_tag_to_string}
 use super::WorldRenderer;
 use super::entities::walk_member;
 use super::types::{
-  ActorRenderConfig, CameraMode, CullType, OrbitPlayerCameraOrigin, PlayerClipConfig,
+  ActorRenderConfig, CameraMode, CullType, OrbitPlayerCameraOrigin, PlayerClipConfig, ShadowConfig,
   TriggerRenderConfig,
 };
 
@@ -172,6 +172,9 @@ impl WorldRenderer {
       ui,
       &mut self.culling,
       &mut self.player_clip_config,
+      &mut self.light_azimuth,
+      &mut self.light_elevation,
+      &mut self.shadow_config,
       &mut self.camera_mode,
       &mut self.orbit_player_camera_origin,
       &mut self.manual_camera_speed,
@@ -203,6 +206,9 @@ pub(crate) fn render_menu_bar(
   ui: &mut egui::Ui,
   culling: &mut CullType,
   player_clip: &mut PlayerClipConfig,
+  light_azimuth: &mut f32,
+  light_elevation: &mut f32,
+  shadow: &mut ShadowConfig,
   camera_mode: &mut CameraMode,
   orbit: &mut OrbitPlayerCameraOrigin,
   manual_camera_speed: &mut f32,
@@ -240,6 +246,48 @@ pub(crate) fn render_menu_bar(
           .clamping(egui::SliderClamping::Always)
           .text("Min visibility"),
       );
+    }
+  });
+
+  // Lighting.
+  ui.menu_button("Lighting", |ui| {
+    angle_slider_deg(ui, light_azimuth, -180.0..=180.0, "Azimuth");
+    angle_slider_deg(ui, light_elevation, -90.0..=90.0, "Elevation");
+  });
+
+  // Shadow.
+  ui.menu_button("Shadow", |ui| {
+    ui.checkbox(&mut shadow.enabled, "Player ground shadow");
+    if shadow.enabled {
+      ui.add(
+        egui::Slider::new(&mut shadow.strength, 0.0..=1.0)
+          .clamping(egui::SliderClamping::Always)
+          .text("Strength"),
+      );
+      ui.add(
+        egui::Slider::new(&mut shadow.half_extent, 0.5..=6.0)
+          .clamping(egui::SliderClamping::Always)
+          .text("Frustum size"),
+      );
+      ui.add(
+        egui::Slider::new(&mut shadow.bias, 0.0..=0.02)
+          .clamping(egui::SliderClamping::Always)
+          .text("Depth bias"),
+      );
+      ui.separator();
+      ui.checkbox(
+        &mut shadow.independent_angle,
+        "Independent angle (off = follow scene light)",
+      );
+      if shadow.independent_angle {
+        angle_slider_deg(ui, &mut shadow.azimuth, -180.0..=180.0, "Shadow azimuth");
+        angle_slider_deg(
+          ui,
+          &mut shadow.elevation,
+          -90.0..=90.0,
+          "Shadow elevation (90 = straight down)",
+        );
+      }
     }
   });
 
@@ -311,6 +359,28 @@ pub(crate) fn render_menu_bar(
   });
 }
 
+/// A `Slider` that displays/edits `*rad` in degrees but stores radians,
+/// same degree<->radian split as the yaw/pitch controls in
+/// [`render_camera_controls_ui`]. Only writes back on `.changed()`.
+fn angle_slider_deg(
+  ui: &mut egui::Ui,
+  rad: &mut f32,
+  range: std::ops::RangeInclusive<f32>,
+  label: &str,
+) {
+  let mut deg = rad.to_degrees();
+  if ui
+    .add(
+      egui::Slider::new(&mut deg, range)
+        .clamping(egui::SliderClamping::Always)
+        .text(label),
+    )
+    .changed()
+  {
+    *rad = deg.to_radians();
+  }
+}
+
 /// Body of the "Camera Controls" window. Yaw/Pitch display **degrees** and write
 /// back **radians**; `yaw_deg` is `fmod 360` of the degree value. Yaw and pitch are
 /// only written back when the drag actually `.changed()`.
@@ -370,6 +440,10 @@ mod tests {
   fn render_menu_bar_type_checks_and_does_not_panic() {
     let mut culling = CullType::Back;
     let mut player_clip = PlayerClipConfig::default();
+    let mut light_azimuth = 1.1_f32;
+    let mut light_elevation = 1.3_f32;
+    // Default has `independent_angle: true`, exercising the shadow angle sliders below too.
+    let mut shadow = ShadowConfig::default();
     let mut camera_mode = CameraMode::FollowPlayer;
     let mut orbit = OrbitPlayerCameraOrigin::Center;
     let mut speed = 1.0_f32;
@@ -382,6 +456,9 @@ mod tests {
         ui,
         &mut culling,
         &mut player_clip,
+        &mut light_azimuth,
+        &mut light_elevation,
+        &mut shadow,
         &mut camera_mode,
         &mut orbit,
         &mut speed,
@@ -390,14 +467,18 @@ mod tests {
         &mut actors,
       );
     });
-    // Detached path (speed slider + controls toggle visible) + clip disabled.
+    // Detached path (speed slider + controls toggle visible) + clip/shadow disabled.
     camera_mode = CameraMode::Detached;
     player_clip.enabled = false;
+    shadow.enabled = false;
     egui::__run_test_ui(|ui| {
       render_menu_bar(
         ui,
         &mut culling,
         &mut player_clip,
+        &mut light_azimuth,
+        &mut light_elevation,
+        &mut shadow,
         &mut camera_mode,
         &mut orbit,
         &mut speed,
