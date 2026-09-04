@@ -173,6 +173,9 @@ pub struct PlayerClipConfig {
   pub player_margin: f32,
   /// World-unit ramp over which the cutout fades in past the margin.
   pub player_fade: f32,
+  /// Lower bound on how faint dissolved geometry gets (`0.0` = can vanish
+  /// entirely, `0.3` = never less than ~30% of pixels kept).
+  pub min_visibility: f32,
 }
 
 impl Default for PlayerClipConfig {
@@ -180,8 +183,9 @@ impl Default for PlayerClipConfig {
     Self {
       enabled: true,
       cone_radius: 2.5,
-      player_margin: 2.0,
+      player_margin: 0.0,
       player_fade: 1.0,
+      min_visibility: 0.45,
     }
   }
 }
@@ -1706,6 +1710,7 @@ impl WorldRenderer {
       clip.player_fade,
       if clip.enabled { 1.0 } else { 0.0 },
     );
+    uniforms.clip_params2 = Vec4::new(clip.min_visibility, 0.0, 0.0, 0.0);
     self.pipelines.set_uniforms(queue, &uniforms);
 
     let mesh_cull = match self.culling {
@@ -1987,6 +1992,11 @@ pub(crate) fn render_menu_bar(
         egui::Slider::new(&mut player_clip.player_fade, 0.05..=20.0)
           .clamping(egui::SliderClamping::Always)
           .text("Player fade"),
+      );
+      ui.add(
+        egui::Slider::new(&mut player_clip.min_visibility, 0.0..=1.0)
+          .clamping(egui::SliderClamping::Always)
+          .text("Min visibility"),
       );
     }
   });

@@ -27,6 +27,10 @@ pub struct WorldUniforms {
   /// (world units), `y` = player margin, `z` = player fade, `w` = feature
   /// enabled (`1.0` / `0.0`). Driven by the Culling menu.
   pub clip_params: Vec4,
+  /// More `fs_mesh` cutout tuning: `x` = minimum visibility (`keep` floor, so
+  /// dissolved geometry never drops below this fraction), `yzw` reserved.
+  /// Driven by the Culling menu.
+  pub clip_params2: Vec4,
 }
 
 impl Default for WorldUniforms {
@@ -41,6 +45,7 @@ impl Default for WorldUniforms {
       light_dir: Vec3A::ZERO,
       player_pos: Vec4::new(0.0, 0.0, 0.0, 1.0),
       clip_params: Vec4::new(1.5, 2.0, 1.0, 1.0),
+      clip_params2: Vec4::ZERO,
     }
   }
 }
@@ -70,6 +75,7 @@ struct Uniforms {
   light_dir: vec3<f32>,
   player_pos: vec4<f32>,
   clip_params: vec4<f32>,
+  clip_params2: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> u: Uniforms;
 
@@ -139,7 +145,19 @@ fn fs_mesh(in: VsOut) -> @location(0) vec4<f32> {
   let cone_radius_outer = u.clip_params.x + 1.0; // fully outside (fixed 1u soft edge)
   let in_cone = 1.0 - smoothstep(cone_radius_inner, cone_radius_outer, cone_r);
 
-  let keep = 1.0 - in_front * in_cone;
+  // Fudge: up-facing floor grazes into the cone far more than walls do, so bias
+  // it back toward being kept -- but only for fragments at or below the player's
+  // height, so the ground the player stands on is spared while an up-facing
+  // platform *above* the player (between it and the camera) still dissolves.
+  // `up` is ~1 on a level floor, ~0 on a wall; squared so only near-horizontal
+  // surfaces get much help.
+  // An idea to explore in the future: maybe we pick if we filter above/below based on the camera orientation?
+  let up = clamp(normalize(in.normal).z, 0.0, 1.0);
+  let below_player = smoothstep(-0.5, 0.5, u.player_pos.z - in.frag_pos.z);
+  let ground_keep_bias = 1 * up * up * below_player;
+  // `min_visibility` floors the result so dissolved geometry never fully vanishes.
+  let min_visibility = u.clip_params2.x;
+  let keep = max(mix(1.0 - in_front * in_cone, 1.0, ground_keep_bias), min_visibility);
 
   let m = bayer4x4(vec2<u32>(in.clip_pos.xy) % 4u);
   if (u.player_pos.w != 0.0 && u.clip_params.w != 0.0 && keep < m) { discard; }
@@ -191,6 +209,7 @@ impl WorldUniforms {
       player_pos: player_pos.extend(1.0),
       // Overwritten per-frame from `PlayerClipConfig` in `WorldRenderer::render`.
       clip_params: Vec4::new(1.5, 2.0, 1.0, 1.0),
+      clip_params2: Vec4::ZERO,
     }
   }
 }
@@ -416,7 +435,7 @@ mod tests {
 
   #[test]
   fn world_uniforms_size_and_offsets() {
-    assert_eq!(size_of::<WorldUniforms>(), 320);
+    assert_eq!(size_of::<WorldUniforms>(), 336);
     assert_eq!(align_of::<WorldUniforms>(), 16);
     assert_eq!(offset_of!(WorldUniforms, model), 0);
     assert_eq!(offset_of!(WorldUniforms, view), 64);
@@ -426,6 +445,7 @@ mod tests {
     assert_eq!(offset_of!(WorldUniforms, light_dir), 272);
     assert_eq!(offset_of!(WorldUniforms, player_pos), 288);
     assert_eq!(offset_of!(WorldUniforms, clip_params), 304);
+    assert_eq!(offset_of!(WorldUniforms, clip_params2), 320);
   }
 
   #[test]
