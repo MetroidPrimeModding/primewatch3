@@ -1,15 +1,5 @@
 # Conversion tasks — remaining work
 
-The Rust port of PrimeWatch is **code-complete through Phase 10**. Every phase (P0–P10) has
-shipped and been reviewed. What remains is **manual verification that cannot be done in this
-environment** — it needs a display, a live Dolphin + Metroid Prime 1, and/or a push to GitHub
-Actions — plus one open software decision.
-
-The old per-task archives (`completed_tasks/`) have been removed; the shipped-state summaries
-live in the git history (`port(PX.Y): …` commits on the `rust-conversion` branch).
-
-Status legend: `BLOCKED (reason)` · `TODO`
-
 ---
 
 ## Manual verification — needs a live Dolphin + Metroid Prime 1
@@ -35,8 +25,6 @@ Status legend: `BLOCKED (reason)` · `TODO`
 ### P10.1 — Cross-platform CI + release packaging
 - [ ] Push a branch / `v*` tag and watch Actions: all three legs (windows-latest / ubuntu-latest /
       macos-latest) build + test green.
-- [ ] The Linux `apt-get` list in `rust_build.yml` is sufficient for a full `cargo build --release`
-      on a clean runner (nothing else wgpu/rfd needs at compile time).
 - [ ] `primewatch3-windows.zip` produced on the runner is a real zip; `primewatch3-macos.tar.gz`
       and `primewatch3-linux.tar.gz` unpack to `primewatch3/prime_defs/` + the binary.
 - [ ] On a `v*` tag the single GitHub Release ends up with all three archives attached.

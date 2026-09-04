@@ -36,7 +36,20 @@ pub fn run() -> Result<(), Box<dyn Error>> {
   let event_loop = EventLoop::new()?;
   let mut app = App::new();
   event_loop.run_app(&mut app)?;
-  Ok(())
+
+  // Hard-exit without running any destructors.
+  //
+  // egui-winit pulls in `smithay-clipboard`, which spawns a background thread
+  // holding its own wayland `Connection` over the same `wl_display` winit owns.
+  // Dropping `egui_winit::State` (inside `app`) tears down that clipboard state
+  // concurrently with winit's own connection teardown, corrupting libwayland's
+  // proxy object-map (`wl_map_insert_at` crash in `wl_proxy_destroy`). Letting
+  // wgpu drop first doesn't help — the crash is in the clipboard drop itself.
+  // `exiting()` already did the authoritative `ui_state::save`, so nothing on
+  // this path needs Drop: kill the process and let the OS reclaim everything,
+  // including the detached clipboard thread. `process::exit` diverges, so `app`
+  // is simply never dropped.
+  std::process::exit(0);
 }
 
 /// The five ghost-record hotkeys
