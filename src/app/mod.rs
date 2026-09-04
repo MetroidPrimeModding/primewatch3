@@ -361,7 +361,7 @@ impl ApplicationHandler for App {
     // Authoritative UI-layout save: covers window-close, menu quit, and any
     // other clean exit (`render` also autosaves for the crash case).
     if let Some(window) = self.window.as_ref() {
-      ui_state::save(&window.egui_ctx);
+      ui_state::save(&window.egui_ctx, &window.window);
     }
   }
 }

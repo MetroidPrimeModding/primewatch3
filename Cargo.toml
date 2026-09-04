@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-sysinfo = "0.33.1"
+sysinfo = "0.39"
 log = { version = "*", features = ["max_level_debug", "release_max_level_warn"] }
 bstruct = { path = "bstruct" }
 libc = "0.2"
@@ -17,6 +17,7 @@ egui-winit = "0.36"
 # disk so the UI layout survives a restart (see src/ui_state.rs). Same format
 # eframe uses internally; pinned to the version egui already locks.
 ron = "0.12"
+serde = { version = "1", features = ["derive"] }
 glam = "0.33"
 pollster = "1.0"
 wgpu = "30"
@@ -42,8 +43,12 @@ windows = { version = "0.62", features = [
 opt-level = 1
 
 # Enable a large amount of optimization in the dev profile for dependencies.
-[profile.dev.package."*"]
-opt-level = 3
+#[profile.dev.package."*"]
+#opt-level = 3
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
 
 [profile.wasm-release]
 # Default to release profile values.

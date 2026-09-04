@@ -5,7 +5,7 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::Instant;
 
-use winit::dpi::{LogicalSize, PhysicalSize};
+use winit::dpi::{LogicalPosition, LogicalSize, PhysicalSize};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 
@@ -55,13 +55,20 @@ pub(super) struct AppWindow {
 
 impl AppWindow {
   pub(super) fn new(event_loop: &ActiveEventLoop) -> Result<Self, Box<dyn Error>> {
-    let window = Arc::new(
-      event_loop.create_window(
-        Window::default_attributes()
-          .with_title("Prime Watch 3")
-          .with_inner_size(LogicalSize::new(1200, 800)),
-      )?,
-    );
+    // Recreate the window at its last saved size/position (if any) *before*
+    // `ui_state::load` reinstalls the egui layout below — egui's window/area
+    // positions are only meaningful relative to the viewport they were saved
+    // against, so mismatching them here is what causes saved layouts to look
+    // like they "moved" (egui clamps them back inside a smaller viewport).
+    let geometry = ui_state::load_window_geometry();
+    let size = geometry.as_ref().map(|g| g.size).unwrap_or((1200.0, 800.0));
+    let mut attrs = Window::default_attributes()
+      .with_title("Prime Watch 3")
+      .with_inner_size(LogicalSize::new(size.0, size.1));
+    if let Some(pos) = geometry.and_then(|g| g.position) {
+      attrs = attrs.with_position(LogicalPosition::new(pos.0, pos.1));
+    }
+    let window = Arc::new(event_loop.create_window(attrs)?);
 
     let instance = wgpu::Instance::default();
     let surface = instance.create_surface(window.clone())?;
@@ -503,7 +510,7 @@ impl AppWindow {
     // Flush the UI layout to disk periodically so a crash doesn't lose it (the
     // authoritative save is in `App::exiting`).
     if self.last_ui_save.elapsed() >= ui_state::AUTOSAVE_INTERVAL {
-      ui_state::save(&self.egui_ctx);
+      ui_state::save(&self.egui_ctx, &self.window);
       self.last_ui_save = Instant::now();
     }
   }
