@@ -28,7 +28,7 @@ jobs:
             bin: primewatch3
             archive: primewatch3-macos.tar.gz
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v7
       with:
         submodules: recursive
 
