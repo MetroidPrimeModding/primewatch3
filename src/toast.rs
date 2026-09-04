@@ -87,12 +87,8 @@ impl Toasts {
             .clamp(0.0, 1.0);
 
             let (bg, fg) = match t.kind {
-              ToastKind::Info => {
-                (ui.visuals().window_fill(), ui.visuals().text_color())
-              }
-              ToastKind::Error => {
-                (egui::Color32::from_rgb(122, 32, 32), egui::Color32::WHITE)
-              }
+              ToastKind::Info => (ui.visuals().window_fill(), ui.visuals().text_color()),
+              ToastKind::Error => (egui::Color32::from_rgb(122, 32, 32), egui::Color32::WHITE),
             };
 
             let resp = egui::Frame::NONE
@@ -101,9 +97,7 @@ impl Toasts {
               .corner_radius(4.0)
               .show(ui, |ui| {
                 ui.set_max_width(360.0);
-                ui.label(
-                  egui::RichText::new(&t.text).color(fg.gamma_multiply(alpha)),
-                );
+                ui.label(egui::RichText::new(&t.text).color(fg.gamma_multiply(alpha)));
               })
               .response
               .interact(egui::Sense::click());
@@ -117,9 +111,10 @@ impl Toasts {
     if let Some(i) = clicked {
       self.items.remove(i);
     }
-    self
-      .items
-      .retain(|t| t.shown_at.is_none_or(|s| now.saturating_duration_since(s) < t.ttl));
+    self.items.retain(|t| {
+      t.shown_at
+        .is_none_or(|s| now.saturating_duration_since(s) < t.ttl)
+    });
 
     // Keep the fade animating and expiry prompt even with no other input.
     ctx.request_repaint();

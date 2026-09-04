@@ -160,6 +160,32 @@ impl Default for ActorRenderConfig {
   }
 }
 
+/// The `fs_mesh` "hide geometry between the camera and the player" cutout — a
+/// bayer dissolve inside a cone with its apex at the camera and its axis on the
+/// player. Tuned from the Culling menu, marshalled into `WorldUniforms::clip_params`.
+#[derive(Clone, Copy, Debug)]
+pub struct PlayerClipConfig {
+  /// Feature toggle.
+  pub enabled: bool,
+  /// Cone radius at the player plane, in world units (fixed 1u soft edge past it).
+  pub cone_radius: f32,
+  /// World-unit slack in front of the player before the cutout starts.
+  pub player_margin: f32,
+  /// World-unit ramp over which the cutout fades in past the margin.
+  pub player_fade: f32,
+}
+
+impl Default for PlayerClipConfig {
+  fn default() -> Self {
+    Self {
+      enabled: true,
+      cone_radius: 2.5,
+      player_margin: 2.0,
+      player_fade: 1.0,
+    }
+  }
+}
+
 fn clamp_size(size: (u32, u32)) -> (u32, u32) {
   (size.0.max(1), size.1.max(1))
 }
@@ -564,6 +590,7 @@ pub struct WorldRenderer {
   pub orbit_player_camera_origin: OrbitPlayerCameraOrigin,
   pub trigger_render_config: TriggerRenderConfig,
   pub actor_render_config: ActorRenderConfig,
+  pub player_clip_config: PlayerClipConfig,
   /// The detached-camera move-speed multiplier, driven by the "Speed" slider in
   /// the Camera menu.
   pub manual_camera_speed: f32,
@@ -602,10 +629,17 @@ pub struct WorldRenderer {
   pipelines: WorldPipelines,
   render_buff: crate::gl::immediate::ImmediateModeBuffer,
   translucent_render_buff: crate::gl::immediate::ImmediateModeBuffer,
+  /// Player / ghost model tris — kept separate so they can be drawn with the
+  /// `bind_group_noclip` uniforms (the near-player bayer cutout must not eat the
+  /// player model itself).
+  player_render_buff: crate::gl::immediate::ImmediateModeBuffer,
+  player_translucent_render_buff: crate::gl::immediate::ImmediateModeBuffer,
   opaque_tris: DynamicMesh,
   opaque_lines: DynamicMesh,
   translucent_tris: DynamicMesh,
   translucent_lines: DynamicMesh,
+  player_tris: DynamicMesh,
+  player_translucent_tris: DynamicMesh,
   mesh_by_mrea: HashMap<u32, CollisionMesh>,
   gpu_mesh_by_mrea: HashMap<u32, DynamicMesh>,
 }
@@ -632,6 +666,7 @@ impl WorldRenderer {
       orbit_player_camera_origin: OrbitPlayerCameraOrigin::Center,
       trigger_render_config: TriggerRenderConfig::default(),
       actor_render_config: ActorRenderConfig::default(),
+      player_clip_config: PlayerClipConfig::default(),
       manual_camera_speed: 1.0,
       show_exact_camera_controls: false,
       cam_projection: Mat4::IDENTITY,
@@ -651,10 +686,14 @@ impl WorldRenderer {
       // mirrors `WorldRenderer::init`.
       render_buff: crate::gl::immediate::ImmediateModeBuffer::new(),
       translucent_render_buff: crate::gl::immediate::ImmediateModeBuffer::new(),
+      player_render_buff: crate::gl::immediate::ImmediateModeBuffer::new(),
+      player_translucent_render_buff: crate::gl::immediate::ImmediateModeBuffer::new(),
       opaque_tris: DynamicMesh::new(device, "world-opaque-tris"),
       opaque_lines: DynamicMesh::new(device, "world-opaque-lines"),
       translucent_tris: DynamicMesh::new(device, "world-translucent-tris"),
       translucent_lines: DynamicMesh::new(device, "world-translucent-lines"),
+      player_tris: DynamicMesh::new(device, "world-player-tris"),
+      player_translucent_tris: DynamicMesh::new(device, "world-player-translucent-tris"),
       mesh_by_mrea: HashMap::new(),
       gpu_mesh_by_mrea: HashMap::new(),
     }
@@ -858,12 +897,15 @@ impl WorldRenderer {
     // --- CPU geometry into the immediate buffers ---
     self.render_buff.clear();
     self.translucent_render_buff.clear();
+    self.player_render_buff.clear();
+    self.player_translucent_render_buff.clear();
 
+    // Player collision
     self
-      .translucent_render_buff
+      .player_translucent_render_buff
       .set_transform(Mat4::from_translation(self.last_known_non_colliding_pos));
     self
-      .translucent_render_buff
+      .player_translucent_render_buff
       .add_tris(&shapes::generate_cube(
         Vec3::new(-0.5, -0.5, 0.0),
         Vec3::new(0.5, 0.5, 2.7),
@@ -897,14 +939,15 @@ impl WorldRenderer {
     }
   }
 
-  /// Selects the opaque or translucent immediate buffer by `translucent`, sets
-  /// its transform, and pushes `verts` — the `buf = color.a < 0.99 ? … : …`
-  /// pattern shared by `drawPlayer` / the per-class draw functions.
-  fn buf_add_tris(&mut self, translucent: bool, transform: Mat4, verts: &[Vert]) {
+  /// Selects the opaque or translucent player buffer by `translucent`, sets its
+  /// transform, and pushes `verts` — the `buf = color.a < 0.99 ? … : …` pattern
+  /// from `drawPlayer`. These buffers are drawn with `bind_group_noclip` so the
+  /// near-player bayer cutout in `fs_mesh` leaves the player / ghost models alone.
+  fn player_buf_add_tris(&mut self, translucent: bool, transform: Mat4, verts: &[Vert]) {
     let buf = if translucent {
-      &mut self.translucent_render_buff
+      &mut self.player_translucent_render_buff
     } else {
-      &mut self.render_buff
+      &mut self.player_render_buff
     };
     buf.set_transform(transform);
     buf.add_tris(verts);
@@ -920,10 +963,10 @@ impl WorldRenderer {
       let model = Mat4::from_translation(ghost.position + Vec3::new(0.0, 0.0, 0.7))
         * Mat4::from_quat(ghost.orientation);
       let tris = shapes::generate_sphere(Vec3::ZERO, 0.7, color);
-      self.buf_add_tris(translucent, model, &tris);
+      self.player_buf_add_tris(translucent, model, &tris);
     } else {
       let tris = shapes::generate_cube(Vec3::new(-0.5, -0.5, 0.0), Vec3::new(0.5, 0.5, 2.7), color);
-      self.buf_add_tris(translucent, Mat4::from_translation(ghost.position), &tris);
+      self.player_buf_add_tris(translucent, Mat4::from_translation(ghost.position), &tris);
     }
 
     // Speed indicator — always on the opaque `render_buff`.
@@ -1634,16 +1677,34 @@ impl WorldRenderer {
     self
       .translucent_lines
       .upload(device, queue, self.translucent_render_buff.line_verts());
+    self
+      .player_tris
+      .upload(device, queue, self.player_render_buff.tri_verts());
+    self.player_translucent_tris.upload(
+      device,
+      queue,
+      self.player_translucent_render_buff.tri_verts(),
+    );
+
+    let mut player_pos = self.last_known_non_colliding_pos;
+    player_pos.z += orbit_z_nudge(OrbitPlayerCameraOrigin::Center, self.player.is_morphed);
 
     // model is identity for every draw: the immediate buffers bake per-vertex
     // transforms and collision verts are already world-space.
-    let uniforms = WorldUniforms::from_matrices(
+    let mut uniforms = WorldUniforms::from_matrices(
       Mat4::IDENTITY,
       self.cam_view,
       self.cam_projection,
       self.cam_eye,
       self.light_dir.normalize(),
-      self.player.position,
+      player_pos,
+    );
+    let clip = &self.player_clip_config;
+    uniforms.clip_params = Vec4::new(
+      clip.cone_radius,
+      clip.player_margin,
+      clip.player_fade,
+      if clip.enabled { 1.0 } else { 0.0 },
     );
     self.pipelines.set_uniforms(queue, &uniforms);
 
@@ -1691,11 +1752,23 @@ impl WorldRenderer {
     pass.set_pipeline(&self.pipelines.line_opaque);
     self.opaque_lines.draw(&mut pass);
 
+    // (b') opaque player / ghost models — never clipped by the near-player cutout.
+    pass.set_bind_group(0, &self.pipelines.bind_group_noclip, &[]);
+    pass.set_pipeline(self.pipelines.mesh(false, Some(wgpu::Face::Back)));
+    self.player_tris.draw(&mut pass);
+    pass.set_bind_group(0, &self.pipelines.bind_group, &[]);
+
     // (c) translucent immediate buffer.
     pass.set_pipeline(self.pipelines.mesh(true, Some(wgpu::Face::Back)));
     self.translucent_tris.draw(&mut pass);
     pass.set_pipeline(&self.pipelines.line_translucent);
     self.translucent_lines.draw(&mut pass);
+
+    // (c') translucent player / ghost models — never clipped.
+    pass.set_bind_group(0, &self.pipelines.bind_group_noclip, &[]);
+    pass.set_pipeline(self.pipelines.mesh(true, Some(wgpu::Face::Back)));
+    self.player_translucent_tris.draw(&mut pass);
+    pass.set_bind_group(0, &self.pipelines.bind_group, &[]);
   }
 
   /// `WorldRenderer::renderImGui` — the "WorldStatus" area/loading table and the
@@ -1851,6 +1924,7 @@ impl WorldRenderer {
     render_menu_bar(
       ui,
       &mut self.culling,
+      &mut self.player_clip_config,
       &mut self.camera_mode,
       &mut self.orbit_player_camera_origin,
       &mut self.manual_camera_speed,
@@ -1881,6 +1955,7 @@ impl WorldRenderer {
 pub(crate) fn render_menu_bar(
   ui: &mut egui::Ui,
   culling: &mut CullType,
+  player_clip: &mut PlayerClipConfig,
   camera_mode: &mut CameraMode,
   orbit: &mut OrbitPlayerCameraOrigin,
   manual_camera_speed: &mut f32,
@@ -1894,6 +1969,26 @@ pub(crate) fn render_menu_bar(
     ui.selectable_value(culling, CullType::Back, "Show Front");
     ui.selectable_value(culling, CullType::Front, "Show Back");
     ui.selectable_value(culling, CullType::None, "Show All");
+
+    ui.separator();
+    ui.checkbox(&mut player_clip.enabled, "Hide geometry in front of player");
+    if player_clip.enabled {
+      ui.add(
+        egui::Slider::new(&mut player_clip.cone_radius, 0.25..=10.0)
+          .clamping(egui::SliderClamping::Always)
+          .text("Cone radius"),
+      );
+      ui.add(
+        egui::Slider::new(&mut player_clip.player_margin, 0.0..=10.0)
+          .clamping(egui::SliderClamping::Always)
+          .text("Player margin"),
+      );
+      ui.add(
+        egui::Slider::new(&mut player_clip.player_fade, 0.05..=20.0)
+          .clamping(egui::SliderClamping::Always)
+          .text("Player fade"),
+      );
+    }
   });
 
   // Camera.
@@ -2043,7 +2138,7 @@ mod tests {
   }
 
   #[test]
-  fn quat_from_euler_matches_glm_half_angle_formula() {
+  fn quat_from_euler_matches_glm__angle_formula() {
     for euler in [
       Vec3::new(0.0, std::f32::consts::FRAC_PI_2, 0.0),
       Vec3::new(0.3, 0.5, 0.7),
@@ -2399,6 +2494,7 @@ mod tests {
   #[test]
   fn render_menu_bar_type_checks_and_does_not_panic() {
     let mut culling = CullType::Back;
+    let mut player_clip = PlayerClipConfig::default();
     let mut camera_mode = CameraMode::FollowPlayer;
     let mut orbit = OrbitPlayerCameraOrigin::Center;
     let mut speed = 1.0_f32;
@@ -2410,6 +2506,7 @@ mod tests {
       render_menu_bar(
         ui,
         &mut culling,
+        &mut player_clip,
         &mut camera_mode,
         &mut orbit,
         &mut speed,
@@ -2418,12 +2515,14 @@ mod tests {
         &mut actors,
       );
     });
-    // Detached path (speed slider + controls toggle visible).
+    // Detached path (speed slider + controls toggle visible) + clip disabled.
     camera_mode = CameraMode::Detached;
+    player_clip.enabled = false;
     egui::__run_test_ui(|ui| {
       render_menu_bar(
         ui,
         &mut culling,
+        &mut player_clip,
         &mut camera_mode,
         &mut orbit,
         &mut speed,

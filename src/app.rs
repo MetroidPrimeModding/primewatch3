@@ -1000,12 +1000,9 @@ impl AppWindow {
               });
 
               // FPS counter, pinned to the end of the toolbar.
-              ui.with_layout(
-                egui::Layout::right_to_left(egui::Align::Center),
-                |ui| {
-                  ui.label(format!("{} FPS", self.fps_display));
-                },
-              );
+              ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(format!("{} FPS", self.fps_display));
+              });
             });
           });
         });
@@ -1137,7 +1134,6 @@ impl AppWindow {
         *fs.show_raw_data_view = false;
       }
     }
-
 
     // --- WorldStatus / PlayerStatus overlays, only while the memory parse is live.
     if let Some(ctx) = ctx.as_ref() {
