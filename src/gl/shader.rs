@@ -23,9 +23,10 @@ pub struct WorldUniforms {
   /// rather than a trailing `u32` so the Rust and WGSL layouts can't disagree
   /// over `vec3` tail padding.
   pub player_pos: Vec4,
-  /// Tuning for the `fs_mesh` cutout: `x` = cone radius at the player plane
-  /// (world units), `y` = player margin, `z` = player fade, `w` = feature
-  /// enabled (`1.0` / `0.0`). Driven by the Culling menu.
+  /// Tuning for the `fs_mesh` cutout: `x` = cone radius at the cap (world
+  /// units), `y` = player margin, `z` = soft-edge width on the cone/hemisphere
+  /// radius cutoff, `w` = feature enabled (`1.0` / `0.0`). Driven by the
+  /// Culling menu.
   pub clip_params: Vec4,
   /// More `fs_mesh` cutout tuning: `x` = minimum visibility (`keep` floor, so
   /// dissolved geometry never drops below this fraction), `yzw` reserved.
@@ -127,22 +128,24 @@ fn fs_mesh(in: VsOut) -> @location(0) vec4<f32> {
   let dist_along = dot(to_frag, axis_dir);   // signed distance along the camera->player axis
 
   // Bayer dissolve of geometry inside a cone whose apex is the camera and whose
-  // axis points at the player. `in_front` gates it to the segment between the
-  // camera and the player, minus `player_margin` world units of slack around the
-  // player so its feet / a wall behind it are left alone. `in_cone` is the
-  // radial falloff: the cone radius tapers linearly from 0 at the camera to
-  // `cone_radius_*` (world units) at the player plane, so the removed volume
-  // near the player is a fixed physical size no matter how far the camera is.
-  let ahead = axis_len - dist_along;
+  // axis points at the player, ending in a rounded hemisphere cap instead of a
+  // flat disc. The cone's lateral surface tapers linearly from radius 0 at the
+  // camera to `cone_radius_*` (world units) at `cap_dist` -- `player_margin`
+  // world units short of the player, so its feet / a wall behind it are left
+  // alone. Past `cap_dist` the radius measure switches from the axis-rescaled
+  // cone radius to the raw 3D distance to the cap point, tracing a hemisphere
+  // that bulges away from the camera. The two formulas agree exactly at
+  // `cap_dist` (the rescale factor is 1 there), so the surface is continuous --
+  // no seam where the cone meets the cap.
   let player_margin = u.clip_params.y;
-  let player_fade = max(u.clip_params.z, 1e-4);
-  let in_front = smoothstep(player_margin, player_margin + player_fade, ahead);
+  let cap_dist = max(axis_len - player_margin, 1e-6);
+  let dist_along_clamped = min(dist_along, cap_dist);
+  let perp = length(to_frag - axis_dir * dist_along_clamped);
+  let cone_r = select(perp, perp * cap_dist / max(dist_along, 1e-6), dist_along <= cap_dist);
 
-  let perp = length(to_frag - axis_dir * dist_along);
-  // perp distance rescaled to the player plane (linear taper toward the camera)
-  let cone_r = perp * axis_len / max(dist_along, 1e-6);
-  let cone_radius_inner = u.clip_params.x;       // fully inside the cone
-  let cone_radius_outer = u.clip_params.x + 1.0; // fully outside (fixed 1u soft edge)
+  let cone_radius_inner = u.clip_params.x;                 // fully inside the cone/cap
+  let edge_width = max(u.clip_params.z, 1e-4);             // `player_fade`: soft-edge width
+  let cone_radius_outer = cone_radius_inner + edge_width;  // fully outside
   let in_cone = 1.0 - smoothstep(cone_radius_inner, cone_radius_outer, cone_r);
 
   // Fudge: up-facing floor grazes into the cone far more than walls do, so bias
@@ -157,7 +160,7 @@ fn fs_mesh(in: VsOut) -> @location(0) vec4<f32> {
   let ground_keep_bias = 1 * up * up * below_player;
   // `min_visibility` floors the result so dissolved geometry never fully vanishes.
   let min_visibility = u.clip_params2.x;
-  let keep = max(mix(1.0 - in_front * in_cone, 1.0, ground_keep_bias), min_visibility);
+  let keep = max(mix(1.0 - in_cone, 1.0, ground_keep_bias), min_visibility);
 
   let m = bayer4x4(vec2<u32>(in.clip_pos.xy) % 4u);
   if (u.player_pos.w != 0.0 && u.clip_params.w != 0.0 && keep < m) { discard; }

@@ -162,16 +162,17 @@ impl Default for ActorRenderConfig {
 
 /// The `fs_mesh` "hide geometry between the camera and the player" cutout — a
 /// bayer dissolve inside a cone with its apex at the camera and its axis on the
-/// player. Tuned from the Culling menu, marshalled into `WorldUniforms::clip_params`.
+/// player, ending in a rounded hemisphere cap rather than a flat disc. Tuned
+/// from the Culling menu, marshalled into `WorldUniforms::clip_params`.
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerClipConfig {
   /// Feature toggle.
   pub enabled: bool,
-  /// Cone radius at the player plane, in world units (fixed 1u soft edge past it).
+  /// Cone radius at the hemisphere cap, in world units.
   pub cone_radius: f32,
-  /// World-unit slack in front of the player before the cutout starts.
+  /// World-unit slack in front of the player before the hemisphere cap starts.
   pub player_margin: f32,
-  /// World-unit ramp over which the cutout fades in past the margin.
+  /// World-unit width of the soft edge on the cone/hemisphere radius cutoff.
   pub player_fade: f32,
   /// Lower bound on how faint dissolved geometry gets (`0.0` = can vanish
   /// entirely, `0.3` = never less than ~30% of pixels kept).
@@ -182,8 +183,8 @@ impl Default for PlayerClipConfig {
   fn default() -> Self {
     Self {
       enabled: true,
-      cone_radius: 2.5,
-      player_margin: 0.0,
+      cone_radius: 2.0,
+      player_margin: 2.5,
       player_fade: 1.0,
       min_visibility: 0.45,
     }
