@@ -1,6 +1,6 @@
 //! `DynamicMesh` — a growable vertex buffer plus a non-indexed draw.
 
-use crate::gl::{Topology, Vert, as_bytes};
+use crate::gl::{Vert, as_bytes};
 
 /// Initial buffer capacity
 const INITIAL_CAPACITY_BYTES: u64 = 4096;
@@ -10,11 +10,10 @@ pub struct DynamicMesh {
   buffer: wgpu::Buffer,
   capacity_bytes: u64,
   vert_count: u32,
-  topology: Topology,
 }
 
 impl DynamicMesh {
-  pub fn new(device: &wgpu::Device, label: &str, topology: Topology) -> Self {
+  pub fn new(device: &wgpu::Device, label: &str) -> Self {
     let capacity_bytes = INITIAL_CAPACITY_BYTES;
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
       label: Some(label),
@@ -27,7 +26,6 @@ impl DynamicMesh {
       buffer,
       capacity_bytes,
       vert_count: 0,
-      topology,
     }
   }
 
@@ -56,14 +54,5 @@ impl DynamicMesh {
     }
     pass.set_vertex_buffer(0, self.buffer.slice(..));
     pass.draw(0..self.vert_count, 0..1);
-  }
-
-  pub fn vert_count(&self) -> u32 {
-    self.vert_count
-  }
-
-  /// Informational — the actual topology lives in the pipeline the caller binds.
-  pub fn topology(&self) -> Topology {
-    self.topology
   }
 }

@@ -214,7 +214,6 @@ struct App {
   /// Cached Dolphin PID list for the Attach menu
   pids: Vec<Pid>,
   show_raw_data_view: bool,
-  show_demo_view: bool,
   /// Generic `GameInstance` tree view — hosts the "globals" window and the
   /// Tools-menu exact-values toggle (`GameObjectRenderers::render_exact_values`).
   inspector: Inspector,
@@ -293,7 +292,6 @@ impl App {
       pids,
       toasts,
       show_raw_data_view: false,
-      show_demo_view: false,
       inspector: Inspector::new(),
       editor_ids_to_watch: Vec::new(),
       show_active_in_table_only: true,
@@ -319,7 +317,6 @@ impl App {
       toasts,
       pids,
       show_raw_data_view,
-      show_demo_view,
       inspector,
       editor_ids_to_watch,
       show_active_in_table_only,

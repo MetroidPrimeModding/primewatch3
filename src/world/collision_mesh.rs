@@ -18,6 +18,7 @@ use crate::structs::prime_structs::GameInstance;
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ECollisionMaterial(pub u32);
 
+#[allow(unused)]
 impl ECollisionMaterial {
   pub const UNKNOWN_1: ECollisionMaterial = ECollisionMaterial(0x1);
   pub const STONE: ECollisionMaterial = ECollisionMaterial(0x2);

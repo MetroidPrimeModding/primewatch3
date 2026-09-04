@@ -135,6 +135,7 @@ pub fn generate_cube(min: Vec3, max: Vec3, color: Vec4) -> Vec<Vert> {
 
 /// Solid box specified by centre + full size —
 /// `ShapeGenerator::generateCubeFromCenter`.
+#[allow(dead_code)]
 pub fn generate_cube_from_center(center: Vec3, size: Vec3, color: Vec4) -> Vec<Vert> {
   generate_cube(center - size / 2.0, center + size / 2.0, color)
 }

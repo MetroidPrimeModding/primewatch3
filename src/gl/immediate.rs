@@ -29,6 +29,7 @@ impl Default for ImmediateModeBuffer {
   }
 }
 
+#[allow(dead_code)]
 impl ImmediateModeBuffer {
   /// The ctor, minus the two `make_unique<OpenGLMesh>`.
   pub fn new() -> Self {

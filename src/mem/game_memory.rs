@@ -57,6 +57,7 @@ impl GameMemory {
   }
 }
 
+#[allow(dead_code)]
 impl GameMemory {
   // the gamecube is big endian, and addresses start at 0x8000_0000
   // Both memory dumps and Dolphin store it in a different spot
@@ -167,8 +168,6 @@ impl GameMemory {
     Some(GameMemory::extract_bits(raw, bit, bit_length, 64))
   }
 }
-
-trait MemoryAccess {}
 
 #[cfg(test)]
 mod tests {

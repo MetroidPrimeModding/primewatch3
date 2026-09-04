@@ -68,6 +68,7 @@ impl GameStructs {
 #[derive(Clone, Debug)]
 pub struct GameEnum {
   pub name: TypeName,
+  #[allow(unused)]
   pub size: i64,
   // name <-> value
   pub values: BiBTreeMap<EnumName, i64>,
@@ -87,6 +88,7 @@ impl GameEnum {
     }
   }
 
+  #[allow(unused)]
   pub fn get_value_by_name(&self, name: &str) -> Option<i64> {
     self.values.get_by_left(name).cloned()
   }
@@ -100,6 +102,7 @@ impl GameEnum {
 pub struct GameStruct {
   pub name: TypeName,
   pub size: i64,
+  #[allow(unused)]
   pub vtable_address: Option<i64>,
   pub extends: Vec<TypeName>,
   pub members_by_offset: BTreeMap<i64, GameMember>,
@@ -184,6 +187,7 @@ impl GameMember {
     }
   }
 
+  #[allow(unused)]
   pub fn get_type(&self, game_structs: &GameStructs) -> Option<GameStruct> {
     game_structs.get_struct_by_name(&self.type_name)
   }
@@ -230,6 +234,7 @@ impl GameInstance {
     }
   }
 
+  #[allow(dead_code)]
   pub fn with_bitfield(
     address: u32,
     type_name: String,

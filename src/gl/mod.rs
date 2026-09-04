@@ -61,29 +61,6 @@ pub(crate) fn as_bytes<T: Copy>(data: &[T]) -> &[u8] {
   unsafe { std::slice::from_raw_parts(data.as_ptr().cast::<u8>(), std::mem::size_of_val(data)) }
 }
 
-/// Primitive topology — the used subset of the GL `RenderType`. The other five
-/// GL modes (`POINTS`, `LINE_LOOP`, `LINE_STRIP`, `TRIANGLE_STRIP`,
-/// `TRIANGLE_FAN`) are unused in the codebase, and `LINE_LOOP` / `TRIANGLE_FAN`
-/// have no wgpu-core equivalent.
-///
-/// `BufferUpdateType` (`STATIC` / `DYNAMIC` / `STREAM`) is dropped: a wgpu
-/// dynamic buffer is just `VERTEX | COPY_DST` + `queue.write_buffer`, the GL
-/// usage hint has no analogue.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Topology {
-  Lines,
-  Triangles,
-}
-
-impl Topology {
-  pub fn to_wgpu(self) -> wgpu::PrimitiveTopology {
-    match self {
-      Topology::Lines => wgpu::PrimitiveTopology::LineList,
-      Topology::Triangles => wgpu::PrimitiveTopology::TriangleList,
-    }
-  }
-}
-
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -98,14 +75,5 @@ mod tests {
     assert_eq!(Vert::LAYOUT.attributes[1].offset, 12);
     assert_eq!(Vert::LAYOUT.attributes[2].offset, 28);
     assert_eq!(Vert::LAYOUT.attributes[3].offset, 40);
-  }
-
-  #[test]
-  fn topology_maps_to_wgpu() {
-    assert_eq!(Topology::Lines.to_wgpu(), wgpu::PrimitiveTopology::LineList);
-    assert_eq!(
-      Topology::Triangles.to_wgpu(),
-      wgpu::PrimitiveTopology::TriangleList
-    );
   }
 }

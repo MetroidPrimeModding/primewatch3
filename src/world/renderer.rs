@@ -21,7 +21,7 @@ use crate::ctx::Ctx;
 use crate::defs::item_types::{EItemType, item_type_to_name};
 use crate::gl::mesh::DynamicMesh;
 use crate::gl::shader::{WorldPipelines, WorldUniforms};
-use crate::gl::{Topology, Vert, WORLD_COLOR_FORMAT, WORLD_DEPTH_FORMAT, shapes};
+use crate::gl::{Vert, WORLD_COLOR_FORMAT, WORLD_DEPTH_FORMAT, shapes};
 use crate::mem::area_utils::get_areas;
 use crate::mem::game_object_utils::{
   TUniqueID, get_all_loading_datas, get_object_by_entity_id, object_tag_to_string,
@@ -651,10 +651,10 @@ impl WorldRenderer {
       // mirrors `WorldRenderer::init`.
       render_buff: crate::gl::immediate::ImmediateModeBuffer::new(),
       translucent_render_buff: crate::gl::immediate::ImmediateModeBuffer::new(),
-      opaque_tris: DynamicMesh::new(device, "world-opaque-tris", Topology::Triangles),
-      opaque_lines: DynamicMesh::new(device, "world-opaque-lines", Topology::Lines),
-      translucent_tris: DynamicMesh::new(device, "world-translucent-tris", Topology::Triangles),
-      translucent_lines: DynamicMesh::new(device, "world-translucent-lines", Topology::Lines),
+      opaque_tris: DynamicMesh::new(device, "world-opaque-tris"),
+      opaque_lines: DynamicMesh::new(device, "world-opaque-lines"),
+      translucent_tris: DynamicMesh::new(device, "world-translucent-tris"),
+      translucent_lines: DynamicMesh::new(device, "world-translucent-lines"),
       mesh_by_mrea: HashMap::new(),
       gpu_mesh_by_mrea: HashMap::new(),
     }
@@ -1603,7 +1603,7 @@ impl WorldRenderer {
     let want: Vec<u32> = self.mesh_by_mrea.keys().copied().collect();
     for mrea in want {
       if !self.gpu_mesh_by_mrea.contains_key(&mrea) {
-        let mut dm = DynamicMesh::new(device, "collision-mesh", Topology::Triangles);
+        let mut dm = DynamicMesh::new(device, "collision-mesh");
         dm.upload(device, queue, &self.mesh_by_mrea[&mrea].verts);
         self.gpu_mesh_by_mrea.insert(mrea, dm);
       }
@@ -1643,6 +1643,7 @@ impl WorldRenderer {
       self.cam_projection,
       self.cam_eye,
       self.light_dir.normalize(),
+      self.player.position,
     );
     self.pipelines.set_uniforms(queue, &uniforms);
 

@@ -2,39 +2,35 @@
 //! shader, and the render pipelines (opaque + translucent, mesh + line), plus
 //! the per-frame uniform upload.
 
+use glam::{Mat4, Vec3A};
 use crate::gl::{Vert, as_bytes};
 
 /// Uniforms poked by `meshShader->setMat4` / `setVec3` in
 /// `WorldRenderer::render`: `model`, `view`, `projection`, `viewPos`, `lightDir`.
-///
-/// `size_of::<WorldUniforms>() == 288`, align 16; field offsets match the WGSL
-/// `Uniforms` struct layout (see the module test).
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
 pub struct WorldUniforms {
-  pub model: [[f32; 4]; 4],
-  pub view: [[f32; 4]; 4],
-  pub projection: [[f32; 4]; 4],
+  pub model: Mat4,
+  pub view: Mat4,
+  pub projection: Mat4,
   /// `Mat4::from_mat3(Mat3::from_mat4(model).inverse().transpose())`.
-  pub normal_matrix: [[f32; 4]; 4],
-  pub view_pos: [f32; 3],
-  pub _pad0: f32,
-  pub light_dir: [f32; 3],
-  pub _pad1: f32,
+  pub normal_matrix: Mat4,
+  pub view_pos: Vec3A,
+  pub light_dir: Vec3A,
+  pub player_pos: Vec3A,
 }
 
 impl Default for WorldUniforms {
   fn default() -> Self {
-    let ident = glam::Mat4::IDENTITY.to_cols_array_2d();
+    let ident = Mat4::IDENTITY;
     Self {
       model: ident,
       view: ident,
       projection: ident,
       normal_matrix: ident,
-      view_pos: [0.0; 3],
-      _pad0: 0.0,
-      light_dir: [0.0; 3],
-      _pad1: 0.0,
+      view_pos: Vec3A::ZERO,
+      light_dir: Vec3A::ZERO,
+      player_pos: Vec3A::ZERO
     }
   }
 }
@@ -43,22 +39,22 @@ impl WorldUniforms {
   /// Build the uniform block from the matrices the caller already has, filling
   /// `normal_matrix` from `model`. `light_dir` is taken as-is (caller normalizes).
   pub fn from_matrices(
-    model: glam::Mat4,
-    view: glam::Mat4,
-    projection: glam::Mat4,
+    model: Mat4,
+    view: Mat4,
+    projection: Mat4,
     view_pos: glam::Vec3,
     light_dir: glam::Vec3,
+    player_pos: glam::Vec3,
   ) -> Self {
-    let normal_matrix = glam::Mat4::from_mat3(glam::Mat3::from_mat4(model).inverse().transpose());
+    let normal_matrix = Mat4::from_mat3(glam::Mat3::from_mat4(model).inverse().transpose());
     Self {
-      model: model.to_cols_array_2d(),
-      view: view.to_cols_array_2d(),
-      projection: projection.to_cols_array_2d(),
-      normal_matrix: normal_matrix.to_cols_array_2d(),
-      view_pos: view_pos.to_array(),
-      _pad0: 0.0,
-      light_dir: light_dir.to_array(),
-      _pad1: 0.0,
+      model,
+      view,
+      projection,
+      normal_matrix,
+      view_pos: view_pos.into(),
+      light_dir: light_dir.into(),
+      player_pos: player_pos.into(),
     }
   }
 }
@@ -189,7 +185,7 @@ impl WorldPipelines {
 
     let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
       label: Some("world-uniforms"),
-      size: std::mem::size_of::<WorldUniforms>() as wgpu::BufferAddress,
+      size: size_of::<WorldUniforms>() as wgpu::BufferAddress,
       usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
       mapped_at_creation: false,
     });
@@ -320,37 +316,41 @@ impl WorldPipelines {
 
 #[cfg(test)]
 mod tests {
+  use std::mem::offset_of;
+  use glam::{Mat3, Vec3};
   use super::*;
 
   #[test]
   fn world_uniforms_size_and_offsets() {
-    assert_eq!(std::mem::size_of::<WorldUniforms>(), 288);
-    assert_eq!(std::mem::align_of::<WorldUniforms>(), 4);
-    assert_eq!(std::mem::offset_of!(WorldUniforms, model), 0);
-    assert_eq!(std::mem::offset_of!(WorldUniforms, view), 64);
-    assert_eq!(std::mem::offset_of!(WorldUniforms, projection), 128);
-    assert_eq!(std::mem::offset_of!(WorldUniforms, normal_matrix), 192);
-    assert_eq!(std::mem::offset_of!(WorldUniforms, view_pos), 256);
-    assert_eq!(std::mem::offset_of!(WorldUniforms, light_dir), 272);
+    assert_eq!(size_of::<WorldUniforms>(), 304);
+    assert_eq!(align_of::<WorldUniforms>(), 16);
+    assert_eq!(offset_of!(WorldUniforms, model), 0);
+    assert_eq!(offset_of!(WorldUniforms, view), 64);
+    assert_eq!(offset_of!(WorldUniforms, projection), 128);
+    assert_eq!(offset_of!(WorldUniforms, normal_matrix), 192);
+    assert_eq!(offset_of!(WorldUniforms, view_pos), 256);
+    assert_eq!(offset_of!(WorldUniforms, light_dir), 272);
   }
 
   #[test]
   fn from_matrices_normal_matrix_is_inverse_transpose_of_model() {
-    let model = glam::Mat4::from_scale(glam::Vec3::new(2.0, 4.0, 8.0));
+    let model = Mat4::from_scale(glam::Vec3::new(2.0, 4.0, 8.0));
     let u = WorldUniforms::from_matrices(
       model,
-      glam::Mat4::IDENTITY,
-      glam::Mat4::IDENTITY,
-      glam::Vec3::ZERO,
-      glam::Vec3::Z,
+      Mat4::IDENTITY,
+      Mat4::IDENTITY,
+      Vec3::ZERO,
+      Vec3::Z,
+      Vec3::ZERO
     );
-    let expected =
-      glam::Mat4::from_mat3(glam::Mat3::from_mat4(model).inverse().transpose()).to_cols_array_2d();
+    let expected = Mat4::from_mat3(
+        Mat3::from_mat4(model).inverse().transpose()
+    );
     assert_eq!(u.normal_matrix, expected);
     // inverse-transpose of a pure scale is 1/scale on the diagonal.
-    assert!((u.normal_matrix[0][0] - 0.5).abs() < 1e-6);
-    assert!((u.normal_matrix[1][1] - 0.25).abs() < 1e-6);
-    assert!((u.normal_matrix[2][2] - 0.125).abs() < 1e-6);
+    assert!((u.normal_matrix.x_axis.x - 0.5).abs() < 1e-6);
+    assert!((u.normal_matrix.y_axis.y - 0.25).abs() < 1e-6);
+    assert!((u.normal_matrix.z_axis.z - 0.125).abs() < 1e-6);
   }
 
   #[test]
