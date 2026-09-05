@@ -338,14 +338,21 @@ impl AppWindow {
         world_view_size_pts = Some(avail);
         // Sense drag/scroll on the image itself — this is the camera look/zoom
         // input (see `WorldViewInput`), consumed next frame by `InputState::plan`.
+        // Primary drag orbits/looks; middle drag pans the detached camera.
         let resp = ui.add(
           egui::Image::new(egui::load::SizedTexture::new(world_texture, avail))
             .sense(egui::Sense::click_and_drag()),
         );
         let rect = resp.rect;
-        if resp.dragged() {
+        if resp.dragged_by(egui::PointerButton::Primary)
+          || resp.dragged_by(egui::PointerButton::Secondary)
+        {
           let d = resp.drag_delta();
           world_view_input.drag = (d.x, d.y);
+        }
+        if resp.dragged_by(egui::PointerButton::Middle) {
+          let d = resp.drag_delta();
+          world_view_input.middle_drag = (d.x, d.y);
         }
         if resp.hovered() {
           world_view_input.scroll = ui.input(|i| i.smooth_scroll_delta.y);

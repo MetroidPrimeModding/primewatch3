@@ -273,10 +273,7 @@ pub(crate) fn render_menu_bar(
           .text("Depth bias"),
       );
       ui.separator();
-      ui.checkbox(
-        &mut shadow.independent_angle,
-        "Independent shadow angle",
-      );
+      ui.checkbox(&mut shadow.independent_angle, "Independent shadow angle");
       if shadow.independent_angle {
         angle_slider_deg(ui, &mut shadow.azimuth, -180.0..=180.0, "Shadow azimuth");
         angle_slider_deg(

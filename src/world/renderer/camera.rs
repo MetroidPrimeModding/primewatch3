@@ -111,12 +111,19 @@ pub(crate) fn compute_camera(p: &CameraParams) -> CameraResult {
     }
     CameraMode::GameCam => (p.game_cam.perspective, p.game_cam.transform.inverse()),
     CameraMode::Detached => {
+      // First-person fly-cam: `manual_camera_pos` *is* the eye (moved by
+      // WASDQE / middle-drag pan / wheel-dolly), and pitch/yaw is the look
+      // direction from it — no more orbiting an offset target at `distance`.
       let proj = perspective(p.fov, p.aspect, p.z_near, p.z_far);
       let angle = quat_from_euler(Vec3::new(0.0, p.pitch, p.yaw));
-      let eye = p.manual_camera_pos - (angle * Vec3::new(p.distance, 0.0, 0.0));
+      let look_dir = angle * Vec3::new(1.0, 0.0, 0.0);
       (
         proj,
-        glam::camera::rh::view::look_at_mat4(eye, p.manual_camera_pos, p.up),
+        glam::camera::rh::view::look_at_mat4(
+          p.manual_camera_pos,
+          p.manual_camera_pos + look_dir,
+          p.up,
+        ),
       )
     }
   };
@@ -129,6 +136,51 @@ pub(crate) fn compute_camera(p: &CameraParams) -> CameraResult {
     view,
     eye,
     manual_camera_pos,
+  }
+}
+
+/// Keeps the camera's world-space eye position fixed across a `camera_mode`
+/// switch between `FollowPlayer` and `Detached` (call once, right after the
+/// mode changes and before this frame's [`compute_camera`]). `FollowPlayer`
+/// still reorients to face the player as soon as it regains control -- only
+/// the eye *position* is preserved, by solving `(distance, pitch, yaw)` for
+/// whatever eye the camera was just sitting at. A switch involving `GameCam`
+/// is a no-op: that mode's eye comes from the game itself, not from these
+/// fields.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn preserve_eye_on_mode_switch(
+  prev: CameraMode,
+  new: CameraMode,
+  orbit: OrbitPlayerCameraOrigin,
+  player_is_morphed: bool,
+  last_known_non_colliding_pos: Vec3,
+  eye: Vec3,
+  distance: &mut f32,
+  pitch: &mut f32,
+  yaw: &mut f32,
+  manual_camera_pos: &mut Vec3,
+) {
+  match (prev, new) {
+    (CameraMode::FollowPlayer, CameraMode::Detached) => {
+      *manual_camera_pos = eye;
+    }
+    (CameraMode::Detached, CameraMode::FollowPlayer) => {
+      let mut look_pos = last_known_non_colliding_pos;
+      look_pos.z += orbit_z_nudge(orbit, player_is_morphed);
+      // Invert `eye = look_pos - angle(pitch, yaw) * (distance, 0, 0)`: the
+      // offset's length is the new distance, and its direction is
+      // `angle * Vec3::X = (cos(pitch)cos(yaw), cos(pitch)sin(yaw), -sin(pitch))`
+      // (closed form of `quat_from_euler(0, pitch, yaw) * Vec3::X`).
+      let offset = look_pos - eye;
+      let d = offset.length();
+      if d > 1e-4 {
+        let f = offset / d;
+        *distance = d;
+        *pitch = -f.z.asin();
+        *yaw = f.y.atan2(f.x);
+      }
+    }
+    _ => {}
   }
 }
 
@@ -255,14 +307,113 @@ mod tests {
   }
 
   #[test]
-  fn detached_orbits_manual_camera_pos_without_z_nudge() {
+  fn detached_is_first_person_at_manual_camera_pos_regardless_of_distance() {
     let mut p = base_params();
     p.camera_mode = CameraMode::Detached;
     p.orbit = OrbitPlayerCameraOrigin::Center; // ignored in Detached
     p.manual_camera_pos = Vec3::new(4.0, 0.0, 0.0);
-    p.distance = 3.0;
+    p.distance = 3.0; // no longer consulted in Detached
     let r = compute_camera(&p);
-    approx(r.eye, Vec3::new(1.0, 0.0, 0.0));
+    approx(r.eye, Vec3::new(4.0, 0.0, 0.0));
+  }
+
+  #[test]
+  fn detached_looks_along_pitch_yaw_from_the_eye() {
+    let mut p = base_params();
+    p.camera_mode = CameraMode::Detached;
+    p.manual_camera_pos = Vec3::new(1.0, 2.0, 3.0);
+    p.yaw = std::f32::consts::FRAC_PI_2;
+    let r = compute_camera(&p);
+    approx(r.eye, p.manual_camera_pos);
+    // yaw=90deg rotates the local +X forward axis to +Y (same convention as
+    // `quat_from_euler_yaw_only_rotates_about_z`); the point one unit along
+    // that world-space look direction should land on view space's -Z axis.
+    let target = p.manual_camera_pos + Vec3::new(0.0, 1.0, 0.0);
+    let target_in_view = r.view * target.extend(1.0);
+    approx(target_in_view.truncate(), Vec3::new(0.0, 0.0, -1.0));
+  }
+
+  #[test]
+  fn follow_player_to_detached_preserves_eye_position() {
+    let eye = Vec3::new(4.0, -2.0, 7.0);
+    let mut distance = 10.0;
+    let mut pitch = 0.3;
+    let mut yaw = 1.2;
+    let mut manual_camera_pos = Vec3::ZERO;
+    preserve_eye_on_mode_switch(
+      CameraMode::FollowPlayer,
+      CameraMode::Detached,
+      OrbitPlayerCameraOrigin::Bottom,
+      false,
+      Vec3::new(1.0, 2.0, 3.0),
+      eye,
+      &mut distance,
+      &mut pitch,
+      &mut yaw,
+      &mut manual_camera_pos,
+    );
+    approx(manual_camera_pos, eye);
+    // pitch/yaw/distance are untouched -- Detached only reads manual_camera_pos.
+    assert_eq!(distance, 10.0);
+    assert_eq!(pitch, 0.3);
+    assert_eq!(yaw, 1.2);
+  }
+
+  #[test]
+  fn detached_to_follow_player_round_trips_through_compute_camera() {
+    let eye = Vec3::new(4.0, -2.0, 7.0);
+    let look_pos_base = Vec3::new(1.0, 2.0, 3.0);
+    let orbit = OrbitPlayerCameraOrigin::Bottom; // no z-nudge, keeps the check simple
+    let mut distance = 999.0;
+    let mut pitch = 999.0;
+    let mut yaw = 999.0;
+    let mut manual_camera_pos = eye; // Detached's eye *is* manual_camera_pos
+    preserve_eye_on_mode_switch(
+      CameraMode::Detached,
+      CameraMode::FollowPlayer,
+      orbit,
+      false,
+      look_pos_base,
+      eye,
+      &mut distance,
+      &mut pitch,
+      &mut yaw,
+      &mut manual_camera_pos,
+    );
+    // Feed the solved (distance, pitch, yaw) back into FollowPlayer and check
+    // it reproduces the same eye.
+    let mut p = base_params();
+    p.orbit = orbit;
+    p.distance = distance;
+    p.pitch = pitch;
+    p.yaw = yaw;
+    p.last_known_non_colliding_pos = look_pos_base;
+    let r = compute_camera(&p);
+    approx(r.eye, eye);
+  }
+
+  #[test]
+  fn mode_switch_involving_game_cam_is_a_no_op() {
+    let mut distance = 10.0;
+    let mut pitch = 0.3;
+    let mut yaw = 1.2;
+    let mut manual_camera_pos = Vec3::new(9.0, 9.0, 9.0);
+    preserve_eye_on_mode_switch(
+      CameraMode::FollowPlayer,
+      CameraMode::GameCam,
+      OrbitPlayerCameraOrigin::Bottom,
+      false,
+      Vec3::ZERO,
+      Vec3::new(1.0, 1.0, 1.0),
+      &mut distance,
+      &mut pitch,
+      &mut yaw,
+      &mut manual_camera_pos,
+    );
+    assert_eq!(distance, 10.0);
+    assert_eq!(pitch, 0.3);
+    assert_eq!(yaw, 1.2);
+    assert_eq!(manual_camera_pos, Vec3::new(9.0, 9.0, 9.0));
   }
 
   #[test]

@@ -81,6 +81,11 @@ pub struct WorldRenderer {
   pub cam_line_length: f32,
   pub culling: CullType,
   pub camera_mode: CameraMode,
+  /// `camera_mode` as of the end of the last [`WorldRenderer::update`] call.
+  /// Compared against `camera_mode` at the top of the next `update` to detect
+  /// a menu-driven mode switch and preserve the camera's eye position across
+  /// it -- see [`camera::preserve_eye_on_mode_switch`].
+  prev_camera_mode: CameraMode,
   pub orbit_player_camera_origin: OrbitPlayerCameraOrigin,
   pub trigger_render_config: TriggerRenderConfig,
   pub actor_render_config: ActorRenderConfig,
@@ -171,6 +176,7 @@ impl WorldRenderer {
       cam_line_length: 10.0,
       culling: CullType::Back,
       camera_mode: CameraMode::FollowPlayer,
+      prev_camera_mode: CameraMode::FollowPlayer,
       orbit_player_camera_origin: OrbitPlayerCameraOrigin::Center,
       trigger_render_config: TriggerRenderConfig::default(),
       actor_render_config: ActorRenderConfig::default(),
@@ -261,13 +267,15 @@ impl WorldRenderer {
     }
   }
 
-  /// The `CameraMode::DETATCHED` WASD/QE block of `PrimeWatch::processInput`.
-  /// `forward` / `right` / `up` are the net key contributions (e.g.
-  /// `forward = W - S`).
+  /// The `CameraMode::DETATCHED` WASD/QE block of `PrimeWatch::processInput`,
+  /// extended to a first-person fly-cam: `forward` follows the full look
+  /// direction (pitch included, so looking up/down and moving forward climbs
+  /// or dives), while `right`/`up` stay yaw-only/world-vertical so strafing
+  /// and Q/E don't tilt with the pitch. `forward` / `right` / `up` are the net
+  /// key (or wheel/pan) contributions (e.g. `forward = W - S`).
   pub fn move_detached_camera(&mut self, forward: f32, right: f32, up: f32) {
-    let angle = quat_from_euler(Vec3::new(0.0, 0.0, self.yaw));
-    let fwd = angle * Vec3::new(1.0, 0.0, 0.0);
-    let rgt = angle * Vec3::new(0.0, 1.0, 0.0);
+    let fwd = quat_from_euler(Vec3::new(0.0, self.pitch, self.yaw)) * Vec3::new(1.0, 0.0, 0.0);
+    let rgt = quat_from_euler(Vec3::new(0.0, 0.0, self.yaw)) * Vec3::new(0.0, 1.0, 0.0);
     let up_axis = Vec3::new(0.0, 0.0, 1.0);
     let speed = self.manual_camera_speed * 0.2;
     self.manual_camera_pos += fwd * (forward * speed);
@@ -289,6 +297,22 @@ impl WorldRenderer {
   ) {
     self.clear_text_overlays();
     self.update_areas(ctx);
+
+    if self.camera_mode != self.prev_camera_mode {
+      camera::preserve_eye_on_mode_switch(
+        self.prev_camera_mode,
+        self.camera_mode,
+        self.orbit_player_camera_origin,
+        self.player.is_morphed,
+        self.last_known_non_colliding_pos,
+        self.cam_eye,
+        &mut self.distance,
+        &mut self.pitch,
+        &mut self.yaw,
+        &mut self.manual_camera_pos,
+      );
+      self.prev_camera_mode = self.camera_mode;
+    }
 
     self.pitch += input.cam_pitch;
     self.yaw += input.cam_yaw;
