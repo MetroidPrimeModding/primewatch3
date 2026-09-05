@@ -50,7 +50,7 @@ impl GameMemory {
   /// When a live process is attached, copy its MEM1 over the snapshot; when
   /// detached (`get_attached_pid()` returns `-1`), do nothing and leave whatever
   /// was last loaded (e.g. a `./mem1.raw` dump) untouched.
-  pub fn update_from_dolphin(&mut self, dolphin: &DolphinMemoryAccess) {
+  pub fn update_from_dolphin(&mut self, dolphin: &mut DolphinMemoryAccess) {
     if dolphin.get_attached_pid() > 0 {
       dolphin.dolphin_memcpy(&mut self.data[..], 0, DOLPHIN_MEMORY_SIZE);
     }

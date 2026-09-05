@@ -14,6 +14,7 @@ pub const DOLPHIN_MEMORY_SIZE: usize = 0x1800000;
 
 /// The span of Dolphin's shared-memory mapping (`mmap`/`munmap` length).
 /// Larger than `DOLPHIN_MEMORY_SIZE` because it also covers the L1 cache / MEM2 region.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 const DOLPHIN_SHM_SIZE: usize = 0x2040000;
 
 pub struct DolphinMemoryAccess {
@@ -30,6 +31,10 @@ pub struct DolphinMemoryAccess {
   dolphin_proc_handle: *mut std::os::raw::c_void,
   #[cfg(target_os = "windows")]
   emu_ram_address_start: u64,
+  /// Throttles the MEM1 region rescan (see `dolphin_memcpy`) so a Dolphin with
+  /// no game loaded, or one whose mapping just vanished, isn't walked every frame.
+  #[cfg(target_os = "windows")]
+  last_ram_scan: Option<std::time::Instant>,
 }
 
 impl DolphinMemoryAccess {
@@ -43,6 +48,8 @@ impl DolphinMemoryAccess {
       dolphin_proc_handle: std::ptr::null_mut(),
       #[cfg(target_os = "windows")]
       emu_ram_address_start: 0,
+      #[cfg(target_os = "windows")]
+      last_ram_scan: None,
     }
   }
 }
@@ -54,6 +61,11 @@ impl Default for DolphinMemoryAccess {
 }
 
 impl DolphinMemoryAccess {
+  /// Minimum time between MEM1 region rescans while the mapping is unresolved
+  /// (see `dolphin_memcpy`).
+  #[cfg(target_os = "windows")]
+  const RAM_SCAN_RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
+
   pub fn get_dolphin_pids(&mut self) -> Vec<Pid> {
     self.system.refresh_processes_specifics(
       ProcessesToUpdate::All,
@@ -324,7 +336,7 @@ impl DolphinMemoryAccess {
   /// Returns `false` and copies nothing when not attached or the offset is out
   /// of range. The copy is bounded by `dest.len()`, `size`, `DOLPHIN_MEMORY_SIZE`,
   /// and the mapping tail so a short `dest` can never be overrun.
-  pub fn dolphin_memcpy(&self, dest: &mut [u8], offset: usize, size: usize) -> bool {
+  pub fn dolphin_memcpy(&mut self, dest: &mut [u8], offset: usize, size: usize) -> bool {
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
       if self.emu_ram_address_start.is_null() {
@@ -357,11 +369,26 @@ impl DolphinMemoryAccess {
       use windows::Win32::Foundation::{ERROR_PARTIAL_COPY, GetLastError, HANDLE};
       use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
 
-      if self.dolphin_proc_handle.is_null() || self.emu_ram_address_start == 0 {
-        // Base not resolved yet (Dolphin running, no game). The caller
-        // re-attaches every frame, which re-runs the region scan. Keeping the
-        // `&self` signature means we cannot re-scan in place here.
+      if self.dolphin_proc_handle.is_null() {
         return false;
+      }
+
+      if self.emu_ram_address_start == 0 {
+        // Base not resolved yet: either Dolphin has no game loaded, or a prior
+        // read failed with ERROR_PARTIAL_COPY (below) and cleared it because the
+        // MEM1 mapping moved or vanished (game reload/close). Rescan for it,
+        // throttled so a game-less Dolphin isn't walked every frame.
+        let now = std::time::Instant::now();
+        let should_scan = self
+          .last_ram_scan
+          .is_none_or(|t| now.duration_since(t) >= Self::RAM_SCAN_RETRY_INTERVAL);
+        if should_scan {
+          self.last_ram_scan = Some(now);
+          self.get_emu_ram_address_start();
+        }
+        if self.emu_ram_address_start == 0 {
+          return false;
+        }
       }
 
       let real_offset = offset & 0x7FFF_FFFF;
@@ -395,7 +422,10 @@ impl DolphinMemoryAccess {
           err.0
         );
         if err == ERROR_PARTIAL_COPY {
-          eprintln!("Game probably closed. Will continue looking.");
+          // The MEM1 mapping we resolved earlier is gone (game closed/reloaded,
+          // possibly at a new address). Clear it so the next call above rescans.
+          eprintln!("Game probably closed or reloaded. Will rescan for its memory.");
+          self.emu_ram_address_start = 0;
         }
         return false;
       }

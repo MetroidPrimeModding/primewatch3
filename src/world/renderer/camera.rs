@@ -186,7 +186,7 @@ mod tests {
   }
 
   #[test]
-  fn quat_from_euler_matches_glm__angle_formula() {
+  fn quat_from_euler_matches_glm_angle_formula() {
     for euler in [
       Vec3::new(0.0, std::f32::consts::FRAC_PI_2, 0.0),
       Vec3::new(0.3, 0.5, 0.7),
