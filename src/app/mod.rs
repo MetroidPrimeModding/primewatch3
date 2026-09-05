@@ -114,6 +114,12 @@ struct App {
   /// Throttles both the attached-process liveness check and the reconnect
   /// scan to once per `DOLPHIN_POLL_INTERVAL`, independent of frame rate.
   last_dolphin_poll: Instant,
+  /// Wall-clock time of the previous `redraw`, used to compute the frame `dt`
+  /// handed to [`InputState::plan`] so held-key camera motion is seconds-based
+  /// instead of a fixed per-frame step (which sped up when uncapped/high-refresh
+  /// frame rates started actually being hit).
+  last_frame: Instant,
+  /// Ephemeral corner notifications
   toasts: Toasts,
   input: InputState,
   /// Render state — `None` until `resumed` (Wayland/macOS require deferred creation).
@@ -194,6 +200,7 @@ impl App {
       unknown_vtables: BTreeSet::new(),
       awaiting_dolphin_reconnect: true,
       last_dolphin_poll: Instant::now(),
+      last_frame: Instant::now(),
       input: InputState::default(),
       window: None,
       scripts,
@@ -245,6 +252,13 @@ impl App {
   fn redraw(&mut self) {
     self.poll_dolphin_connection();
 
+    // Real time since the last redraw, clamped so a stall (e.g. a dragged
+    // window) can't fling the camera on the next frame; feeds `input.plan`
+    // so held-key camera motion is frame-rate independent.
+    let now = Instant::now();
+    let dt = now.duration_since(self.last_frame).as_secs_f32().min(0.25);
+    self.last_frame = now;
+
     let App {
       window,
       mem,
@@ -265,6 +279,7 @@ impl App {
       awaiting_dolphin_reconnect,
       input,
       last_dolphin_poll: _,
+      last_frame: _,
       scripts,
     } = self;
     let Some(window) = window.as_mut() else {
@@ -282,7 +297,12 @@ impl App {
       // detached-camera move). Camera look/zoom comes from last frame's
       // drag/scroll over the "World" image (`world_view_input`).
       let wants_kb = window.egui_ctx.egui_wants_keyboard_input();
-      let plan = input.plan(wants_kb, window.world.camera_mode, window.world_view_input);
+      let plan = input.plan(
+        wants_kb,
+        window.world.camera_mode,
+        window.world_view_input,
+        dt,
+      );
 
       for (i, &rec) in plan.ghost_record.iter().enumerate() {
         if rec {
