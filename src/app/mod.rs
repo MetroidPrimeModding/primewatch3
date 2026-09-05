@@ -192,7 +192,7 @@ impl App {
       table_hovered_uid: 0xFFFF,
       object_filter: ObjectFilter::default(),
       unknown_vtables: BTreeSet::new(),
-      awaiting_dolphin_reconnect: false,
+      awaiting_dolphin_reconnect: true,
       last_dolphin_poll: Instant::now(),
       input: InputState::default(),
       window: None,
