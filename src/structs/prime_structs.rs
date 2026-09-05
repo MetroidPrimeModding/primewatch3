@@ -155,10 +155,10 @@ impl GameStruct {
       return Some(member.clone());
     }
     for parent_name in self.extends.iter() {
-      if let Some(parent) = game_structs.get_struct_by_name(parent_name) {
-        if let Some(member) = parent.get_member_by_name(game_structs, name) {
-          return Some(member);
-        }
+      if let Some(parent) = game_structs.get_struct_by_name(parent_name)
+        && let Some(member) = parent.get_member_by_name(game_structs, name)
+      {
+        return Some(member);
       }
     }
     None
@@ -169,10 +169,10 @@ impl GameStruct {
       if parent_name.as_ref() == type_name {
         return true;
       }
-      if let Some(parent) = game_structs.get_struct_by_name(parent_name) {
-        if parent.extends(game_structs, type_name) {
-          return true;
-        }
+      if let Some(parent) = game_structs.get_struct_by_name(parent_name)
+        && parent.extends(game_structs, type_name)
+      {
+        return true;
       }
     }
     false

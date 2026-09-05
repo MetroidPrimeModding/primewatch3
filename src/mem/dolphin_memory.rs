@@ -304,6 +304,23 @@ impl DolphinMemoryAccess {
     self.attached_pid
   }
 
+  /// Whether the currently attached process is still running. `false` when
+  /// nothing is attached. Lets callers notice a Dolphin process that exited
+  /// on its own (a "natural" disconnect) as opposed to an explicit
+  /// `detach_from_process` call.
+  pub fn is_attached_process_alive(&mut self) -> bool {
+    if self.attached_pid <= 0 {
+      return false;
+    }
+    let pid = Pid::from_u32(self.attached_pid as u32);
+    self.system.refresh_processes_specifics(
+      ProcessesToUpdate::Some(&[pid]),
+      true,
+      ProcessRefreshKind::nothing(),
+    );
+    self.system.process(pid).is_some()
+  }
+
   /// Returns `false` and copies nothing when not attached or the offset is out
   /// of range. The copy is bounded by `dest.len()`, `size`, `DOLPHIN_MEMORY_SIZE`,
   /// and the mapping tail so a short `dest` can never be overrun.

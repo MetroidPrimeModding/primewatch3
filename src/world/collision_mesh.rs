@@ -253,21 +253,15 @@ impl CollisionMesh {
       let mut i1 = line1[0];
 
       // point 2
-      let i2;
-      let other_line;
-      if line1[0] == line2[0] {
-        i2 = line2[1];
-        other_line = line3;
+      let (i2, other_line) = if line1[0] == line2[0] {
+        (line2[1], line3)
       } else if line1[0] == line2[1] {
-        i2 = line2[0];
-        other_line = line3;
+        (line2[0], line3)
       } else if line1[0] == line3[0] {
-        i2 = line3[1];
-        other_line = line2;
+        (line3[1], line2)
       } else {
-        i2 = line3[0];
-        other_line = line2;
-      }
+        (line3[0], line2)
+      };
 
       // point 3
       let mut i3 = if i2 == other_line[0] {

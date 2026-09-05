@@ -22,13 +22,17 @@ pub(super) fn apply_menu_action(action: MenuAction, fs: &mut FrameState) {
       *fs.pids = fs.dolphin.get_dolphin_pids();
     }
     MenuAction::Attach(pid) => {
+      *fs.awaiting_dolphin_reconnect = false;
       if fs.dolphin.attach_to_process(pid as i32) {
         println!("Attached to Dolphin pid {pid}");
       } else {
         eprintln!("Failed to attach to Dolphin pid {pid}");
       }
     }
-    MenuAction::Detach => fs.dolphin.detach_from_process(),
+    MenuAction::Detach => {
+      *fs.awaiting_dolphin_reconnect = false;
+      fs.dolphin.detach_from_process();
+    }
     MenuAction::LoadFromFile => {
       // `rfd` native picker; detach before loading a dump.
       if let Some(path) = rfd::FileDialog::new()
@@ -36,6 +40,7 @@ pub(super) fn apply_menu_action(action: MenuAction, fs: &mut FrameState) {
         .set_directory(".")
         .pick_file()
       {
+        *fs.awaiting_dolphin_reconnect = false;
         fs.dolphin.detach_from_process();
         match fs.mem.load_from_file(&path.to_string_lossy()) {
           Ok(()) => println!("Loaded {}", path.display()),

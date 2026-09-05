@@ -13,6 +13,7 @@ mod raw_data_view;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::error::Error;
+use std::time::{Duration, Instant};
 
 use sysinfo::Pid;
 use winit::application::ApplicationHandler;
@@ -79,6 +80,9 @@ struct FrameState<'a> {
   object_filter: &'a mut ObjectFilter,
   /// Session-persistent set of unknown vtable addresses seen in the object list
   unknown_vtables: &'a mut BTreeSet<u32>,
+  /// Cleared on any explicit attach/detach/load-from-file so a manual detach
+  /// doesn't trigger the auto-reconnect scan meant for a natural disconnect.
+  awaiting_dolphin_reconnect: &'a mut bool,
 }
 
 /// Owns the long-lived game state plus the render state that only exists while
@@ -105,6 +109,14 @@ struct App {
   object_filter: ObjectFilter,
   /// Session log of every unrecognised vtable address. Never shrinks.
   unknown_vtables: BTreeSet<u32>,
+  /// Set when Dolphin disconnects on its own (process exited) rather than via
+  /// an explicit Detach/Load-from-file/Attach action. While set, `redraw`
+  /// rescans for a Dolphin process every `DOLPHIN_POLL_INTERVAL` and
+  /// auto-attaches if exactly one is found, mirroring the startup auto-attach.
+  awaiting_dolphin_reconnect: bool,
+  /// Throttles both the attached-process liveness check and the reconnect
+  /// scan to once per `DOLPHIN_POLL_INTERVAL`, independent of frame rate.
+  last_dolphin_poll: Instant,
   /// Ephemeral corner notifications
   toasts: Toasts,
   /// Input accumulated between frames.
@@ -180,14 +192,58 @@ impl App {
       table_hovered_uid: 0xFFFF,
       object_filter: ObjectFilter::default(),
       unknown_vtables: BTreeSet::new(),
+      awaiting_dolphin_reconnect: false,
+      last_dolphin_poll: Instant::now(),
       input: InputState::default(),
       window: None,
+    }
+  }
+
+  /// Once per `DOLPHIN_POLL_INTERVAL`: notice a Dolphin process that exited on
+  /// its own and, while awaiting reconnect, rescan for a single Dolphin
+  /// instance to auto-attach to (same rule as the startup auto-attach).
+  const DOLPHIN_POLL_INTERVAL: Duration = Duration::from_secs(5);
+
+  fn poll_dolphin_connection(&mut self) {
+    if self.last_dolphin_poll.elapsed() < Self::DOLPHIN_POLL_INTERVAL {
+      return;
+    }
+    self.last_dolphin_poll = Instant::now();
+
+    if self.dolphin.get_attached_pid() > 0 {
+      if !self.dolphin.is_attached_process_alive() {
+        println!("Dolphin process exited; scanning for a new instance");
+        self.dolphin.detach_from_process();
+        self
+          .toasts
+          .info("Dolphin disconnected; scanning for a new instance...");
+        self.awaiting_dolphin_reconnect = true;
+      }
+      return;
+    }
+
+    if !self.awaiting_dolphin_reconnect {
+      return;
+    }
+
+    self.pids = self.dolphin.get_dolphin_pids();
+    if self.pids.len() == 1 {
+      let pid = self.pids[0].as_u32() as i32;
+      if self.dolphin.attach_to_process(pid) {
+        println!("Reattached to Dolphin pid {pid}");
+        self.toasts.info(format!("Reattached to Dolphin pid {pid}"));
+        self.awaiting_dolphin_reconnect = false;
+      } else {
+        eprintln!("Failed to reattach to Dolphin pid {pid}");
+      }
     }
   }
 
   /// One `RedrawRequested`: consume accumulated input, refresh memory, walk the
   /// object list, update + render the world, paint egui
   fn redraw(&mut self) {
+    self.poll_dolphin_connection();
+
     let App {
       window,
       mem,
@@ -205,7 +261,9 @@ impl App {
       table_hovered_uid,
       object_filter,
       unknown_vtables,
+      awaiting_dolphin_reconnect,
       input,
+      last_dolphin_poll: _,
     } = self;
     let Some(window) = window.as_mut() else {
       return;
@@ -271,6 +329,7 @@ impl App {
       table_hovered_uid,
       object_filter,
       unknown_vtables,
+      awaiting_dolphin_reconnect,
     };
     window.render(&mut fs);
   }
