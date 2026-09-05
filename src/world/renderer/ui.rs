@@ -249,14 +249,12 @@ pub(crate) fn render_menu_bar(
     }
   });
 
-  // Lighting.
+  // Lighting + Shadow (combined).
   ui.menu_button("Lighting", |ui| {
     angle_slider_deg(ui, light_azimuth, -180.0..=180.0, "Azimuth");
     angle_slider_deg(ui, light_elevation, -90.0..=90.0, "Elevation");
-  });
 
-  // Shadow.
-  ui.menu_button("Shadow", |ui| {
+    ui.separator();
     ui.checkbox(&mut shadow.enabled, "Player ground shadow");
     if shadow.enabled {
       ui.add(
@@ -277,7 +275,7 @@ pub(crate) fn render_menu_bar(
       ui.separator();
       ui.checkbox(
         &mut shadow.independent_angle,
-        "Independent angle (off = follow scene light)",
+        "Independent shadow angle",
       );
       if shadow.independent_angle {
         angle_slider_deg(ui, &mut shadow.azimuth, -180.0..=180.0, "Shadow azimuth");
