@@ -149,16 +149,16 @@ pub(super) fn render_objects_window(
                 continue;
               }
 
-              let resp = ui.selectable_label(false, entity.type_name.as_str());
+              let resp = ui.selectable_label(false, entity.type_name.as_ref());
               if resp.clicked() {
                 if let Some(watch) = editor_ids_to_watch.iter_mut().find(|w| w.eid == eid) {
                   watch.last_known_uid = uid;
-                  watch.type_name = entity.type_name.clone();
+                  watch.type_name = entity.type_name.to_string();
                 } else {
                   editor_ids_to_watch.push(WatchedEditorId {
                     eid,
                     last_known_uid: uid,
-                    type_name: entity.type_name.clone(),
+                    type_name: entity.type_name.to_string(),
                   });
                 }
               }
@@ -202,7 +202,7 @@ pub(super) fn render_objects_window(
             let mut handled = false;
             if let Some(entity) = uid_to_entity.get(&last_known_uid) {
               let e_eid = entity.member(ctx, "editorID").read_u32(ctx).unwrap_or(0);
-              if e_eid == eid && entity.type_name == type_name {
+              if e_eid == eid && entity.type_name.as_ref() == type_name {
                 inspector.render(ui, ctx, &type_name, entity, false);
                 handled = true;
               }

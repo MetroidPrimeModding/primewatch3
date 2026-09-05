@@ -73,7 +73,7 @@ fn c_hex_i64(v: i64) -> String {
 /// failed read substitutes the C++ total-read default here (`0` / `0.0` / `""` /
 /// `false`).
 pub fn format_primitive(ctx: &Ctx, name: &str, inst: &GameInstance, exact: bool) -> String {
-  let typ = inst.type_name.as_str();
+  let typ = inst.type_name.as_ref();
   match typ {
     // `u8` + pointer -> NUL-terminated C string.
     "u8" if inst.pointer => {
@@ -250,7 +250,7 @@ impl Inspector {
       return;
     }
 
-    let typ = inst.type_name.as_str();
+    let typ = inst.type_name.as_ref();
 
     if PRIMITIVE_TYPES.contains(&typ) {
       let text = format_primitive(ctx, name, inst, self.exact_values);
@@ -340,10 +340,10 @@ impl Inspector {
       let Some(child) = inst.get_member(ctx, &member.name) else {
         continue;
       };
-      let child_name = if member.pointer {
-        format!("*{}", member.name)
+      let child_name: std::borrow::Cow<str> = if member.pointer {
+        std::borrow::Cow::Owned(format!("*{}", member.name))
       } else {
-        member.name.clone()
+        std::borrow::Cow::Borrowed(member.name.as_ref())
       };
       self.render(ui, ctx, &child_name, &child, true);
     }
@@ -453,7 +453,7 @@ mod tests {
 
   fn empty_struct(name: &str) -> GameStruct {
     GameStruct {
-      name: name.to_string(),
+      name: name.into(),
       size: 0,
       vtable_address: None,
       extends: vec![],
@@ -524,10 +524,10 @@ mod tests {
 
   fn direction_enum() -> GameEnum {
     let mut values = BiBTreeMap::new();
-    values.insert("kNone".to_string(), 0i64);
-    values.insert("kTwo".to_string(), 2i64);
+    values.insert("kNone".into(), 0i64);
+    values.insert("kTwo".into(), 2i64);
     GameEnum {
-      name: "EDir".to_string(),
+      name: "EDir".into(),
       size: 4,
       values,
     }
@@ -634,8 +634,8 @@ mod tests {
     // Array + pointer, carried through a resolved member.
     let mut structs = GameStructs::new_empty();
     let arr = GameMember {
-      type_name: "u8".to_string(),
-      name: "buf".to_string(),
+      type_name: "u8".into(),
+      name: "buf".into(),
       offset: 0,
       bit: None,
       bit_length: None,

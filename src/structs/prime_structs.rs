@@ -3,15 +3,21 @@ use bimap::BiBTreeMap;
 use bstruct::bstruct_link::{BEnum, BStruct, BStructMember};
 use bstruct::{CompileError, build_directory};
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
-type TypeName = String;
-type MemberName = String;
-type EnumName = String;
+// `.bs` schema names: parsed once at startup and never mutated again, but
+// cloned constantly afterward (every member lookup, every `GameInstance`
+// resolved). `Rc<str>` makes those clones a refcount bump instead of a fresh
+// heap allocation. Single-threaded (no `thread::spawn`/`rayon` in this crate),
+// so `Rc` rather than `Arc`.
+type TypeName = Rc<str>;
+type MemberName = Rc<str>;
+type EnumName = Rc<str>;
 
 #[derive(Debug)]
 pub struct GameStructs {
-  pub structs: BTreeMap<TypeName, GameStruct>,
-  pub enums: BTreeMap<EnumName, GameEnum>,
+  pub structs: BTreeMap<TypeName, Rc<GameStruct>>,
+  pub enums: BTreeMap<EnumName, Rc<GameEnum>>,
 }
 
 impl GameStructs {
@@ -23,11 +29,15 @@ impl GameStructs {
   }
 
   pub fn insert_struct(&mut self, struct_: &GameStruct) {
-    self.structs.insert(struct_.name.clone(), struct_.clone());
+    self
+      .structs
+      .insert(struct_.name.clone(), Rc::new(struct_.clone()));
   }
 
   pub fn insert_enum(&mut self, enum_: &GameEnum) {
-    self.enums.insert(enum_.name.clone(), enum_.clone());
+    self
+      .enums
+      .insert(enum_.name.clone(), Rc::new(enum_.clone()));
   }
 
   pub fn load_from_dir(&mut self, dir: &str) -> Result<(), String> {
@@ -56,11 +66,11 @@ impl GameStructs {
     Ok(())
   }
 
-  pub fn get_struct_by_name(&self, name: &str) -> Option<GameStruct> {
+  pub fn get_struct_by_name(&self, name: &str) -> Option<Rc<GameStruct>> {
     self.structs.get(name).cloned()
   }
 
-  pub fn get_enum_by_name(&self, name: &str) -> Option<GameEnum> {
+  pub fn get_enum_by_name(&self, name: &str) -> Option<Rc<GameEnum>> {
     self.enums.get(name).cloned()
   }
 }
@@ -78,11 +88,11 @@ impl GameEnum {
   pub fn new(benum: &BEnum) -> Self {
     let mut values = BiBTreeMap::new();
     for e in benum.values.iter() {
-      values.insert(e.name.value.clone(), e.value.value());
+      values.insert(e.name.value.as_str().into(), e.value.value());
     }
 
     Self {
-      name: benum.name.value.clone(),
+      name: benum.name.value.as_str().into(),
       size: benum.ext.size,
       values,
     }
@@ -93,8 +103,10 @@ impl GameEnum {
     self.values.get_by_left(name).cloned()
   }
 
+  /// Not on the per-frame hot path (enum-value formatting for UI display), so
+  /// this stays an owned `String` rather than exposing the interned `Rc<str>`.
   pub fn get_name_by_value(&self, value: i64) -> Option<String> {
-    self.values.get_by_right(&value).cloned()
+    self.values.get_by_right(&value).map(|s| s.to_string())
   }
 }
 
@@ -112,10 +124,14 @@ pub struct GameStruct {
 impl GameStruct {
   pub fn new(bstruct: &BStruct) -> Self {
     let mut res = Self {
-      name: bstruct.name.value.clone(),
+      name: bstruct.name.value.as_str().into(),
       size: bstruct.size.unwrap().value(), // TODO: fix this to not be optional in bstruct... bstruct needs a new api
       vtable_address: bstruct.vtable.map(|it| it.value()),
-      extends: bstruct.ext.iter().map(|it| it.value.clone()).collect(),
+      extends: bstruct
+        .ext
+        .iter()
+        .map(|it| it.value.as_str().into())
+        .collect(),
       members_by_offset: BTreeMap::new(),
       members_by_name: BTreeMap::new(),
     };
@@ -150,7 +166,7 @@ impl GameStruct {
 
   pub fn extends(&self, game_structs: &GameStructs, type_name: &str) -> bool {
     for parent_name in self.extends.iter() {
-      if parent_name == type_name {
+      if parent_name.as_ref() == type_name {
         return true;
       }
       if let Some(parent) = game_structs.get_struct_by_name(parent_name) {
@@ -165,7 +181,7 @@ impl GameStruct {
 
 #[derive(Clone, Debug)]
 pub struct GameMember {
-  pub type_name: String,
+  pub type_name: TypeName,
   pub name: MemberName,
   pub offset: i64,
   pub bit: Option<i64>,
@@ -177,8 +193,8 @@ pub struct GameMember {
 impl GameMember {
   pub fn new(member: &BStructMember) -> Self {
     GameMember {
-      type_name: member.type_name.value.clone(),
-      name: member.name.value.clone(),
+      type_name: member.type_name.value.as_str().into(),
+      name: member.name.value.as_str().into(),
       offset: member.offset.value(),
       bit: member.bit.map(|it| it.value()),
       bit_length: member.bit_length.map(|it| it.value()),
@@ -188,7 +204,7 @@ impl GameMember {
   }
 
   #[allow(unused)]
-  pub fn get_type(&self, game_structs: &GameStructs) -> Option<GameStruct> {
+  pub fn get_type(&self, game_structs: &GameStructs) -> Option<Rc<GameStruct>> {
     game_structs.get_struct_by_name(&self.type_name)
   }
 }
@@ -207,7 +223,7 @@ pub fn primitive_size(type_name: &str) -> u32 {
 #[derive(Clone, Debug)]
 pub struct GameInstance {
   pub address: u32,
-  pub type_name: String,
+  pub type_name: TypeName,
   /// Bitfield start bit / length carried from the `GameMember` this instance was
   /// resolved from. `None` for struct roots and any non-bitfield member; only the integer `read_u*` reads
   /// consult them.
@@ -223,10 +239,10 @@ pub struct GameInstance {
 }
 
 impl GameInstance {
-  pub fn new(address: u32, type_name: String) -> Self {
+  pub fn new(address: u32, type_name: impl Into<Rc<str>>) -> Self {
     Self {
       address,
-      type_name,
+      type_name: type_name.into(),
       bit: None,
       bit_length: None,
       array_length: None,
@@ -237,13 +253,13 @@ impl GameInstance {
   #[allow(dead_code)]
   pub fn with_bitfield(
     address: u32,
-    type_name: String,
+    type_name: impl Into<Rc<str>>,
     bit: Option<i64>,
     bit_length: Option<i64>,
   ) -> Self {
     Self {
       address,
-      type_name,
+      type_name: type_name.into(),
       bit,
       bit_length,
       array_length: None,
@@ -274,7 +290,7 @@ impl GameInstance {
     self.bit_length.unwrap_or(0).max(0) as u32
   }
 
-  pub fn get_type(&self, ctx: &Ctx) -> Option<GameStruct> {
+  pub fn get_type(&self, ctx: &Ctx) -> Option<Rc<GameStruct>> {
     ctx.structs.get_struct_by_name(&self.type_name)
   }
 
@@ -282,7 +298,7 @@ impl GameInstance {
   /// A type name with no matching `.bs` struct only matches on the identity check.
   /// Delegates to [`GameStruct::extends`] for the recursion.
   pub fn extends_class(&self, ctx: &Ctx, class_name: &str) -> bool {
-    if self.type_name == class_name {
+    if self.type_name.as_ref() == class_name {
       return true;
     }
     match self.get_type(ctx) {
@@ -383,8 +399,8 @@ mod tests {
 
   fn member(name: &str, type_name: &str, offset: i64) -> GameMember {
     GameMember {
-      type_name: type_name.to_string(),
-      name: name.to_string(),
+      type_name: type_name.into(),
+      name: name.into(),
       offset,
       bit: None,
       bit_length: None,
@@ -404,10 +420,10 @@ mod tests {
     members: &[GameMember],
   ) -> GameStruct {
     let mut s = GameStruct {
-      name: name.to_string(),
+      name: name.into(),
       size,
       vtable_address: None,
-      extends: extends.iter().map(|it| it.to_string()).collect(),
+      extends: extends.iter().map(|it| (*it).into()).collect(),
       members_by_offset: BTreeMap::new(),
       members_by_name: BTreeMap::new(),
     };
@@ -631,7 +647,7 @@ mod tests {
     assert_eq!(p3.array_length, None);
     assert_eq!(p3.bit, None);
     assert_eq!(p3.bit_length, None);
-    assert_eq!(p3.type_name, "u32");
+    assert_eq!(p3.type_name.as_ref(), "u32");
 
     let foo_arr = root.get_member(&ctx, "foos").unwrap();
     assert_eq!(foo_arr.array_length, Some(4));
@@ -639,7 +655,7 @@ mod tests {
     let f3 = foo_arr.element(&ctx, 3);
     assert_eq!(f3.address, 0x8000_0000 + 0x40 + 3 * 12);
     assert_eq!(f3.array_length, None);
-    assert_eq!(f3.type_name, "Foo");
+    assert_eq!(f3.type_name.as_ref(), "Foo");
   }
 
   #[test]
@@ -674,7 +690,7 @@ mod tests {
     let derived = structs.get_struct_by_name("Derived").unwrap();
     let m = derived.get_member_by_name(&structs, "val").unwrap();
     assert_eq!(m.offset, 0x20);
-    assert_eq!(m.type_name, "float");
+    assert_eq!(m.type_name.as_ref(), "float");
   }
 
   #[test]
@@ -736,6 +752,6 @@ mod tests {
     let root = GameInstance::new(0x8000_0000, "Top".to_string());
     let leaf = root.member(&ctx, "a").member(&ctx, "b").member(&ctx, "c");
     assert_eq!(leaf.address, 0x8000_0000 + 0x10 + 0x8 + 0x4);
-    assert_eq!(leaf.type_name, "u32");
+    assert_eq!(leaf.type_name.as_ref(), "u32");
   }
 }

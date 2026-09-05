@@ -94,7 +94,7 @@ mod tests {
     assert!(!areas.is_empty(), "expected a non-empty area list");
 
     for area in &areas {
-      assert_eq!(area.type_name, "CGameArea");
+      assert_eq!(area.type_name.as_ref(), "CGameArea");
       assert_eq!(area.address & 0x8000_0000, 0x8000_0000);
       assert!(
         ctx.mem.read_u32(area.address).is_some(),

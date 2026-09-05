@@ -320,7 +320,7 @@ impl WorldRenderer {
       // Assume the active camera is a CGameCamera.
       // There seems to be a bug here at least sometimes, causing morph camera data to not pull in properly
       // TODO: add a view to debug this?
-      camera.type_name = "CGameCamera".to_string();
+      camera.type_name = "CGameCamera".into();
       if let Some(m) = camera
         .get_member(ctx, "perspectiveMatrix")
         .and_then(|m| read_as_matrix4f(ctx, &m))

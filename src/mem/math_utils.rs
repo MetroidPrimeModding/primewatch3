@@ -88,8 +88,8 @@ mod tests {
 
   fn member_def(name: &str, type_name: &str, offset: i64) -> GameMember {
     GameMember {
-      type_name: type_name.to_string(),
-      name: name.to_string(),
+      type_name: type_name.into(),
+      name: name.into(),
       offset,
       bit: None,
       bit_length: None,
@@ -100,7 +100,7 @@ mod tests {
 
   fn game_struct(name: &str, members: &[GameMember]) -> GameStruct {
     let mut s = GameStruct {
-      name: name.to_string(),
+      name: name.into(),
       size: 0,
       vtable_address: None,
       extends: vec![],

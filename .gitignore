@@ -6,3 +6,4 @@
 /primewatch_ui.ron
 # ignore mcp.json for the moment
 .mcp.json
+profile.json.gz

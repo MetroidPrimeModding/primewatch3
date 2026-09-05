@@ -40,10 +40,10 @@ mod tests {
   fn non_pointer_roots_match_game_offsets_hpp() {
     let sm = get_state_manager();
     assert_eq!(sm.address, 0x8045A1A8);
-    assert_eq!(sm.type_name, "CStateManager");
+    assert_eq!(sm.type_name.as_ref(), "CStateManager");
     let main = get_main();
     assert_eq!(main.address, 0x80457560);
-    assert_eq!(main.type_name, "CMain");
+    assert_eq!(main.type_name.as_ref(), "CMain");
   }
 
   #[test]
@@ -56,11 +56,11 @@ mod tests {
 
     let card = get_memory_card(&ctx).unwrap();
     assert_eq!(card.address, mem.read_u32(0x805A8C44).unwrap());
-    assert_eq!(card.type_name, "CMemoryCardSys");
+    assert_eq!(card.type_name.as_ref(), "CMemoryCardSys");
 
     let tweak = get_tweak_player(&ctx).unwrap();
     assert_eq!(tweak.address, mem.read_u32(0x805A8CD8).unwrap());
-    assert_eq!(tweak.type_name, "CTweakPlayer");
+    assert_eq!(tweak.type_name.as_ref(), "CTweakPlayer");
   }
 
   #[test]

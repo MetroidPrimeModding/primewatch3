@@ -72,11 +72,13 @@ pub fn get_all_objects(ctx: &Ctx) -> BTreeMap<TUniqueID, GameInstance> {
     };
 
     // Retype only when the vtable is in `MP1_VTABLES` *and* the mapped name is a
-    // real `.bs` struct.
-    if let Some(name) =
-      vtable_class_name(vtable).filter(|name| ctx.structs.get_struct_by_name(name).is_some())
+    // real `.bs` struct. Reuse the struct's own interned name (a cheap `Rc`
+    // clone) rather than allocating a fresh `Rc<str>` from the vtable lookup's
+    // `&'static str` on every retyped entity, every frame.
+    if let Some(name) = vtable_class_name(vtable)
+      && let Some(game_struct) = ctx.structs.get_struct_by_name(name)
     {
-      entity.type_name = name.to_string();
+      entity.type_name = game_struct.name.clone();
     }
 
     objects.insert(current_id, entity);
@@ -243,7 +245,7 @@ mod tests {
 
     let retyped = objects
       .values()
-      .filter(|i| i.type_name != "CEntity")
+      .filter(|i| i.type_name.as_ref() != "CEntity")
       .count();
     assert!(
       retyped > 0,
@@ -298,8 +300,8 @@ mod tests {
   #[test]
   fn object_tag_to_string_hand_built() {
     let member = |type_name: &str, name: &str, offset: i64| GameMember {
-      type_name: type_name.to_string(),
-      name: name.to_string(),
+      type_name: type_name.into(),
+      name: name.into(),
       offset,
       bit: None,
       bit_length: None,
@@ -307,7 +309,7 @@ mod tests {
       pointer: false,
     };
     let mut tag = GameStruct {
-      name: "SObjectTag".to_string(),
+      name: "SObjectTag".into(),
       size: 8,
       vtable_address: None,
       extends: vec![],
