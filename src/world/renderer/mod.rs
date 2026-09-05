@@ -50,6 +50,17 @@ fn read_vec3_member(ctx: &Ctx, parent: &GameInstance, name: &str) -> Option<Vec3
   read_as_vec3(ctx, &parent.get_member(ctx, name)?)
 }
 
+/// Positions within this distance (world units) are treated as "the same"
+/// when checking whether the live `player` pose and the `lastNonCollidingState`
+/// pose have diverged — independent reads carry their own float error.
+const PLAYER_DIVERGENCE_EPSILON: f32 = 0.05;
+
+/// Consecutive frames the live and safe positions must differ before the live
+/// ghost is drawn alongside the safe one. A single-frame difference is far
+/// more likely to be a memory read caught mid-frame than a real divergence
+/// (e.g. the player embedded in geometry).
+const PLAYER_DIVERGENCE_FRAMES: u32 = 3;
+
 pub struct WorldRenderer {
   // --- camera params ---
   pub aspect: f32,
@@ -104,6 +115,17 @@ pub struct WorldRenderer {
   /// Saved player ghosts  (using hotkeys)
   pub player_ghosts: [PlayerGhost; 5],
   pub last_known_non_colliding_pos: Vec3,
+  /// Full pose (position/orientation/velocity/morph) derived from
+  /// `player.lastNonCollidingState` — drawn every frame as the primary player
+  /// ghost, since it's expected to be more stable than the raw `transform`
+  /// read. `self.player` is still tracked every frame alongside it; see
+  /// `player_diverged_frames`.
+  pub last_non_colliding: PlayerGhost,
+  /// Consecutive frames `player.position` and `last_non_colliding.position`
+  /// have differed by more than [`PLAYER_DIVERGENCE_EPSILON`]. Once this
+  /// reaches [`PLAYER_DIVERGENCE_FRAMES`] the live `player` ghost is drawn
+  /// alongside the safe one.
+  player_diverged_frames: u32,
   pub player_look_vec: Vec3,
 
   // --- GPU state ---
@@ -165,6 +187,8 @@ impl WorldRenderer {
       player: PlayerGhost::default(),
       player_ghosts: [PlayerGhost::default(); 5],
       last_known_non_colliding_pos: Vec3::ZERO,
+      last_non_colliding: PlayerGhost::default(),
+      player_diverged_frames: 0,
       player_look_vec: Vec3::ZERO,
       size,
       color,
@@ -287,11 +311,20 @@ impl WorldRenderer {
       if let Some(v) = read_vec3_member(ctx, &player, "velocity") {
         self.player.velocity = v;
       }
-      if let Some(v) = player
-        .get_member(ctx, "lastNonCollidingState")
-        .and_then(|lncs| read_vec3_member(ctx, &lncs, "translation"))
-      {
-        self.last_known_non_colliding_pos = v;
+      if let Some(lncs) = player.get_member(ctx, "lastNonCollidingState") {
+        if let Some(v) = read_vec3_member(ctx, &lncs, "translation") {
+          self.last_known_non_colliding_pos = v;
+          self.last_non_colliding.position = v;
+        }
+        if let Some(q) = lncs
+          .get_member(ctx, "orientation")
+          .and_then(|m| read_as_quat(ctx, &m))
+        {
+          self.last_non_colliding.orientation = q;
+        }
+        if let Some(v) = read_vec3_member(ctx, &lncs, "velocity") {
+          self.last_non_colliding.velocity = v;
+        }
       }
       if let Some(v) = read_vec3_member(ctx, &player, "lookDir") {
         self.player_look_vec = v;
@@ -308,6 +341,21 @@ impl WorldRenderer {
       {
         self.player.is_morphed = morph == 1; // EPlayerMorphBallState::Morphed
       }
+      self.last_non_colliding.is_morphed = self.player.is_morphed;
+    }
+
+    // A one-frame difference is far more likely to be a memory read caught
+    // mid-frame than a real divergence, so gate the live ghost's visibility
+    // on the difference persisting for a few frames.
+    if self
+      .player
+      .position
+      .distance(self.last_non_colliding.position)
+      > PLAYER_DIVERGENCE_EPSILON
+    {
+      self.player_diverged_frames = self.player_diverged_frames.saturating_add(1);
+    } else {
+      self.player_diverged_frames = 0;
     }
 
     // --- camera manager -> in-game camera (keep last good value on a `None`) ---
@@ -387,18 +435,6 @@ impl WorldRenderer {
     self.player_render_buff.clear();
     self.player_translucent_render_buff.clear();
 
-    // Player collision
-    self
-      .player_translucent_render_buff
-      .set_transform(Mat4::from_translation(self.last_known_non_colliding_pos));
-    self
-      .player_translucent_render_buff
-      .add_tris(&shapes::generate_cube(
-        Vec3::new(-0.5, -0.5, 0.0),
-        Vec3::new(0.5, 0.5, 2.7),
-        Vec4::new(1.0, 0.5, 0.5, 0.5),
-      ));
-
     // In GameCam mode the view *is* the game camera, so the frustum lines sit exactly on
     // the screen edge and flicker in and out. Skip them in that mode.
     if self.camera_mode != CameraMode::GameCam {
@@ -415,8 +451,17 @@ impl WorldRenderer {
     // --- entities + player ---
     self.render_entities(ctx, objects, highlighted);
 
-    let player = self.player;
-    self.draw_player(&player, Vec4::ONE);
+    // The "safe" pose (`lastNonCollidingState`) is the primary player ghost;
+    // the raw `transform` reads is only drawn alongside it once it's been
+    // meaningfully different for a few frames running (see
+    // `player_diverged_frames`).
+    let safe = self.last_non_colliding;
+    self.draw_player(&safe, Vec4::ONE);
+    if self.player_diverged_frames >= PLAYER_DIVERGENCE_FRAMES {
+      let live = self.player;
+      // orange: the live transform has diverged from the safe one
+      self.draw_player(&live, Vec4::new(1.0, 0.5, 0.0, 0.6));
+    }
     let ghosts = self.player_ghosts;
     for ghost in ghosts {
       if ghost.enabled {
