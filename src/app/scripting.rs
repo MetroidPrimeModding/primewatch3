@@ -21,8 +21,6 @@
 //! borrows both referents and clears the thread-local on drop. It is a transient
 //! call-scoped bridge, not the ambient mutable game state the port set out to
 //! remove.
-//!
-//! [`Inspector`]: crate::inspector::Inspector
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap};
@@ -36,7 +34,6 @@ use crate::mem::game_object_utils::TUniqueID;
 use crate::mem::globals::{get_main, get_state_manager};
 use crate::structs::prime_structs::GameInstance;
 
-/// One row of a [`CustomInspectorWindow`].
 #[derive(Clone)]
 pub enum CustomInspectorRow {
   /// A live handle: re-resolved and re-read from memory by the inspector every
@@ -48,11 +45,6 @@ pub enum CustomInspectorRow {
   Text(String),
 }
 
-3259, 1883
-3231, 1976
-
-/// A floating window a script asks the app to draw. Built with `inspector_window(title)`,
-/// filled with `.add(...)`, and submitted with `show(w)`.
 #[derive(Clone)]
 pub struct CustomInspectorWindow {
   pub title: String,
@@ -113,8 +105,7 @@ impl<'a> ScriptFrame<'a> {
   {
     let env = ScriptEnv {
       // Type/lifetime-erase for storage. `with_env` reconstitutes a borrow that
-      // cannot outlive this guard (scripts run synchronously, return owned
-      // values, and never stash a `Ctx`).
+      // cannot outlive this guard
       ctx: ctx as *const Ctx<'c> as *const (),
       objects: objects as *const BTreeMap<TUniqueID, GameInstance> as *const (),
     };
@@ -125,7 +116,6 @@ impl<'a> ScriptFrame<'a> {
     }
   }
 
-  /// Drain the windows submitted so far this frame.
   pub fn take_windows(&self) -> Vec<CustomInspectorWindow> {
     SINK.with(|s| std::mem::take(&mut *s.borrow_mut()))
   }
@@ -166,8 +156,6 @@ fn with_env<R>(
 // Small conversion helpers
 // ---------------------------------------------------------------------------
 
-/// `Some(instance)` -> a `GameInstance` Dynamic; `None` (missing member, failed
-/// pointer read, no such entity) -> unit, which a script can test with `== ()`.
 fn opt_instance(inst: Option<GameInstance>) -> Dynamic {
   inst.map(Dynamic::from).unwrap_or(Dynamic::UNIT)
 }
@@ -180,9 +168,6 @@ fn opt_dyn<T: Into<Dynamic>>(v: Option<T>) -> Dynamic {
 // Engine construction
 // ---------------------------------------------------------------------------
 
-/// Build the scripting engine. Independent of the loaded schema — member access
-/// is resolved dynamically per call — so this is built once and survives a defs
-/// reload.
 pub fn build_engine() -> Engine {
   let mut engine = Engine::new();
 
@@ -206,14 +191,14 @@ pub fn build_engine() -> Engine {
 fn register_window_api(engine: &mut Engine) {
   engine.register_fn("inspector_window", CustomInspectorWindow::new);
 
-  // add(w, label, <instance>)  — a live, re-read-every-frame tree node
+  // add(w, label, <instance>) — a live, re-read-every-frame tree node
   engine.register_fn(
     "add",
     |w: &mut CustomInspectorWindow, label: String, inst: GameInstance| {
       w.add_instance(label, inst);
     },
   );
-  // add(w, <instance>)  — same, unlabelled (uses the type name as caption)
+  // add(w, <instance>) — same, unlabelled (uses the type name as caption)
   engine.register_fn(
     "add",
     |w: &mut CustomInspectorWindow, inst: GameInstance| {
@@ -221,11 +206,11 @@ fn register_window_api(engine: &mut Engine) {
       w.add_instance(label, inst);
     },
   );
-  // add(w, text)  — a literal line
+  // add(w, text) — a literal line
   engine.register_fn("add", |w: &mut CustomInspectorWindow, text: String| {
     w.add_text(text);
   });
-  // add(w, label, value)  — a "label: value" snapshot line
+  // add(w, label, value) — a "label: value" snapshot line
   engine.register_fn(
     "add",
     |w: &mut CustomInspectorWindow, label: String, value: Dynamic| {
@@ -365,30 +350,21 @@ fn register_instance_api(engine: &mut Engine) {
 // Script discovery / per-frame execution
 // ---------------------------------------------------------------------------
 
-/// The default directory scanned for `*.rhai` files, relative to the working
-/// directory (same convention as `./mem1.raw` and `prime_defs/`).
 const SCRIPT_DIR: &str = "scripts";
 
-/// One `*.rhai` file: its compiled form (or the compile error) plus per-run
-/// state. The `enabled` flag is UI-controlled and survives a reload.
 pub struct LoadedScript {
   pub name: String,
   pub path: PathBuf,
-  /// Compiled AST, or the compile-time error string.
   pub compiled: Result<AST, String>,
   pub enabled: bool,
-  /// Last runtime error from `run_frame`, cleared on a clean run.
   pub runtime_error: Option<String>,
 }
 
-/// Owns the scripting engine and the set of loaded scripts. Lives on [`super::App`].
 pub struct ScriptManager {
   engine: Engine,
   dir: PathBuf,
   pub entries: Vec<LoadedScript>,
-  /// Directory-scan error (missing dir is *not* an error — just no scripts).
   pub scan_error: Option<String>,
-  /// "Scripting" management window visibility (Tools menu toggle).
   pub show_window: bool,
 }
 
@@ -409,8 +385,6 @@ impl ScriptManager {
     self.dir.display().to_string()
   }
 
-  /// Rescan `dir` for `*.rhai` files and recompile them. Preserves the
-  /// `enabled` flag of any script that is still present by name.
   pub fn reload(&mut self) {
     let previously_enabled: HashMap<String, bool> = self
       .entries
@@ -456,8 +430,6 @@ impl ScriptManager {
     }
   }
 
-  /// Run every enabled, cleanly-compiled script against the live frame and
-  /// return the windows they submitted (in script order).
   pub fn run_frame(
     &mut self,
     ctx: &Ctx,
@@ -514,8 +486,6 @@ mod tests {
     Some(mem)
   }
 
-  /// Compile + run a source string against a `Ctx`, returning the submitted
-  /// windows or the eval error string.
   fn run(
     src: &str,
     ctx: &Ctx,

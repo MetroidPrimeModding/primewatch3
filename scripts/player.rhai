@@ -22,9 +22,13 @@ if player != () {
     let w = inspector_window("Player");
 
     // Live tree nodes — re-read from memory every frame by the inspector.
-    w.add("sjTimer", player["sjTimer"]);
+    w.add("sjTimer", player.sjTimer);
+    // You can also use the indexer syntax
     w.add("morphState", player["morphState"]);
-    w.add("transform", player["transform"]);
+    w.add("transform", player.transform);
+    w.add("pos X", player.transform.posX);
+    w.add("pos Y", player.transform.posY);
+    w.add("pos Z", player.transform.posZ);
 
     // A snapshot value line.
     let t = player["sjTimer"].read_f32();
