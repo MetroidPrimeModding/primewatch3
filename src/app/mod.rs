@@ -15,7 +15,6 @@ mod scripting;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::error::Error;
 use std::time::{Duration, Instant};
-use rhai::exported_module;
 use sysinfo::Pid;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
@@ -33,10 +32,10 @@ use crate::structs::prime_structs::{GameInstance, GameStructs};
 use crate::toast::Toasts;
 use crate::ui_state;
 
+use crate::app::scripting::{CustomInspectorWindow, ScriptManager};
 use app_window::AppWindow;
 use input::InputState;
 use objects_window::WatchedEditorId;
-use crate::app::scripting::{primewatch3_module, register_scripting_modules};
 
 /// Build the event loop and run the app.
 pub fn run() -> Result<(), Box<dyn Error>> {
@@ -82,7 +81,10 @@ struct FrameState<'a> {
   /// Cleared on any explicit attach/detach/load-from-file so a manual detach
   /// doesn't trigger the auto-reconnect scan meant for a natural disconnect.
   awaiting_dolphin_reconnect: &'a mut bool,
-  script_engine: &'a mut rhai::Engine,
+  scripts: &'a mut ScriptManager,
+  /// Windows built by the frame's script run (in [`App::redraw`]); drawn by
+  /// `AppWindow::render` with the normal inspector.
+  script_windows: &'a [CustomInspectorWindow],
 }
 
 struct App {
@@ -116,7 +118,8 @@ struct App {
   input: InputState,
   /// Render state — `None` until `resumed` (Wayland/macOS require deferred creation).
   window: Option<AppWindow>,
-  script_engine: rhai::Engine,
+  /// `*.rhai` scripts + the engine that runs them each frame.
+  scripts: ScriptManager,
 }
 
 impl App {
@@ -170,9 +173,8 @@ impl App {
       toasts.info(&status_text);
     }
 
-    // set up script engine
-    let mut script_engine = rhai::Engine::new();
-    register_scripting_modules(&mut script_engine);
+    // Discover + compile `./scripts/*.rhai`.
+    let scripts = ScriptManager::new();
 
     Self {
       mem,
@@ -194,7 +196,7 @@ impl App {
       last_dolphin_poll: Instant::now(),
       input: InputState::default(),
       window: None,
-      script_engine,
+      scripts,
     }
   }
 
@@ -263,11 +265,14 @@ impl App {
       awaiting_dolphin_reconnect,
       input,
       last_dolphin_poll: _,
-      script_engine,
+      scripts,
     } = self;
     let Some(window) = window.as_mut() else {
       return;
     };
+
+    // Populated by the per-frame script run below; borrowed by `FrameState`.
+    let mut script_windows: Vec<CustomInspectorWindow> = Vec::new();
 
     if *defs_loaded {
       // Refresh the snapshot (no-op while detached).
@@ -310,6 +315,10 @@ impl App {
       window
         .world
         .update(&ctx, &plan.world_input, viewport, objects, &highlighted);
+
+      // Run every enabled `*.rhai` script against this frame's live memory; the
+      // windows they build are drawn by `AppWindow::render`.
+      script_windows = scripts.run_frame(&ctx, objects);
     }
 
     // `objects` is walked above and consumed (by `&`) by `world.update`
@@ -330,7 +339,8 @@ impl App {
       object_filter,
       unknown_vtables,
       awaiting_dolphin_reconnect,
-      script_engine,
+      scripts,
+      script_windows: &script_windows,
     };
     window.render(&mut fs);
   }

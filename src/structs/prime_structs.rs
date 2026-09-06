@@ -4,7 +4,6 @@ use bstruct::bstruct_link::{BEnum, BStruct, BStructMember};
 use bstruct::{CompileError, build_directory};
 use std::collections::BTreeMap;
 use std::rc::Rc;
-use rhai::{CustomType, TypeBuilder};
 
 // `.bs` schema names: parsed once at startup and never mutated again, but
 // cloned constantly afterward (every member lookup, every `GameInstance`
@@ -15,8 +14,7 @@ type TypeName = Rc<str>;
 type MemberName = Rc<str>;
 type EnumName = Rc<str>;
 
-#[derive(Debug, Clone, CustomType)]
-#[rhai_type(extra = Self::rhai_extra)]
+#[derive(Debug, Clone)]
 pub struct GameStructs {
   pub structs: BTreeMap<TypeName, Rc<GameStruct>>,
   pub enums: BTreeMap<EnumName, Rc<GameEnum>>,
@@ -75,15 +73,9 @@ impl GameStructs {
   pub fn get_enum_by_name(&self, name: &str) -> Option<Rc<GameEnum>> {
     self.enums.get(name).cloned()
   }
-
-  pub fn rhai_extra(builder: &mut TypeBuilder<Self>) {
-    builder.with_fn("get_struct_by_name", GameStructs::get_struct_by_name);
-    builder.with_fn("get_enum_by_name", GameStructs::get_enum_by_name);
-  }
 }
 
-#[derive(Clone, Debug, CustomType)]
-#[rhai_type(extra = Self::rhai_extra)]
+#[derive(Clone, Debug)]
 pub struct GameEnum {
   pub name: TypeName,
   #[allow(unused)]
@@ -118,16 +110,7 @@ impl GameEnum {
   }
 }
 
-// rhai stuff
-impl GameEnum {
-  pub fn rhai_extra(builder: &mut TypeBuilder<Self>) {
-    builder.with_fn("get_value_by_name", GameEnum::get_value_by_name);
-    builder.with_fn("get_name_by_value", GameEnum::get_name_by_value);
-  }
-}
-
-#[derive(Clone, Debug, CustomType)]
-#[rhai_type(extra = Self::rhai_extra)]
+#[derive(Clone, Debug)]
 pub struct GameStruct {
   pub name: TypeName,
   pub size: i64,
@@ -196,16 +179,7 @@ impl GameStruct {
   }
 }
 
-// rhai stuff
-impl GameStruct {
-  pub fn rhai_extra(builder: &mut TypeBuilder<Self>) {
-    builder.with_fn("get_member_by_name", GameStruct::get_member_by_name);
-    builder.with_fn("extends", GameStruct::extends);
-  }
-}
-
-#[derive(Clone, Debug, CustomType)]
-#[rhai_type(extra = Self::rhai_extra)]
+#[derive(Clone, Debug)]
 pub struct GameMember {
   pub type_name: TypeName,
   pub name: MemberName,
@@ -235,13 +209,6 @@ impl GameMember {
   }
 }
 
-// rhai stuff
-impl GameMember {
-  pub fn rhai_extra(builder: &mut TypeBuilder<Self>) {
-    builder.with_fn("get_type", GameMember::get_type);
-  }
-}
-
 /// u64/i64 currently ignored.
 pub fn primitive_size(type_name: &str) -> u32 {
   match type_name {
@@ -253,8 +220,7 @@ pub fn primitive_size(type_name: &str) -> u32 {
   }
 }
 
-#[derive(Clone, Debug, CustomType)]
-#[rhai_type(extra = Self::rhai_extra)]
+#[derive(Clone, Debug)]
 pub struct GameInstance {
   pub address: u32,
   pub type_name: TypeName,
@@ -423,24 +389,6 @@ impl GameInstance {
 
   pub fn read_string(&self, ctx: &Ctx) -> Option<String> {
     ctx.mem.read_string(self.address)
-  }
-}
-
-// rhai stuff
-impl GameInstance {
-  pub fn rhai_extra(builder: &mut TypeBuilder<Self>) {
-    builder.with_fn("read_u8", GameInstance::read_u8);
-    builder.with_fn("read_u16", GameInstance::read_u16);
-    builder.with_fn("read_u32", GameInstance::read_u32);
-    builder.with_fn("read_u64", GameInstance::read_u64);
-    builder.with_fn("read_bool", GameInstance::read_bool);
-    builder.with_fn("read_f32", GameInstance::read_f32);
-    builder.with_fn("read_f64", GameInstance::read_f64);
-    builder.with_fn("read_string", GameInstance::read_string);
-
-    // todo: get_member should be an indexer that is pulled out
-    // this does mean that we need to get ctx from the global state or smth?
-    // not sure how rhai is supposed to handle this
   }
 }
 
