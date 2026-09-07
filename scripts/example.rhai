@@ -1,5 +1,7 @@
 // Example PrimeWatch script.
 //
+// For details on Rhai, see https://rhai.rs/book/
+//
 // Scripts in ./scripts/*.rhai are re-run every frame. Build one or more
 // windows with `inspector_window(title)`, fill them with `.add(...)`, and
 // submit them with `show(w)`.

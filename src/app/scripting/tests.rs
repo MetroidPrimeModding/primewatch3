@@ -337,6 +337,51 @@ fn shipped_scripts_compile() {
 }
 
 #[test]
+fn player_status_script_runs_against_the_live_dump() {
+  let Some(mem) = load_mem1() else { return };
+  let structs = load_defs();
+  let ctx = Ctx::new(&structs, &mem);
+  let objects = crate::mem::game_object_utils::get_all_objects(&ctx);
+
+  let src = std::fs::read_to_string(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/scripts/player_status.rhai"
+  ))
+  .expect("read player_status.rhai");
+
+  let windows = run(&src, &ctx, &objects).expect("run");
+  assert_eq!(windows.len(), 1, "player_status submits one window");
+  let rows: Vec<&str> = windows[0]
+    .rows
+    .iter()
+    .map(|r| match r {
+      CustomInspectorRow::Text(t) => t.as_str(),
+      other => panic!("unexpected row: {}", row_kind(other)),
+    })
+    .collect();
+  assert_eq!(rows.len(), 3);
+  assert!(rows[0].starts_with("pos: "), "row 0: {}", rows[0]);
+  assert!(rows[1].starts_with("vel: "), "row 1: {}", rows[1]);
+  assert!(rows[2].starts_with("look: "), "row 2: {}", rows[2]);
+
+  // Position matches a direct scalar read of the CTransform pos fields.
+  let player = get_state_manager()
+    .get_member(&ctx, "player")
+    .expect("player");
+  let xf = player.get_member(&ctx, "transform").expect("transform");
+  let px = xf
+    .get_member(&ctx, "posX")
+    .and_then(|m| m.read_f32(&ctx))
+    .expect("posX");
+  let want = (px * 1000.0).round() / 1000.0;
+  assert!(
+    rows[0].contains(&format!("pos: {want}x")),
+    "row 0 {} vs posX {want}",
+    rows[0]
+  );
+}
+
+#[test]
 fn typed_reads_off_the_live_dump() {
   let Some(mem) = load_mem1() else { return };
   let structs = load_defs();
