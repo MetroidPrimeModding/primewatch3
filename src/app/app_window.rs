@@ -356,6 +356,13 @@ impl AppWindow {
         if resp.hovered() {
           world_view_input.scroll = ui.input(|i| i.smooth_scroll_delta.y);
         }
+        // Pointer position over the image, in world-target physical pixels
+        // (image-local, top-left origin) — drives the hovered-triangle pick.
+        if let Some(p) = resp.hover_pos() {
+          let ppp = ui.ctx().pixels_per_point();
+          let local = (p - rect.min) * ppp;
+          world_view_input.hover_pos = Some((local.x, local.y));
+        }
 
         // Paint the queued overlays. `screen_pos` is in world-target physical pixels (Y-down,
         // already flipped by `getScreenspacePosFor*`); map it into the image

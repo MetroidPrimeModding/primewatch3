@@ -4,4 +4,5 @@
 //! in `crate::gl`.
 
 pub mod collision_mesh;
+pub mod ray_trace;
 pub mod renderer;

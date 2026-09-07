@@ -33,6 +33,9 @@ pub(super) struct WorldViewInput {
   pub(super) drag: (f32, f32),
   /// Scroll delta while hovering the image, in egui points.
   pub(super) scroll: f32,
+  /// Pointer position over the image, in world-target physical pixels
+  /// (top-left origin), or `None` when the pointer isn't over the image.
+  pub(super) hover_pos: Option<(f32, f32)>,
 }
 
 /// Result of [`InputState::plan`] — a [`WorldInput`] plus the direct
@@ -80,6 +83,7 @@ impl InputState {
     wi.cam_pitch = world_view.drag.1 * 0.005;
     wi.cam_yaw = world_view.drag.0 * -0.005;
     wi.cam_zoom = world_view.scroll / 50.0 * -2.0;
+    wi.hover_pos = world_view.hover_pos.map(|(x, y)| glam::Vec2::new(x, y));
 
     // Keyboard camera control.
     let mut detached_move = (0.0_f32, 0.0_f32, 0.0_f32);
@@ -136,6 +140,7 @@ mod tests {
     let wv = WorldViewInput {
       drag: (10.0, 4.0),
       scroll: 0.0,
+      hover_pos: None,
     };
     let plan = s.plan(false, CameraMode::FollowPlayer, wv);
     // Rightward drag → negative yaw (FPS-style: look right).
@@ -149,6 +154,7 @@ mod tests {
     let wv = WorldViewInput {
       drag: (0.0, 0.0),
       scroll: 50.0,
+      hover_pos: None,
     };
     let plan = s.plan(false, CameraMode::FollowPlayer, wv);
     assert!((plan.world_input.cam_zoom - (50.0 / 50.0 * -2.0)).abs() < 1e-6);

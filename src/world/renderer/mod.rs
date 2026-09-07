@@ -37,11 +37,12 @@ use crate::mem::globals::get_state_manager;
 use crate::mem::math_utils::{read_as_matrix4f, read_as_quat, read_as_transform, read_as_vec3};
 use crate::structs::prime_structs::GameInstance;
 use crate::world::collision_mesh::CollisionMesh;
+use crate::world::ray_trace::{Ray, raycast_mesh};
 
 pub use camera::quat_from_euler;
 pub use types::{
-  ActorRenderConfig, CameraMode, CullType, GameCamera, OrbitPlayerCameraOrigin, PlayerClipConfig,
-  PlayerGhost, ShadowConfig, TextOverlay, TriggerRenderConfig, WorldInput,
+  ActorRenderConfig, CameraMode, CullType, GameCamera, HoveredTri, OrbitPlayerCameraOrigin,
+  PlayerClipConfig, PlayerGhost, ShadowConfig, TextOverlay, TriggerRenderConfig, WorldInput,
 };
 
 mod types;
@@ -106,6 +107,11 @@ pub struct WorldRenderer {
   /// Screen-space labels accumulated this frame (HP / item / fuse counts).
   /// Cleared at the top of every [`WorldRenderer::update`].
   pub text_overlays: Vec<TextOverlay>,
+
+  /// The collision triangle the mouse is over this frame, from the un-projected
+  /// pointer ray (`WorldInput::hover_pos`). Recomputed at the end of every
+  /// [`WorldRenderer::update`]; drawn as a highlight overlay by [`gpu`].
+  pub hovered_tri: Option<HoveredTri>,
 
   // --- cached per-frame player state ---
   /// The live player, read from `g_stateManager["player"]` each frame. Its
@@ -184,6 +190,7 @@ impl WorldRenderer {
       cam_viewport: [0.0, 0.0, size.0 as f32, size.1 as f32],
       game_cam: GameCamera::default(),
       text_overlays: Vec::new(),
+      hovered_tri: None,
       player: PlayerGhost::default(),
       player_ghosts: [PlayerGhost::default(); 5],
       last_known_non_colliding_pos: Vec3::ZERO,
@@ -429,6 +436,9 @@ impl WorldRenderer {
       viewport_size.1.max(1) as f32,
     ];
 
+    // --- hovered collision triangle (mouse pick) ---
+    self.hovered_tri = self.pick_hovered_tri(input.hover_pos);
+
     // --- CPU geometry into the immediate buffers ---
     self.render_buff.clear();
     self.translucent_render_buff.clear();
@@ -469,5 +479,44 @@ impl WorldRenderer {
         self.draw_player(&ghost, Vec4::new(0.0, 1.0, 1.0, 0.5));
       }
     }
+  }
+
+  /// Un-project `hover_px` into a world ray with the current camera and
+  /// brute-force it against every loaded area's collision mesh
+  /// (`ray_trace::raycast_mesh`), returning the nearest triangle hit.
+  fn pick_hovered_tri(&self, hover_px: Option<Vec2>) -> Option<HoveredTri> {
+    let (origin, dir) = camera::unproject_ray(
+      hover_px?,
+      self.cam_view,
+      self.cam_projection,
+      self.cam_viewport,
+    )?;
+    let ray = Ray { origin, dir };
+
+    let mut best: Option<HoveredTri> = None;
+    let mut best_t = f32::INFINITY;
+    for (&mrea, mesh) in &self.mesh_by_mrea {
+      let Some(hit) = raycast_mesh(mesh, ray, best_t) else {
+        continue;
+      };
+      if hit.t >= best_t {
+        continue;
+      }
+      let verts = mesh
+        .master_list_triangle(hit.tri_index)
+        .map(|t| t.verts)
+        .unwrap_or([hit.point; 3]);
+      best_t = hit.t;
+      best = Some(HoveredTri {
+        mrea,
+        tri_index: hit.tri_index,
+        verts,
+        point: hit.point,
+        normal: hit.normal,
+        material: hit.material,
+        t: hit.t,
+      });
+    }
+    best
   }
 }

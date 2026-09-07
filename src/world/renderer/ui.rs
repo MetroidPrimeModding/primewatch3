@@ -117,6 +117,21 @@ impl WorldRenderer {
         ));
       }
     }
+
+    // Hovered collision triangle (mouse pick).
+    ui.separator();
+    match &self.hovered_tri {
+      Some(h) => {
+        ui.label(format!(
+          "hover tri #{} @ {:08x}  (t = {:.2})",
+          h.tri_index, h.mrea, h.t
+        ));
+        ui.label(format!("  material {:08x}", h.material.0));
+      }
+      None => {
+        ui.label("hover tri: none");
+      }
+    }
   }
 
   /// The render-config half of `PrimeWatch::doMainMenu` — the Culling / Camera /
