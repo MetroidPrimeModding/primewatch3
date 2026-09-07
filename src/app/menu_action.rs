@@ -13,6 +13,7 @@ pub(super) enum MenuAction {
   Detach,
   LoadFromFile,
   ReloadDefs,
+  ReloadScripts,
 }
 
 /// Apply one deferred [`MenuAction`] against the mutable game state.
@@ -70,6 +71,17 @@ pub(super) fn apply_menu_action(action: MenuAction, fs: &mut FrameState) {
           *fs.status_text = err;
         }
       }
+    }
+    MenuAction::ReloadScripts => {
+      fs.scripts.reload();
+      let compiled = fs
+        .scripts
+        .entries
+        .iter()
+        .filter(|s| s.compiled.is_ok())
+        .count();
+      let total = fs.scripts.entries.len();
+      fs.toasts.info(format!("Loaded {compiled}/{total} scripts"));
     }
   }
 }

@@ -4,7 +4,6 @@
 
 use glam::{Vec2, Vec3};
 
-/// Selected by the Culling menu.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CullType {
   Back,
@@ -12,7 +11,6 @@ pub enum CullType {
   None,
 }
 
-/// Selected by the Camera menu.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CameraMode {
   FollowPlayer,
@@ -20,7 +18,6 @@ pub enum CameraMode {
   GameCam,
 }
 
-/// Selected by the Camera menu (Follow Player sub-group).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum OrbitPlayerCameraOrigin {
   Top,
@@ -28,9 +25,6 @@ pub enum OrbitPlayerCameraOrigin {
   Bottom,
 }
 
-/// The in-game camera as read from `CGameCamera`. Only `perspective` /
-/// `transform` are consumed; `fov` / `znear` / `zfar` / `aspect` are read for
-/// the camera status UI.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct GameCamera {
   pub perspective: glam::Mat4,
@@ -45,9 +39,7 @@ pub struct GameCamera {
   pub aspect: f32,
 }
 
-/// The camera-motion inputs (`PrimeWatchInput` minus `capturedMouse`). `app.rs`
-/// passes [`WorldInput::default`] (all zero — no camera motion) until real winit
-/// plumbing lands.
+/// The camera-motion inputs
 #[derive(Clone, Copy, Debug, Default)]
 pub struct WorldInput {
   pub cam_pitch: f32,
@@ -55,8 +47,6 @@ pub struct WorldInput {
   pub cam_zoom: f32,
 }
 
-/// `enabled` gates the `player_ghosts` draw loop; nothing populates the ghost
-/// array yet (matches C++ — the loop is a no-op until something feeds it).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlayerGhost {
   pub enabled: bool,
@@ -66,8 +56,6 @@ pub struct PlayerGhost {
   pub is_morphed: bool,
 }
 
-/// The C++ type is a packed bitfield with per-field initializers; here it's
-/// plain `bool`s with a matching `Default`. The UI toggles these.
 #[derive(Clone, Copy, Debug)]
 pub struct TriggerRenderConfig {
   pub detect_player: bool,
@@ -107,7 +95,6 @@ impl Default for TriggerRenderConfig {
   }
 }
 
-/// Same bitfield-to-`bool` treatment as [`TriggerRenderConfig`].
 #[derive(Clone, Copy, Debug)]
 pub struct ActorRenderConfig {
   pub render_projectiles: bool,
@@ -139,7 +126,6 @@ impl Default for ActorRenderConfig {
 /// from the Culling menu, marshalled into `WorldUniforms::clip_params`.
 #[derive(Clone, Copy, Debug)]
 pub struct PlayerClipConfig {
-  /// Feature toggle.
   pub enabled: bool,
   /// Cone radius at the hemisphere cap, in world units.
   pub cone_radius: f32,
@@ -164,13 +150,8 @@ impl Default for PlayerClipConfig {
   }
 }
 
-/// The player-cast ground shadow: a small orthographic shadow map rasterizing
-/// only the live player's opaque model, sampled by `fs_mesh` when shading every
-/// other opaque/translucent surface. Marshalled into `WorldUniforms::shadow_params`
-/// (`light_view_proj` is derived fresh each frame from the player position).
 #[derive(Clone, Copy, Debug)]
 pub struct ShadowConfig {
-  /// Feature toggle.
   pub enabled: bool,
   /// How much direct light the shadow blocks: `0.0` = no darkening, `1.0` =
   /// shadowed fragments fall back to ambient-only lighting.
@@ -209,17 +190,10 @@ impl Default for ShadowConfig {
   }
 }
 
-/// A screen-space text label accumulated during `update` and painted by the app
-/// shell's overlay pass. From the `ImDrawList::AddText` calls in the per-class
-/// draw functions.
 #[derive(Clone, Debug, PartialEq)]
 pub struct TextOverlay {
   pub screen_pos: Vec2,
   pub text: String,
 }
 
-/// Nominal line height for stacking multi-line overlays (`drawPickup`'s two
-/// lines). The C++ uses `ImGui::GetTextLineHeight()`; this layer has no font
-/// system, so the overlay painter owns exact glyph metrics / horizontal
-/// centering.
 pub(crate) const OVERLAY_LINE_HEIGHT: f32 = 14.0;

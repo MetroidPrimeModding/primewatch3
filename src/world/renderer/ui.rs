@@ -1,10 +1,7 @@
-//! egui surfaces: the "WorldStatus" / "PlayerStatus" status windows, the
-//! Culling / Camera / Triggers / Actors menu bar, and the "Camera Controls"
-//! window. Split into free functions taking `&mut` field refs where possible
-//! so the widget bodies type-check and run headless (no GPU state, no
-//! `Ctx`/`GameInstance`).
-
-use glam::Vec2;
+//! egui surfaces: the "WorldStatus" status window, the Culling / Camera /
+//! Triggers / Actors menu bar, and the "Camera Controls" window. Split into
+//! free functions taking `&mut` field refs where possible so the widget
+//! bodies type-check and run headless (no GPU state, no `Ctx`/`GameInstance`).
 
 use crate::ctx::Ctx;
 use crate::mem::area_utils::get_areas;
@@ -18,9 +15,7 @@ use super::types::{
 };
 
 impl WorldRenderer {
-  /// `WorldRenderer::renderImGui` — the "WorldStatus" area/loading table and the
-  /// "PlayerStatus" pos/vel/look readout. egui has no free-floating windows, so
-  /// both spawn off the passed `ui`'s context.
+  /// The "WorldStatus" area/loading table.
   pub fn render_status_windows(&self, ctx: &Ctx, ui: &mut egui::Ui) {
     let egui_ctx = ui.ctx().clone();
 
@@ -29,15 +24,8 @@ impl WorldRenderer {
       .title_bar(false)
       .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
       .show(&egui_ctx, |ui| self.render_world_status(ctx, ui));
-
-    egui::Window::new("PlayerStatus")
-      .resizable(false)
-      .title_bar(false)
-      .anchor(egui::Align2::LEFT_BOTTOM, [8.0, -8.0])
-      .show(&egui_ctx, |ui| self.render_player_status(ui));
   }
 
-  /// The "WorldStatus" window body.
   fn render_world_status(&self, ctx: &Ctx, ui: &mut egui::Ui) {
     let e_chain = ctx.structs.get_enum_by_name("EChain");
     let e_phase = ctx.structs.get_enum_by_name("EPhase");
@@ -131,39 +119,6 @@ impl WorldRenderer {
     }
   }
 
-  /// The "PlayerStatus" window body.
-  fn render_player_status(&self, ui: &mut egui::Ui) {
-    let forward = self.player_look_vec;
-    let hforward = Vec2::new(forward.x, forward.y).normalize_or_zero();
-    let hvel = Vec2::new(self.player.velocity.x, self.player.velocity.y);
-
-    let p = self.player.position;
-    let v = self.player.velocity;
-    ui.label(format!("pos: {:8.3}x {:8.3}y {:8.3}z", p.x, p.y, p.z));
-    ui.label(format!(
-      "vel: {:8.3}x {:8.3}y {:8.3}z {:8.3}h",
-      v.x,
-      v.y,
-      v.z,
-      hvel.length()
-    ));
-
-    let hveldir = hvel.normalize_or_zero();
-    let forward_angle = hforward.y.atan2(hforward.x);
-    let vel_angle = hveldir.y.atan2(hveldir.x);
-    let angle = forward_angle - vel_angle;
-    ui.label(format!(
-      "look: {:6.3}x {:6.3}y {:6.1}deg | vel {:6.3}x {:6.3}y {:6.1}deg | {:6.1} deg",
-      hforward.x,
-      hforward.y,
-      forward_angle.to_degrees(),
-      hveldir.x,
-      hveldir.y,
-      vel_angle.to_degrees(),
-      angle.to_degrees()
-    ));
-  }
-
   /// The render-config half of `PrimeWatch::doMainMenu` — the Culling / Camera /
   /// Triggers / Actors menus. Thin forwarder onto [`render_menu_bar`] so the
   /// body stays testable without a `wgpu::Device`.
@@ -184,8 +139,6 @@ impl WorldRenderer {
     );
   }
 
-  /// The "Camera Controls" window body from `PrimeWatch::doFrame`. Thin
-  /// forwarder onto [`render_camera_controls_ui`].
   pub fn render_camera_controls(&mut self, ui: &mut egui::Ui) {
     render_camera_controls_ui(
       ui,
@@ -197,10 +150,6 @@ impl WorldRenderer {
   }
 }
 
-/// Body of the Culling / Camera / Triggers / Actors menus. Free function taking
-/// `&mut` field refs so it type-checks and runs headless (no GPU state). Mirrors
-/// `PrimeWatch::doMainMenu` verbatim, including the intentional Culling
-/// label/value skew ("Show Front" -> `Back`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_menu_bar(
   ui: &mut egui::Ui,
@@ -249,7 +198,7 @@ pub(crate) fn render_menu_bar(
     }
   });
 
-  // Lighting + Shadow (combined).
+  // Lighting + Shadow
   ui.menu_button("Lighting", |ui| {
     angle_slider_deg(ui, light_azimuth, -180.0..=180.0, "Azimuth");
     angle_slider_deg(ui, light_elevation, -90.0..=90.0, "Elevation");
@@ -273,10 +222,7 @@ pub(crate) fn render_menu_bar(
           .text("Depth bias"),
       );
       ui.separator();
-      ui.checkbox(
-        &mut shadow.independent_angle,
-        "Independent shadow angle",
-      );
+      ui.checkbox(&mut shadow.independent_angle, "Independent shadow angle");
       if shadow.independent_angle {
         angle_slider_deg(ui, &mut shadow.azimuth, -180.0..=180.0, "Shadow azimuth");
         angle_slider_deg(
@@ -357,9 +303,7 @@ pub(crate) fn render_menu_bar(
   });
 }
 
-/// A `Slider` that displays/edits `*rad` in degrees but stores radians,
-/// same degree<->radian split as the yaw/pitch controls in
-/// [`render_camera_controls_ui`]. Only writes back on `.changed()`.
+/// A `Slider` that displays/edits `*rad` in degrees but stores radians
 fn angle_slider_deg(
   ui: &mut egui::Ui,
   rad: &mut f32,
@@ -379,9 +323,6 @@ fn angle_slider_deg(
   }
 }
 
-/// Body of the "Camera Controls" window. Yaw/Pitch display **degrees** and write
-/// back **radians**; `yaw_deg` is `fmod 360` of the degree value. Yaw and pitch are
-/// only written back when the drag actually `.changed()`.
 pub(crate) fn render_camera_controls_ui(
   ui: &mut egui::Ui,
   cam_line_length: &mut f32,

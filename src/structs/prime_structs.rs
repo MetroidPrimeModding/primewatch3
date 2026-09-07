@@ -14,7 +14,7 @@ type TypeName = Rc<str>;
 type MemberName = Rc<str>;
 type EnumName = Rc<str>;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GameStructs {
   pub structs: BTreeMap<TypeName, Rc<GameStruct>>,
   pub enums: BTreeMap<EnumName, Rc<GameEnum>>,

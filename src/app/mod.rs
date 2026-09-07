@@ -10,11 +10,11 @@ mod input;
 mod menu_action;
 mod objects_window;
 mod raw_data_view;
+mod scripting;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::error::Error;
 use std::time::{Duration, Instant};
-
 use sysinfo::Pid;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
@@ -32,6 +32,7 @@ use crate::structs::prime_structs::{GameInstance, GameStructs};
 use crate::toast::Toasts;
 use crate::ui_state;
 
+use crate::app::scripting::{CustomInspectorWindow, ScriptManager};
 use app_window::AppWindow;
 use input::InputState;
 use objects_window::WatchedEditorId;
@@ -70,23 +71,22 @@ struct FrameState<'a> {
   pids: &'a mut Vec<Pid>,
   show_raw_data_view: &'a mut bool,
   inspector: &'a mut Inspector,
-  /// Live object list (walked in `redraw`, borrowed read-only here). Keyed by
-  /// `TUniqueID`
   objects: &'a BTreeMap<TUniqueID, GameInstance>,
   /// Per-editor-ID watch windows.
   editor_ids_to_watch: &'a mut Vec<WatchedEditorId>,
   show_active_in_table_only: &'a mut bool,
   table_hovered_uid: &'a mut u16,
   object_filter: &'a mut ObjectFilter,
-  /// Session-persistent set of unknown vtable addresses seen in the object list
   unknown_vtables: &'a mut BTreeSet<u32>,
   /// Cleared on any explicit attach/detach/load-from-file so a manual detach
   /// doesn't trigger the auto-reconnect scan meant for a natural disconnect.
   awaiting_dolphin_reconnect: &'a mut bool,
+  scripts: &'a mut ScriptManager,
+  /// Windows built by the frame's script run (in [`App::redraw`]); drawn by
+  /// `AppWindow::render` with the normal inspector.
+  script_windows: &'a [CustomInspectorWindow],
 }
 
-/// Owns the long-lived game state plus the render state that only exists while
-/// the window is active. No globals — everything is threaded explicitly.
 struct App {
   /// Local MEM1 snapshot, refreshed each frame from `dolphin`.
   mem: GameMemory,
@@ -95,19 +95,16 @@ struct App {
   /// Live object list, walked off `g_stateManager` once per frame
   objects: BTreeMap<TUniqueID, GameInstance>,
   defs_loaded: bool,
-  /// Either "Loaded N structs and M enums" or the load error string.
+  // todo: this may not be necessary anymore?
+  // or at least should be renamed
   status_text: String,
-  /// Cached Dolphin PID list for the Attach menu
-  pids: Vec<Pid>,
+  dolphin_pids: Vec<Pid>,
   show_raw_data_view: bool,
-  /// Generic `GameInstance` tree view — hosts the "globals" window and the
-  /// Tools-menu exact-values toggle (`GameObjectRenderers::render_exact_values`).
   inspector: Inspector,
   editor_ids_to_watch: Vec<WatchedEditorId>,
   show_active_in_table_only: bool,
   table_hovered_uid: u16,
   object_filter: ObjectFilter,
-  /// Session log of every unrecognised vtable address. Never shrinks.
   unknown_vtables: BTreeSet<u32>,
   /// Set when Dolphin disconnects on its own (process exited) rather than via
   /// an explicit Detach/Load-from-file/Attach action. While set, `redraw`
@@ -117,12 +114,12 @@ struct App {
   /// Throttles both the attached-process liveness check and the reconnect
   /// scan to once per `DOLPHIN_POLL_INTERVAL`, independent of frame rate.
   last_dolphin_poll: Instant,
-  /// Ephemeral corner notifications
   toasts: Toasts,
-  /// Input accumulated between frames.
   input: InputState,
   /// Render state — `None` until `resumed` (Wayland/macOS require deferred creation).
   window: Option<AppWindow>,
+  /// `*.rhai` scripts + the engine that runs them each frame.
+  scripts: ScriptManager,
 }
 
 impl App {
@@ -176,6 +173,9 @@ impl App {
       toasts.info(&status_text);
     }
 
+    // Discover + compile `./scripts/*.rhai`.
+    let scripts = ScriptManager::new();
+
     Self {
       mem,
       dolphin,
@@ -183,7 +183,7 @@ impl App {
       objects: BTreeMap::new(),
       defs_loaded,
       status_text,
-      pids,
+      dolphin_pids: pids,
       toasts,
       show_raw_data_view: false,
       inspector: Inspector::new(),
@@ -196,6 +196,7 @@ impl App {
       last_dolphin_poll: Instant::now(),
       input: InputState::default(),
       window: None,
+      scripts,
     }
   }
 
@@ -226,9 +227,9 @@ impl App {
       return;
     }
 
-    self.pids = self.dolphin.get_dolphin_pids();
-    if self.pids.len() == 1 {
-      let pid = self.pids[0].as_u32() as i32;
+    self.dolphin_pids = self.dolphin.get_dolphin_pids();
+    if self.dolphin_pids.len() == 1 {
+      let pid = self.dolphin_pids[0].as_u32() as i32;
       if self.dolphin.attach_to_process(pid) {
         println!("Reattached to Dolphin pid {pid}");
         self.toasts.info(format!("Reattached to Dolphin pid {pid}"));
@@ -253,7 +254,7 @@ impl App {
       defs_loaded,
       status_text,
       toasts,
-      pids,
+      dolphin_pids: pids,
       show_raw_data_view,
       inspector,
       editor_ids_to_watch,
@@ -264,10 +265,14 @@ impl App {
       awaiting_dolphin_reconnect,
       input,
       last_dolphin_poll: _,
+      scripts,
     } = self;
     let Some(window) = window.as_mut() else {
       return;
     };
+
+    // Populated by the per-frame script run below; borrowed by `FrameState`.
+    let mut script_windows: Vec<CustomInspectorWindow> = Vec::new();
 
     if *defs_loaded {
       // Refresh the snapshot (no-op while detached).
@@ -310,6 +315,10 @@ impl App {
       window
         .world
         .update(&ctx, &plan.world_input, viewport, objects, &highlighted);
+
+      // Run every enabled `*.rhai` script against this frame's live memory; the
+      // windows they build are drawn by `AppWindow::render`.
+      script_windows = scripts.run_frame(&ctx, objects);
     }
 
     // `objects` is walked above and consumed (by `&`) by `world.update`
@@ -330,6 +339,8 @@ impl App {
       object_filter,
       unknown_vtables,
       awaiting_dolphin_reconnect,
+      scripts,
+      script_windows: &script_windows,
     };
     window.render(&mut fs);
   }

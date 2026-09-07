@@ -18,6 +18,7 @@ use super::input::WorldViewInput;
 use super::menu_action::{MenuAction, apply_menu_action};
 use super::objects_window::render_objects_window;
 use super::raw_data_view::render_raw_data_view;
+use super::scripting::{AnchorAlign, CustomInspectorRow, WindowAnchor};
 
 /// wgpu + egui render state. Created in `resumed`, dropped when the app exits.
 pub(super) struct AppWindow {
@@ -277,6 +278,11 @@ impl AppWindow {
                   &mut fs.inspector.exact_values,
                   "Show exact floating point values",
                 );
+                ui.separator();
+                ui.checkbox(&mut fs.scripts.show_window, "Scripting");
+                if ui.button("Reload Scripts").clicked() {
+                  menu_actions.push(MenuAction::ReloadScripts);
+                }
               });
 
               // FPS counter, pinned to the end of the toolbar.
@@ -415,6 +421,83 @@ impl AppWindow {
       }
     }
 
+    // --- Scripting: management window + the windows scripts built this frame ---
+    if fs.scripts.show_window {
+      let mut open = true;
+      egui::Window::new("Scripting")
+        .open(&mut open)
+        .show(&egui_ctx, |ui| {
+          ui.horizontal(|ui| {
+            if ui.button("Reload").clicked() {
+              menu_actions.push(MenuAction::ReloadScripts);
+            }
+            ui.label(format!("dir: {}", fs.scripts.dir_display()));
+          });
+          if let Some(err) = fs.scripts.scan_error.as_ref() {
+            ui.colored_label(egui::Color32::RED, err);
+          }
+          if fs.scripts.entries.is_empty() {
+            ui.label("No .rhai scripts found.");
+          }
+          let mut enabled_changed = false;
+          for script in fs.scripts.entries.iter_mut() {
+            ui.separator();
+            if ui
+              .checkbox(&mut script.enabled, &script.name)
+              .on_hover_text(script.path.display().to_string())
+              .changed()
+            {
+              enabled_changed = true;
+            }
+            if let Err(err) = &script.compiled {
+              ui.colored_label(egui::Color32::RED, format!("compile error: {err}"));
+            }
+            if let Some(err) = &script.runtime_error {
+              ui.colored_label(
+                egui::Color32::from_rgb(0xFF, 0x99, 0x00),
+                format!("runtime error: {err}"),
+              );
+            }
+          }
+          if enabled_changed {
+            fs.scripts.persist_enabled();
+          }
+        });
+      if !open {
+        fs.scripts.show_window = false;
+      }
+    }
+
+    if let Some(ctx) = ctx.as_ref() {
+      for (i, sw) in fs.script_windows.iter().enumerate() {
+        let mut window = egui::Window::new(&sw.title)
+          .id(egui::Id::new(("script_window", i, sw.title.as_str())))
+          .title_bar(sw.title_bar);
+        if let Some(anchor) = sw.anchor {
+          window = window.anchor(
+            to_align2(anchor),
+            egui::vec2(anchor.offset.0, anchor.offset.1),
+          );
+        }
+        window.show(&egui_ctx, |ui| {
+          egui::ScrollArea::vertical()
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+              for row in &sw.rows {
+                match row {
+                  CustomInspectorRow::Instance { label, instance } => {
+                    fs.inspector.render(ui, ctx, label, instance, true);
+                  }
+                  CustomInspectorRow::Text(text) => {
+                    ui.label(text);
+                  }
+                }
+              }
+            });
+        });
+      }
+    }
+
     // --- WorldStatus / PlayerStatus overlays, only while the memory parse is live.
     if let Some(ctx) = ctx.as_ref() {
       egui::Area::new(egui::Id::new("world-status-host"))
@@ -514,4 +597,17 @@ impl AppWindow {
       self.last_ui_save = Instant::now();
     }
   }
+}
+
+/// [`WindowAnchor`] -> `egui::Align2`. Kept here rather than in `scripting`
+/// so that module stays free of an `egui` dependency.
+fn to_align2(anchor: WindowAnchor) -> egui::Align2 {
+  fn conv(a: AnchorAlign) -> egui::Align {
+    match a {
+      AnchorAlign::Min => egui::Align::Min,
+      AnchorAlign::Center => egui::Align::Center,
+      AnchorAlign::Max => egui::Align::Max,
+    }
+  }
+  egui::Align2([conv(anchor.align.0), conv(anchor.align.1)])
 }
