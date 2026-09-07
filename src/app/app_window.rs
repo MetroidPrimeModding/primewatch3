@@ -18,7 +18,7 @@ use super::input::WorldViewInput;
 use super::menu_action::{MenuAction, apply_menu_action};
 use super::objects_window::render_objects_window;
 use super::raw_data_view::render_raw_data_view;
-use super::scripting::CustomInspectorRow;
+use super::scripting::{AnchorAlign, CustomInspectorRow, WindowAnchor};
 
 /// wgpu + egui render state. Created in `resumed`, dropped when the app exits.
 pub(super) struct AppWindow {
@@ -461,24 +461,31 @@ impl AppWindow {
 
     if let Some(ctx) = ctx.as_ref() {
       for (i, sw) in fs.script_windows.iter().enumerate() {
-        egui::Window::new(&sw.title)
+        let mut window = egui::Window::new(&sw.title)
           .id(egui::Id::new(("script_window", i, sw.title.as_str())))
-          .show(&egui_ctx, |ui| {
-            egui::ScrollArea::vertical()
-              .auto_shrink([false, true])
-              .show(ui, |ui| {
-                for row in &sw.rows {
-                  match row {
-                    CustomInspectorRow::Instance { label, instance } => {
-                      fs.inspector.render(ui, ctx, label, instance, true);
-                    }
-                    CustomInspectorRow::Text(text) => {
-                      ui.label(text);
-                    }
+          .title_bar(sw.title_bar);
+        if let Some(anchor) = sw.anchor {
+          window = window.anchor(
+            to_align2(anchor),
+            egui::vec2(anchor.offset.0, anchor.offset.1),
+          );
+        }
+        window.show(&egui_ctx, |ui| {
+          egui::ScrollArea::vertical()
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+              for row in &sw.rows {
+                match row {
+                  CustomInspectorRow::Instance { label, instance } => {
+                    fs.inspector.render(ui, ctx, label, instance, true);
+                  }
+                  CustomInspectorRow::Text(text) => {
+                    ui.label(text);
                   }
                 }
-              });
-          });
+              }
+            });
+        });
       }
     }
 
@@ -581,4 +588,17 @@ impl AppWindow {
       self.last_ui_save = Instant::now();
     }
   }
+}
+
+/// [`WindowAnchor`] -> `egui::Align2`. Kept here rather than in `scripting`
+/// so that module stays free of an `egui` dependency.
+fn to_align2(anchor: WindowAnchor) -> egui::Align2 {
+  fn conv(a: AnchorAlign) -> egui::Align {
+    match a {
+      AnchorAlign::Min => egui::Align::Min,
+      AnchorAlign::Center => egui::Align::Center,
+      AnchorAlign::Max => egui::Align::Max,
+    }
+  }
+  egui::Align2([conv(anchor.align.0), conv(anchor.align.1)])
 }

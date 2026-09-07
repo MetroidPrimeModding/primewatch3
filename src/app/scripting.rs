@@ -45,10 +45,53 @@ pub enum CustomInspectorRow {
   Text(String),
 }
 
+/// One end of a [`WindowAnchor`] — which edge/center of the screen (or of the
+/// window itself, depending on the egui axis) a coordinate is measured from.
+/// Named after `egui::Align`'s three variants so [`app_window`]'s conversion
+/// is a straight match; kept local so this module doesn't need an `egui` dep.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AnchorAlign {
+  Min,
+  Center,
+  Max,
+}
+
+/// A script-requested screen anchor for a window, mirroring
+/// `egui::Window::anchor` — `align` picks a screen corner/edge/center and
+/// `offset` nudges the window from it, in points.
+#[derive(Clone, Copy)]
+pub struct WindowAnchor {
+  pub align: (AnchorAlign, AnchorAlign),
+  pub offset: (f32, f32),
+}
+
+fn parse_anchor(name: &str) -> Result<(AnchorAlign, AnchorAlign), String> {
+  use AnchorAlign::*;
+  match name {
+    "left_top" => Ok((Min, Min)),
+    "left_center" => Ok((Min, Center)),
+    "left_bottom" => Ok((Min, Max)),
+    "center_top" => Ok((Center, Min)),
+    "center_center" => Ok((Center, Center)),
+    "center_bottom" => Ok((Center, Max)),
+    "right_top" => Ok((Max, Min)),
+    "right_center" => Ok((Max, Center)),
+    "right_bottom" => Ok((Max, Max)),
+    other => Err(format!(
+      "unknown anchor \"{other}\" (expected e.g. \"left_bottom\", \"center_center\", \"right_top\")"
+    )),
+  }
+}
+
 #[derive(Clone)]
 pub struct CustomInspectorWindow {
   pub title: String,
   pub rows: Vec<CustomInspectorRow>,
+  /// Whether the egui title bar (and with it, dragging/collapsing) is shown.
+  pub title_bar: bool,
+  /// A fixed screen anchor, or `None` for egui's default free-floating
+  /// placement (remembered per title/id across frames).
+  pub anchor: Option<WindowAnchor>,
 }
 
 impl CustomInspectorWindow {
@@ -56,6 +99,8 @@ impl CustomInspectorWindow {
     CustomInspectorWindow {
       title,
       rows: Vec::new(),
+      title_bar: true,
+      anchor: None,
     }
   }
 
@@ -215,6 +260,32 @@ fn register_window_api(engine: &mut Engine) {
     "add",
     |w: &mut CustomInspectorWindow, label: String, value: Dynamic| {
       w.add_text(format!("{label}: {value}"));
+    },
+  );
+
+  // Hide the title bar (and with it, dragging/collapsing) — for a fixed HUD
+  // overlay rather than a draggable inspector panel.
+  engine.register_fn("hide_title", |w: &mut CustomInspectorWindow| {
+    w.title_bar = false;
+  });
+
+  // Pin the window to a screen corner/edge/center, e.g.
+  // `w.anchor("left_bottom", 8.0, -8.0)`. `align` is one of left/center/right
+  // crossed with top/center/bottom, joined with "_".
+  engine.register_fn(
+    "anchor",
+    |w: &mut CustomInspectorWindow,
+     align: &str,
+     offset_x: f64,
+     offset_y: f64|
+     -> Result<(), Box<EvalAltResult>> {
+      let align = parse_anchor(align)
+        .map_err(|e| Box::new(EvalAltResult::ErrorRuntime(e.into(), Position::NONE)))?;
+      w.anchor = Some(WindowAnchor {
+        align,
+        offset: (offset_x as f32, offset_y as f32),
+      });
+      Ok(())
     },
   );
 
@@ -607,5 +678,54 @@ mod tests {
       assert!(with_env(|_, _| ()).is_ok());
     }
     assert!(with_env(|_, _| ()).is_err());
+  }
+
+  #[test]
+  fn window_hide_title_and_anchor_set_the_expected_fields() {
+    let structs = load_defs();
+    let mem = GameMemory::new();
+    let ctx = Ctx::new(&structs, &mem);
+    let objects = BTreeMap::new();
+
+    let windows = run(
+      r#"
+        let w = inspector_window("HUD");
+        w.hide_title();
+        w.anchor("left_bottom", 8.0, -8.0);
+        show(w);
+      "#,
+      &ctx,
+      &objects,
+    )
+    .expect("run");
+
+    assert_eq!(windows.len(), 1);
+    let w = &windows[0];
+    assert!(!w.title_bar);
+    let anchor = w.anchor.expect("anchor set");
+    assert_eq!(anchor.align, (AnchorAlign::Min, AnchorAlign::Max));
+    assert_eq!(anchor.offset, (8.0, -8.0));
+  }
+
+  #[test]
+  fn window_anchor_rejects_an_unknown_alignment_name() {
+    let structs = load_defs();
+    let mem = GameMemory::new();
+    let ctx = Ctx::new(&structs, &mem);
+    let objects = BTreeMap::new();
+
+    let err = match run(
+      r#"
+        let w = inspector_window("HUD");
+        w.anchor("nowhere", 0.0, 0.0);
+        show(w);
+      "#,
+      &ctx,
+      &objects,
+    ) {
+      Ok(_) => panic!("expected an error"),
+      Err(err) => err,
+    };
+    assert!(err.contains("unknown anchor"), "unexpected error: {err}");
   }
 }

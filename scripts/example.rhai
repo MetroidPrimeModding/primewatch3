@@ -4,11 +4,17 @@
 // windows with `inspector_window(title)`, fill them with `.add(...)`, and
 // submit them with `show(w)`.
 //
+// Window API:
+//   w.hide_title()                       -> hide the title bar (no dragging)
+//   w.anchor(align, offset_x, offset_y)   -> pin to a screen corner/edge/center;
+//                                            see scripts/player_status.rhai
+//
 // Handle API:
 //   get_player_entity()            -> the CPlayer handle (or () if unreadable)
 //   get_entity_by_unique_id(id)    -> handle (or ())
 //   get_entity_by_editor_id(id)    -> handle (or ())
 //   get_state_manager(), get_main()
+//   h.member(name)
 //   h["member"]  / h.member("x")   -> nested handle, auto-derefs pointers
 //   h.elem(i)                      -> array element handle
 //   h.address, h.type_name
@@ -19,7 +25,7 @@
 let player = get_player_entity();
 
 if player != () {
-    let w = inspector_window("Player");
+    let w = inspector_window("Custom Window");
 
     // Live tree nodes — re-read from memory every frame by the inspector.
     w.add("sjTimer", player.sjTimer);
@@ -35,6 +41,11 @@ if player != () {
     if t != () {
         w.add("sjTimer (this frame)", t);
     }
+
+    // You can get an entity by its unique ID or editor ID.
+    let e = get_entity_by_editor_id(0x00000083);
+    w.add("Trigger editor id", e.editorID);
+    w.add("Trigger transform", e.transform);
 
     show(w);
 }
