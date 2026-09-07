@@ -439,10 +439,16 @@ impl AppWindow {
           if fs.scripts.entries.is_empty() {
             ui.label("No .rhai scripts found.");
           }
+          let mut enabled_changed = false;
           for script in fs.scripts.entries.iter_mut() {
             ui.separator();
-            ui.checkbox(&mut script.enabled, &script.name)
-              .on_hover_text(script.path.display().to_string());
+            if ui
+              .checkbox(&mut script.enabled, &script.name)
+              .on_hover_text(script.path.display().to_string())
+              .changed()
+            {
+              enabled_changed = true;
+            }
             if let Err(err) = &script.compiled {
               ui.colored_label(egui::Color32::RED, format!("compile error: {err}"));
             }
@@ -452,6 +458,9 @@ impl AppWindow {
                 format!("runtime error: {err}"),
               );
             }
+          }
+          if enabled_changed {
+            fs.scripts.persist_enabled();
           }
         });
       if !open {

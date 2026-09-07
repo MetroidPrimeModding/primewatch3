@@ -423,6 +423,20 @@ fn register_instance_api(engine: &mut Engine) {
 
 const SCRIPT_DIR: &str = "scripts";
 
+/// Where the per-script enabled/disabled flags are remembered across runs.
+/// Sits in the working directory next to `./primewatch_ui.ron`, matching how
+/// the rest of the app's persisted state is stored.
+const ENABLED_STATE_PATH: &str = "./primewatch_scripts.ron";
+
+/// Read the persisted `script name -> enabled` map. A missing or corrupt file
+/// yields an empty map (first run, or a manually-deleted/edited file).
+fn load_enabled_state() -> BTreeMap<String, bool> {
+  std::fs::read_to_string(ENABLED_STATE_PATH)
+    .ok()
+    .and_then(|text| ron::from_str::<BTreeMap<String, bool>>(&text).ok())
+    .unwrap_or_default()
+}
+
 pub struct LoadedScript {
   pub name: String,
   pub path: PathBuf,
@@ -465,6 +479,10 @@ impl ScriptManager {
     self.entries.clear();
     self.scan_error = None;
 
+    // In-memory state (from a live "Reload") wins; otherwise fall back to the
+    // flags persisted from a previous run, then default to enabled.
+    let persisted_enabled = load_enabled_state();
+
     let read_dir = match std::fs::read_dir(&self.dir) {
       Ok(rd) => rd,
       Err(err) => {
@@ -487,7 +505,11 @@ impl ScriptManager {
         .unwrap_or(path.as_os_str())
         .to_string_lossy()
         .into_owned();
-      let enabled = previously_enabled.get(&name).copied().unwrap_or(true);
+      let enabled = previously_enabled
+        .get(&name)
+        .or_else(|| persisted_enabled.get(&name))
+        .copied()
+        .unwrap_or(true);
       let compiled = std::fs::read_to_string(&path)
         .map_err(|err| format!("read error: {err}"))
         .and_then(|src| self.engine.compile(&src).map_err(|err| err.to_string()));
@@ -498,6 +520,24 @@ impl ScriptManager {
         enabled,
         runtime_error: None,
       });
+    }
+  }
+
+  /// Write the current per-script enabled/disabled flags to disk so the next
+  /// run starts with the same set toggled. Call after a checkbox changes.
+  pub fn persist_enabled(&self) {
+    let map: BTreeMap<&str, bool> = self
+      .entries
+      .iter()
+      .map(|s| (s.name.as_str(), s.enabled))
+      .collect();
+    match ron::ser::to_string_pretty(&map, ron::ser::PrettyConfig::default()) {
+      Ok(text) => {
+        if let Err(err) = std::fs::write(ENABLED_STATE_PATH, text) {
+          eprintln!("scripting: could not write {ENABLED_STATE_PATH}: {err}");
+        }
+      }
+      Err(err) => eprintln!("scripting: could not serialize enabled state: {err}"),
     }
   }
 
@@ -567,6 +607,27 @@ mod tests {
     let frame = ScriptFrame::enter(ctx, objects);
     engine.run_ast(&ast).map_err(|e| e.to_string())?;
     Ok(frame.take_windows())
+  }
+
+  #[test]
+  fn packaged_default_enabled_state_parses_and_matches_shipped_scripts() {
+    let root = concat!(env!("CARGO_MANIFEST_DIR"));
+    let text = std::fs::read_to_string(format!("{root}/packaging/primewatch_scripts.ron"))
+      .expect("read packaging/primewatch_scripts.ron");
+    let map: BTreeMap<String, bool> =
+      ron::from_str(&text).expect("packaged enabled state is valid RON");
+
+    // Every key must name a script actually shipped in `scripts/`, so the
+    // default can't silently drift from the release contents.
+    for name in map.keys() {
+      let path = format!("{root}/{SCRIPT_DIR}/{name}");
+      assert!(
+        std::path::Path::new(&path).exists(),
+        "packaged enabled state references missing script {name}"
+      );
+    }
+    assert_eq!(map.get("player_status.rhai"), Some(&true));
+    assert_eq!(map.get("example.rhai"), Some(&false));
   }
 
   #[test]

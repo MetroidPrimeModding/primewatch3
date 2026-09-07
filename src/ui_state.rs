@@ -93,7 +93,7 @@ pub fn save(ctx: &egui::Context, window: &Window) {
       size: (size.width, size.height),
     }),
   };
-  let text = match ron::ser::to_string(&state) {
+  let text = match ron::ser::to_string_pretty(&state, ron::ser::PrettyConfig::default()) {
     Ok(t) => t,
     Err(e) => {
       eprintln!("ui_state: serialize failed: {e}");

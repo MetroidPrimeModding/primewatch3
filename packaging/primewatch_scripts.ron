@@ -1,0 +1,4 @@
+{
+    "example.rhai": false,
+    "player_status.rhai": true,
+}

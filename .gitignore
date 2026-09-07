@@ -4,6 +4,7 @@
 /.vscode
 *.raw
 /primewatch_ui.ron
+/primewatch_scripts.ron
 # ignore mcp.json for the moment
 .mcp.json
 profile.json.gz
