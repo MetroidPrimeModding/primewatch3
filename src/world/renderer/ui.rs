@@ -2,10 +2,6 @@
 //! Triggers / Actors menu bar, and the "Camera Controls" window. Split into
 //! free functions taking `&mut` field refs where possible so the widget
 //! bodies type-check and run headless (no GPU state, no `Ctx`/`GameInstance`).
-//!
-//! The former "PlayerStatus" pos/vel/look readout now lives as
-//! `scripts/player_status.rhai` — see `crate::app::scripting` for the window
-//! anchor/title-bar API it uses.
 
 use crate::ctx::Ctx;
 use crate::mem::area_utils::get_areas;
@@ -19,7 +15,7 @@ use super::types::{
 };
 
 impl WorldRenderer {
-  /// `WorldRenderer::renderImGui` — the "WorldStatus" area/loading table.
+  /// The "WorldStatus" area/loading table.
   pub fn render_status_windows(&self, ctx: &Ctx, ui: &mut egui::Ui) {
     let egui_ctx = ui.ctx().clone();
 
@@ -30,7 +26,6 @@ impl WorldRenderer {
       .show(&egui_ctx, |ui| self.render_world_status(ctx, ui));
   }
 
-  /// The "WorldStatus" window body.
   fn render_world_status(&self, ctx: &Ctx, ui: &mut egui::Ui) {
     let e_chain = ctx.structs.get_enum_by_name("EChain");
     let e_phase = ctx.structs.get_enum_by_name("EPhase");
@@ -144,8 +139,6 @@ impl WorldRenderer {
     );
   }
 
-  /// The "Camera Controls" window body from `PrimeWatch::doFrame`. Thin
-  /// forwarder onto [`render_camera_controls_ui`].
   pub fn render_camera_controls(&mut self, ui: &mut egui::Ui) {
     render_camera_controls_ui(
       ui,
@@ -157,10 +150,6 @@ impl WorldRenderer {
   }
 }
 
-/// Body of the Culling / Camera / Triggers / Actors menus. Free function taking
-/// `&mut` field refs so it type-checks and runs headless (no GPU state). Mirrors
-/// `PrimeWatch::doMainMenu` verbatim, including the intentional Culling
-/// label/value skew ("Show Front" -> `Back`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_menu_bar(
   ui: &mut egui::Ui,
@@ -209,7 +198,7 @@ pub(crate) fn render_menu_bar(
     }
   });
 
-  // Lighting + Shadow (combined).
+  // Lighting + Shadow
   ui.menu_button("Lighting", |ui| {
     angle_slider_deg(ui, light_azimuth, -180.0..=180.0, "Azimuth");
     angle_slider_deg(ui, light_elevation, -90.0..=90.0, "Elevation");
@@ -314,9 +303,7 @@ pub(crate) fn render_menu_bar(
   });
 }
 
-/// A `Slider` that displays/edits `*rad` in degrees but stores radians,
-/// same degree<->radian split as the yaw/pitch controls in
-/// [`render_camera_controls_ui`]. Only writes back on `.changed()`.
+/// A `Slider` that displays/edits `*rad` in degrees but stores radians
 fn angle_slider_deg(
   ui: &mut egui::Ui,
   rad: &mut f32,
@@ -336,9 +323,6 @@ fn angle_slider_deg(
   }
 }
 
-/// Body of the "Camera Controls" window. Yaw/Pitch display **degrees** and write
-/// back **radians**; `yaw_deg` is `fmod 360` of the degree value. Yaw and pitch are
-/// only written back when the drag actually `.changed()`.
 pub(crate) fn render_camera_controls_ui(
   ui: &mut egui::Ui,
   cam_line_length: &mut f32,
