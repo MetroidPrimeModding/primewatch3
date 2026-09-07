@@ -107,7 +107,7 @@ impl ScriptManager {
       });
     }
   }
-  
+
   pub fn persist_enabled(&self) {
     let map: BTreeMap<&str, bool> = self
       .entries

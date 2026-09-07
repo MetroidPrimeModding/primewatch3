@@ -28,11 +28,13 @@
 //! - [`window`] — the view types a script builds ([`CustomInspectorWindow`] etc.).
 //! - [`env`] — the call-scoped `Ctx`/object-map bridge and its [`env::ScriptFrame`] guard.
 //! - [`engine`] — [`engine::build_engine`] and the rhai function registrations.
+//! - [`math`] — glam `Vec3` / `Quat` / `Mat4` types, operators, and typed reads.
 //! - [`manager`] — script discovery, per-frame execution, enabled-state persistence.
 
 mod engine;
 mod env;
 mod manager;
+mod math;
 mod window;
 
 #[cfg(test)]

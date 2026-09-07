@@ -225,3 +225,150 @@ fn window_anchor_rejects_an_unknown_alignment_name() {
   };
   assert!(err.contains("unknown anchor"), "unexpected error: {err}");
 }
+
+// ---------------------------------------------------------------------------
+// glam Vec3 / Quat / Mat4
+// ---------------------------------------------------------------------------
+
+/// Collect the `Text` rows of the single window a script submits.
+fn text_rows(src: &str) -> Vec<String> {
+  let structs = load_defs();
+  let mem = GameMemory::new();
+  let ctx = Ctx::new(&structs, &mem);
+  let objects = BTreeMap::new();
+  let windows = run(src, &ctx, &objects).expect("run");
+  assert_eq!(windows.len(), 1);
+  windows[0]
+    .rows
+    .iter()
+    .map(|r| match r {
+      CustomInspectorRow::Text(t) => t.clone(),
+      other => panic!("unexpected row: {}", row_kind(other)),
+    })
+    .collect()
+}
+
+#[test]
+fn vec3_constructors_operators_and_methods() {
+  let rows = text_rows(
+    r#"
+      let a = vec3(1.0, 2.0, 3.0);
+      let b = vec3(4, 5, 6);           // INT args coerce
+      let w = inspector_window("v");
+      w.add("sum", a + b);
+      w.add("scaled", a * 2.0);
+      w.add("scaled_int", 2 * a);
+      w.add("neg", -a);
+      w.add("dot", (a.dot(b)).to_string());
+      w.add("cross", a.cross(b));
+      w.add("len", (vec3(3.0, 4.0, 0.0).length()).to_string());
+      w.add("eq", (vec3(1, 1, 1) == vec3(1.0, 1.0, 1.0)).to_string());
+      w.add("interp", `${a}`);
+      show(w);
+    "#,
+  );
+  assert_eq!(rows[0], "sum: (5, 7, 9)");
+  assert_eq!(rows[1], "scaled: (2, 4, 6)");
+  assert_eq!(rows[2], "scaled_int: (2, 4, 6)");
+  assert_eq!(rows[3], "neg: (-1, -2, -3)");
+  assert_eq!(rows[4], "dot: 32.0");
+  assert_eq!(rows[5], "cross: (-3, 6, -3)");
+  assert_eq!(rows[6], "len: 5.0");
+  assert_eq!(rows[7], "eq: true");
+  assert_eq!(rows[8], "interp: (1, 2, 3)");
+}
+
+#[test]
+fn quat_identity_rotation_and_compose() {
+  let rows = text_rows(
+    r#"
+      let id = quat_identity();
+      let v = vec3(1.0, 0.0, 0.0);
+      let w = inspector_window("q");
+      w.add("id_rot", id * v);
+      // 180 deg about Z sends +X to -X.
+      let flip = quat_from_axis_angle(vec3(0.0, 0.0, 1.0), 3.14159265358979);
+      let r = flip.rotate_vec3(v);
+      w.add("flip_x", (r.x).to_string());
+      w.add("compose_is_id", ((flip * flip.inverse()) == id).to_string());
+      show(w);
+    "#,
+  );
+  assert_eq!(rows[0], "id_rot: (1, 0, 0)");
+  assert!(
+    rows[1].starts_with("flip_x: -0.999") || rows[1].starts_with("flip_x: -1"),
+    "unexpected: {}",
+    rows[1]
+  );
+  assert_eq!(rows[2], "compose_is_id: true");
+}
+
+#[test]
+fn mat4_translation_transform_and_inverse() {
+  let rows = text_rows(
+    r#"
+      let t = mat4_from_translation(vec3(10.0, 0.0, 0.0));
+      let w = inspector_window("m");
+      w.add("moved", t * vec3(1.0, 2.0, 3.0));
+      w.add("translation", t.translation());
+      w.add("round_trip", (t * t.inverse() == mat4_identity()).to_string());
+      show(w);
+    "#,
+  );
+  assert_eq!(rows[0], "moved: (11, 2, 3)");
+  assert_eq!(rows[1], "translation: (10, 0, 0)");
+  assert_eq!(rows[2], "round_trip: true");
+}
+
+#[test]
+fn shipped_scripts_compile() {
+  let engine = build_engine();
+  let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/", "scripts");
+  for entry in std::fs::read_dir(dir).expect("read scripts/") {
+    let path = entry.expect("dir entry").path();
+    if path.extension().and_then(|e| e.to_str()) != Some("rhai") {
+      continue;
+    }
+    let src = std::fs::read_to_string(&path).expect("read script");
+    engine
+      .compile(&src)
+      .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+  }
+}
+
+#[test]
+fn typed_reads_off_the_live_dump() {
+  let Some(mem) = load_mem1() else { return };
+  let structs = load_defs();
+  let ctx = Ctx::new(&structs, &mem);
+  let objects = crate::mem::game_object_utils::get_all_objects(&ctx);
+
+  let windows = run(
+    r#"
+      let p = get_player_entity();
+      let w = inspector_window("Player");
+      let vel = p.velocity.read_vec3();
+      let xf = p.transform.read_transform();
+      w.add("vel is vec3", (vel != ()).to_string());
+      w.add("vel matches x", (vel.x == p.velocity.x.read_f32()).to_string());
+      w.add("xf translation matches posX",
+        (xf.translation().x == p.transform.posX.read_f32()).to_string());
+      show(w);
+    "#,
+    &ctx,
+    &objects,
+  )
+  .expect("run");
+
+  let rows: Vec<&String> = windows[0]
+    .rows
+    .iter()
+    .map(|r| match r {
+      CustomInspectorRow::Text(t) => t,
+      other => panic!("unexpected row: {}", row_kind(other)),
+    })
+    .collect();
+  assert_eq!(rows[0], "vel is vec3: true");
+  assert_eq!(rows[1], "vel matches x: true");
+  assert_eq!(rows[2], "xf translation matches posX: true");
+}

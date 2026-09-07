@@ -43,6 +43,7 @@ pub(super) fn build_engine() -> Engine {
   register_window_api(&mut engine);
   register_lookup_api(&mut engine);
   register_instance_api(&mut engine);
+  super::math::register_math_api(&mut engine);
 
   engine
 }
@@ -74,6 +75,26 @@ fn register_window_api(engine: &mut Engine) {
     "add",
     |w: &mut CustomInspectorWindow, label: String, value: Dynamic| {
       w.add_text(format!("{label}: {value}"));
+    },
+  );
+  // add(w, label, <glam value>) — the catch-all `Dynamic` overload above would
+  // print the opaque type name, so format these explicitly.
+  engine.register_fn(
+    "add",
+    |w: &mut CustomInspectorWindow, label: String, v: glam::Vec3| {
+      w.add_text(format!("{label}: ({}, {}, {})", v.x, v.y, v.z));
+    },
+  );
+  engine.register_fn(
+    "add",
+    |w: &mut CustomInspectorWindow, label: String, q: glam::Quat| {
+      w.add_text(format!("{label}: ({}, {}, {}, {})", q.x, q.y, q.z, q.w));
+    },
+  );
+  engine.register_fn(
+    "add",
+    |w: &mut CustomInspectorWindow, label: String, m: glam::Mat4| {
+      w.add_text(format!("{label}: {m}"));
     },
   );
 
