@@ -54,19 +54,12 @@ fn read_vec3_member(ctx: &Ctx, parent: &GameInstance, name: &str) -> Option<Vec3
   read_as_vec3(ctx, &parent.get_member(ctx, name)?)
 }
 
-/// `BallCameraFilter` (`CBallCamera.cpp:262`,
-/// `MakeIncludeExclude({Solid}, {ProjectilePassthrough, Player, Character, CameraPassthrough})`)
-/// restricted to static triangles: `Player` / `Character` are actor-only
-/// material bits and are never set on world geometry, so for a static cast the
-/// filter is "is `Solid`, and is neither shoot-through nor camera-through".
 pub fn ball_camera_filter(m: ECollisionMaterial) -> bool {
   m.contains(ECollisionMaterial::SOLID)
     && !m.contains(ECollisionMaterial::SHOOT_THRU) // EMaterialTypes::ProjectilePassthrough
     && !m.contains(ECollisionMaterial::CAMERA_THRU) // EMaterialTypes::CameraPassthrough
 }
 
-/// `zeus::getBezierPoint` (`extern/zeus/src/Math.cpp:162`) — cubic Bézier over
-/// four control points via De Casteljau.
 fn bezier_point(a: Vec3, b: Vec3, c: Vec3, d: Vec3, t: f32) -> Vec3 {
   let omt = 1.0 - t;
   let ab = a * omt + b * t;
@@ -102,30 +95,14 @@ pub struct FailsafeInputs {
   pub eye_pos: Vec3,
 }
 
-/// Result of the prediction.
 #[derive(Clone, Debug)]
 pub struct FailsafePrediction {
   /// The game's `CheckFailsafeFromMorphBallState` would return `false` — the
   /// cinematic unmorph camera move is skipped ("the failsafe fires").
   pub would_trigger: bool,
-  /// Echo of the inputs the spline was built from (for diagnostics).
-  pub inputs: FailsafeInputs,
-  /// `|x60_lookPos - x30_camXf.origin|` — feeds `behindPos` (`= forward * -0.6 *
-  /// look_dist + eye_pos`). A wild value here means a bad `lookPos` /
-  /// `cam_origin` read.
-  pub look_dist: f32,
   /// The reconstructed pull-back spline's 4 Bézier control points:
   /// `[camXf.origin, behindPos, behindPos, eyePos]`.
   pub spline_points: [Vec3; 4],
-  /// Largest ray entry/exit separation over the 6 sampled segments — the value
-  /// compared against the game's `0.3` threshold.
-  pub worst_separation: f32,
-  /// How many of the 6 segments exceeded `0.3`.
-  pub obstructed_segments: u8,
-  /// The line-of-sight approximation pulled the middle control point in toward
-  /// the eye (something is between the eye and the ideal behind-point). See the
-  /// module-level deviation note.
-  pub behind_point_occluded: bool,
 }
 
 impl FailsafePrediction {
@@ -139,7 +116,6 @@ impl FailsafePrediction {
   }
 }
 
-/// The number of segments the spline is sampled into (`curT < 6.f` in the C++).
 const SEGMENTS: u32 = 6;
 /// `CheckTransitionLineOfSight`'s `colRadius` (`CBallCamera.cpp:2014`) — kept for
 /// the behind-point placement math, not (yet) as a sphere radius.
@@ -161,7 +137,7 @@ pub fn predict_failsafe<'a>(
   // CheckTransitionLineOfSight (:1967), approximated by a single ray — see module docs.
   let eye_to_behind = behind_pos - inp.eye_pos;
   let mag = eye_to_behind.length();
-  let (mid, behind_point_occluded) = if mag > 1.0e-6 {
+  let mid = if mag > 1.0e-6 {
     let dir = eye_to_behind / mag;
     match raycast_world(
       meshes.clone(),
@@ -173,11 +149,11 @@ pub fn predict_failsafe<'a>(
       filter,
     ) {
       // x6c_behindPos = playerXf.GetForward() * -eyeToOccDist + eyePos
-      Some(hit) => (inp.player_forward * -hit.t + inp.eye_pos, true),
-      None => (behind_pos, false),
+      Some(hit) => inp.player_forward * -hit.t + inp.eye_pos,
+      None => behind_pos,
     }
   } else {
-    (behind_pos, false)
+    behind_pos
   };
 
   let pts = [inp.cam_origin, mid, mid, inp.eye_pos];
@@ -235,12 +211,7 @@ pub fn predict_failsafe<'a>(
 
   FailsafePrediction {
     would_trigger: obstructed_segments > 0,
-    inputs: *inp,
-    look_dist,
     spline_points: pts,
-    worst_separation,
-    obstructed_segments,
-    behind_point_occluded,
   }
 }
 
@@ -490,7 +461,6 @@ mod tests {
     let meshes: Vec<CollisionMesh> = vec![tri_at(-50.0, 1.0, ECollisionMaterial::SOLID)];
     let p = predict_failsafe(&inp, meshes.iter());
     assert!(!p.would_trigger);
-    assert_eq!(p.obstructed_segments, 0);
   }
 
   #[test]
@@ -518,7 +488,6 @@ mod tests {
     let meshes = [wall];
     let p = predict_failsafe(&inp, meshes.iter());
     assert!(p.would_trigger);
-    assert!(p.worst_separation > 0.3);
   }
 
   #[test]

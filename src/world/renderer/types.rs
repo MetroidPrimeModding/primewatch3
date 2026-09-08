@@ -53,22 +53,15 @@ pub struct WorldInput {
   pub hover_pos: Option<Vec2>,
 }
 
-/// The collision triangle the pointer is currently over — the nearest
-/// filter-passing master-list triangle along the un-projected mouse ray
-/// (`ray_trace::raycast_mesh`). `None` when the pointer isn't over any geometry.
 #[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
 pub struct HoveredTri {
-  /// `mrea` id of the area whose mesh was hit.
   pub mrea: u32,
   /// Index into that mesh's master triangle list.
   pub tri_index: usize,
-  /// The triangle's 3 world-space verts (winding per `GetMasterListTriangle`).
   pub verts: [Vec3; 3],
-  /// Hit point on the triangle.
   pub point: Vec3,
-  /// Surface normal at the hit.
   pub normal: Vec3,
-  /// The triangle's 32-bit surface material word.
   pub material: ECollisionMaterial,
   /// Ray distance to the hit (world units from the camera).
   pub t: f32,
