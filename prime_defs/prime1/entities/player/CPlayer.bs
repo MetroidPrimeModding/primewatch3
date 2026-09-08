@@ -5,9 +5,6 @@ struct CPlayer: CPhysicsActor {
     f32 startingJumpTimeout 0x288
     f32 minJumpTimeout 0x290
     f32 jumpPresses 0x298
-    // FLAGGED FOR REVIEW: metaforce Runtime/World/CPlayer.hpp:156
-    // (`zeus::CAABox x2d8_fpBounds;`). x2d4 is an f32, x2f0_ballTransHeight (f32)
-    // follows -> 0x2d8..0x2f0 == 24 bytes == CAABB. Used for GetEyeHeight().
     CAABB fpBounds 0x2d8
     EPlayerCameraState cameraState 0x2F4
     EPlayerMorphBallState morphState 0x2F8
