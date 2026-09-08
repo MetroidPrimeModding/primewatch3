@@ -35,6 +35,16 @@
 //!   [`RepositionPrediction::is_stuck`] reports whether the primitive intersects
 //!   the world *right now* — the condition that makes the reposition move the
 //!   player at all.
+//! - **Hypothetical morph.** [`RepositionPrimSource::MorphBall`] runs the sweep
+//!   against the morph-ball sphere even while unmorphed, to preview whether
+//!   morphing here would leave the ball clipped and trip
+//!   `CGameCollision::CollisionFailsafe` (`CGameCollision.cpp:886`, which always
+//!   takes `CPlayer::GetCollisionPrimitive()` — the sphere once morphed).
+//!   Morphing doesn't move the player's transform origin
+//!   (`CPlayer::TransitionToMorphBallState`), so the sphere centre
+//!   (`origin + (0,0,radius)`) is where the ball actually lands; the
+//!   `CanEnterMorphBallState` gate that could block the morph outright is not
+//!   modelled.
 //! - **Area guard uses any loaded area's AABB** rather than
 //!   `GetAreaAlways(GetNextAreaId())`, to skip an area-id lookup.
 //! - Our AABox/sphere-vs-triangle SAT is not the game's octree traversal, the
@@ -302,6 +312,18 @@ impl RepositionPrim {
   }
 }
 
+/// Which collision primitive [`predict_reposition_from_live`] evaluates.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RepositionPrimSource {
+  /// The player's current primitive: the `0.2`-expanded AABox unmorphed, the
+  /// morph-ball sphere morphed. What the game's failsafe actually runs.
+  Live,
+  /// Force the morph-ball sphere regardless of morph state — "if I morphed right
+  /// here, would the ball be clipped into terrain?". Identical to [`Self::Live`]
+  /// once the player is already morphed.
+  MorphBall,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct RepositionInputs {
   pub prim: RepositionPrim,
@@ -461,12 +483,15 @@ const AABOX_EXPAND: f32 = 0.2;
 
 /// Read the live player primitive + pose and run [`predict_reposition`].
 ///
-/// Unmorphed → the `0.2`-expanded collision AABox; morphed → the raw morph-ball
-/// sphere. Returns `None` if any required read fails.
+/// [`RepositionPrimSource::Live`]: unmorphed → the `0.2`-expanded collision
+/// AABox, morphed → the raw morph-ball sphere.
+/// [`RepositionPrimSource::MorphBall`]: always the sphere, for a "what if I
+/// morphed here" preview. Returns `None` if any required read fails.
 pub fn predict_reposition_from_live<'a>(
   ctx: &Ctx,
   meshes: impl IntoIterator<Item = &'a CollisionMesh> + Clone,
   area_aabbs: &[Aabb],
+  prim_source: RepositionPrimSource,
 ) -> Option<RepositionPrediction> {
   let player = get_state_manager().get_member(ctx, "player")?;
 
@@ -482,7 +507,12 @@ pub fn predict_reposition_from_live<'a>(
     .map(|s| s == MORPH_STATE_MORPHED)
     .unwrap_or(false);
 
-  let prim = if morphed {
+  let use_sphere = match prim_source {
+    RepositionPrimSource::Live => morphed,
+    RepositionPrimSource::MorphBall => true,
+  };
+
+  let prim = if use_sphere {
     let sphere = player
       .get_member(ctx, "morphBall")?
       .get_member(ctx, "collisionSphere")?

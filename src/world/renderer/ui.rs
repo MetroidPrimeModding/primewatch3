@@ -170,6 +170,26 @@ impl WorldRenderer {
       }
       ui.label(format!("  {} candidates tried", rf.attempts.len()));
     }
+
+    // "What if I morphed here" — only computed while unmorphed.
+    if let Some(rf) = &self.reposition_failsafe_morph {
+      ui.separator();
+      if rf.is_stuck {
+        ui.label("If morphed here: ball clipped into terrain");
+        match rf.selected_vec {
+          Some(v) => ui.label(format!(
+            "  reposition ({:.3}, {:.3}, {:.3})  |{:.3}|",
+            v.x,
+            v.y,
+            v.z,
+            v.length()
+          )),
+          None => ui.label("  no escape vector found"),
+        };
+      } else {
+        ui.label("If morphed here: ball clear");
+      }
+    }
   }
 
   /// The render-config half of `PrimeWatch::doMainMenu` — the Culling / Camera /
