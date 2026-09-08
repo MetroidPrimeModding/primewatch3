@@ -6,6 +6,7 @@
 use crate::ctx::Ctx;
 use crate::mem::area_utils::get_areas;
 use crate::mem::game_object_utils::{get_all_loading_datas, object_tag_to_string};
+use crate::world::collision_failsafe::RepositionOutcome;
 
 use super::WorldRenderer;
 use super::entities::walk_member;
@@ -169,6 +170,44 @@ impl WorldRenderer {
         ui.label("  no escape vector found");
       }
       ui.label(format!("  {} candidates tried", rf.attempts.len()));
+    }
+
+    // "What if I morphed here" — only computed while unmorphed.
+    if let Some(rf) = &self.reposition_failsafe_morph {
+      ui.separator();
+      match rf.outcome() {
+        RepositionOutcome::Clear => {
+          ui.label("If morphed here: ball clear");
+        }
+        RepositionOutcome::Nudged => {
+          ui.label("If morphed here: ball clipped, failsafe repositions");
+          if let Some(v) = rf.selected_vec {
+            ui.label(format!(
+              "  by ({:.2}, {:.2}, {:.2})  |{:.2}|",
+              v.x,
+              v.y,
+              v.z,
+              v.length()
+            ));
+          }
+        }
+        RepositionOutcome::SeamWarp => {
+          ui.label("If morphed here: ball clipped, failsafe warps OOB");
+          if let Some(v) = rf.seam_leak_vec {
+            ui.label(format!(
+              "  through wall seam by ({:.2}, {:.2}, {:.2})  |{:.2}|",
+              v.x,
+              v.y,
+              v.z,
+              v.length()
+            ));
+          }
+        }
+        RepositionOutcome::NoSafeSpot => {
+          ui.label("If morphed here: ball clipped, failsafe can't resolve");
+          ui.label("  wedged with no open space — it just halves velocity");
+        }
+      }
     }
   }
 

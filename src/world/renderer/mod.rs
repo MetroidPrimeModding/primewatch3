@@ -38,7 +38,10 @@ use crate::mem::math_utils::{read_as_matrix4f, read_as_quat, read_as_transform, 
 use crate::structs::prime_structs::GameInstance;
 use crate::world::ball_camera_failsafe::{FailsafePrediction, predict_failsafe_from_live};
 use crate::world::bvh::Aabb;
-use crate::world::collision_failsafe::{RepositionPrediction, predict_reposition_from_live};
+use crate::world::collision_failsafe::{
+  RepositionOutcome, RepositionPrediction, RepositionPrim, RepositionPrimSource,
+  predict_reposition_from_live,
+};
 use crate::world::collision_mesh::CollisionMesh;
 use crate::world::ray_trace::{self, Ray, raycast_mesh};
 
@@ -139,6 +142,11 @@ pub struct WorldRenderer {
   /// static world — the candidate offsets it tries and the one it would pick.
   /// `Some` only while `reposition_failsafe_enabled` and a collision mesh exists.
   pub reposition_failsafe: Option<RepositionPrediction>,
+  /// Same sweep, forced against the morph-ball sphere — "if you morphed right
+  /// here, would the ball be clipped and get repositioned?". `Some` only while
+  /// `reposition_failsafe_enabled`, a collision mesh exists, and the player is
+  /// currently unmorphed (morphed → identical to `reposition_failsafe`).
+  pub reposition_failsafe_morph: Option<RepositionPrediction>,
 
   // --- cached per-frame player state ---
   /// The live player, read from `g_stateManager["player"]` each frame. Its
@@ -223,6 +231,7 @@ impl WorldRenderer {
       morphball_failsafe: None,
       reposition_failsafe_enabled: false,
       reposition_failsafe: None,
+      reposition_failsafe_morph: None,
       player: PlayerGhost::default(),
       player_ghosts: [PlayerGhost::default(); 5],
       last_known_non_colliding_pos: Vec3::ZERO,
@@ -505,7 +514,10 @@ impl WorldRenderer {
     self.morphball_failsafe = self.predict_morphball_failsafe(ctx);
     self.reposition_failsafe = self
       .reposition_failsafe_enabled
-      .then(|| self.predict_reposition_failsafe(ctx))
+      .then(|| self.predict_reposition_failsafe(ctx, RepositionPrimSource::Live))
+      .flatten();
+    self.reposition_failsafe_morph = (self.reposition_failsafe_enabled && !self.player.is_morphed)
+      .then(|| self.predict_reposition_failsafe(ctx, RepositionPrimSource::MorphBall))
       .flatten();
 
     // --- CPU geometry into the immediate buffers ---
@@ -600,6 +612,32 @@ impl WorldRenderer {
       ghost.position = pos;
       self.draw_player(&ghost, Vec4::new(0.15, 1.0, 0.3, 0.5));
     }
+
+    // "If you morphed right here": draw the morph-ball collision sphere where
+    // `CGameCollision::CollisionFailsafe` would leave it. Purple = a clean
+    // reposition; orange = the game only gets there by leaking its ray test
+    // through a wall seam, so this warps you out of bounds.
+    if let Some(rf) = &self.reposition_failsafe_morph
+      && let RepositionPrim::Sphere { radius, .. } = rf.prim
+      && let Some(dest) = rf.destination_center()
+      && matches!(
+        rf.outcome(),
+        RepositionOutcome::Nudged | RepositionOutcome::SeamWarp
+      )
+    {
+      let (line_color, fill) = match rf.outcome() {
+        RepositionOutcome::SeamWarp => ([1.0, 0.55, 0.1, 1.0], Vec4::new(1.0, 0.55, 0.1, 0.35)),
+        _ => ([0.7, 0.3, 1.0, 1.0], Vec4::new(0.7, 0.3, 1.0, 0.35)),
+      };
+      self.translucent_render_buff.set_transform(Mat4::IDENTITY);
+      self
+        .translucent_render_buff
+        .add_tris(&shapes::generate_sphere(dest, radius, fill));
+      self.render_buff.set_transform(Mat4::IDENTITY);
+      self.render_buff.set_color(line_color);
+      self.render_buff.add_line(rf.center, dest);
+      self.render_buff.set_color([1.0, 1.0, 1.0, 1.0]);
+    }
   }
 
   /// Un-project `hover_px` into a world ray with the current camera and
@@ -669,8 +707,13 @@ impl WorldRenderer {
   /// Predict `CGameCollision::FindNonIntersectingVector` against the live static
   /// collision world — where the reposition failsafe would shove the player if
   /// it fired this frame. See [`crate::world::collision_failsafe`]. `None` until
-  /// a collision mesh exists.
-  pub fn predict_reposition_failsafe(&self, ctx: &Ctx) -> Option<RepositionPrediction> {
+  /// a collision mesh exists. `prim_source` picks the live primitive or forces
+  /// the morph-ball sphere for a "what if I morphed here" preview.
+  pub fn predict_reposition_failsafe(
+    &self,
+    ctx: &Ctx,
+    prim_source: RepositionPrimSource,
+  ) -> Option<RepositionPrediction> {
     if self.mesh_by_mrea.is_empty() {
       return None;
     }
@@ -682,6 +725,6 @@ impl WorldRenderer {
         max: m.max,
       })
       .collect();
-    predict_reposition_from_live(ctx, self.mesh_by_mrea.values(), &area_aabbs)
+    predict_reposition_from_live(ctx, self.mesh_by_mrea.values(), &area_aabbs, prim_source)
   }
 }
