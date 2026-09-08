@@ -518,7 +518,9 @@ impl AppWindow {
       egui::Area::new(egui::Id::new("world-status-host"))
         .fixed_pos(egui::pos2(0.0, 24.0))
         .show(&egui_ctx, |ui| {
-          self.world.render_status_windows(ctx, ui);
+          self
+            .world
+            .render_status_windows(ctx, ui, fs.inspector.exact_values);
         });
     }
 
