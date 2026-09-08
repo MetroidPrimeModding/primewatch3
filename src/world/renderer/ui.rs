@@ -16,17 +16,17 @@ use super::types::{
 
 impl WorldRenderer {
   /// The "WorldStatus" area/loading table.
-  pub fn render_status_windows(&self, ctx: &Ctx, ui: &mut egui::Ui) {
+  pub fn render_status_windows(&self, ctx: &Ctx, ui: &mut egui::Ui, exact: bool) {
     let egui_ctx = ui.ctx().clone();
 
     egui::Window::new("WorldStatus")
       .resizable(false)
       .title_bar(false)
       .anchor(egui::Align2::RIGHT_TOP, [-8.0, 8.0])
-      .show(&egui_ctx, |ui| self.render_world_status(ctx, ui));
+      .show(&egui_ctx, |ui| self.render_world_status(ctx, ui, exact));
   }
 
-  fn render_world_status(&self, ctx: &Ctx, ui: &mut egui::Ui) {
+  fn render_world_status(&self, ctx: &Ctx, ui: &mut egui::Ui, exact: bool) {
     let e_chain = ctx.structs.get_enum_by_name("EChain");
     let e_phase = ctx.structs.get_enum_by_name("EPhase");
 
@@ -127,7 +127,12 @@ impl WorldRenderer {
           ui.label(format!("hover tri #{}", h.tri_index));
           ui.label(format!("  material {:08x}", h.material.0));
           for (i, v) in h.verts.iter().enumerate() {
-            ui.label(format!("  p{i} ({:.3}, {:.3}, {:.3})", v.x, v.y, v.z));
+            if exact {
+              ui.label(format!("  p{i} ({:.8}, {:.8}, {:.8})", v.x, v.y, v.z));
+              // ui.label(format!("  p{i} ({:x}, {:.x}, {:.x})", v.x.to_bits(), v.y.to_bits(), v.z.to_bits()));
+            } else {
+              ui.label(format!("  p{i} ({:.3}, {:.3}, {:.3})", v.x, v.y, v.z));
+            }
           }
         }
         None => {
@@ -137,9 +142,33 @@ impl WorldRenderer {
     }
 
     // Instant unmorph failsafe
-     if let Some(p) = &self.morphball_failsafe && p.would_trigger {
+    if let Some(p) = &self.morphball_failsafe
+      && p.would_trigger
+    {
       ui.separator();
       ui.label("Instant unmorph likely");
+    }
+
+    // Collision reposition failsafe
+    if let Some(rf) = &self.reposition_failsafe {
+      ui.separator();
+      ui.label(if rf.is_stuck {
+        "Reposition: player stuck"
+      } else {
+        "Reposition: clear"
+      });
+      if let Some(v) = rf.selected_vec {
+        ui.label(format!(
+          "  push ({:.3}, {:.3}, {:.3})  |{:.3}|",
+          v.x,
+          v.y,
+          v.z,
+          v.length()
+        ));
+      } else {
+        ui.label("  no escape vector found");
+      }
+      ui.label(format!("  {} candidates tried", rf.attempts.len()));
     }
   }
 

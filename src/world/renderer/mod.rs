@@ -37,6 +37,8 @@ use crate::mem::globals::get_state_manager;
 use crate::mem::math_utils::{read_as_matrix4f, read_as_quat, read_as_transform, read_as_vec3};
 use crate::structs::prime_structs::GameInstance;
 use crate::world::ball_camera_failsafe::{FailsafePrediction, predict_failsafe_from_live};
+use crate::world::bvh::Aabb;
+use crate::world::collision_failsafe::{RepositionPrediction, predict_reposition_from_live};
 use crate::world::collision_mesh::CollisionMesh;
 use crate::world::ray_trace::{self, Ray, raycast_mesh};
 
@@ -124,6 +126,15 @@ pub struct WorldRenderer {
   /// text by the WorldStatus window.
   pub morphball_failsafe: Option<FailsafePrediction>,
 
+  /// Whether the collision-reposition failsafe prediction runs. Off by default —
+  /// it sweeps up to 416 AABox/sphere-vs-world overlap queries per frame.
+  /// Toggled from the Tools menu.
+  pub reposition_failsafe_enabled: bool,
+  /// `CGameCollision::FindNonIntersectingVector` predicted against the live
+  /// static world — the candidate offsets it tries and the one it would pick.
+  /// `Some` only while `reposition_failsafe_enabled` and a collision mesh exists.
+  pub reposition_failsafe: Option<RepositionPrediction>,
+
   // --- cached per-frame player state ---
   /// The live player, read from `g_stateManager["player"]` each frame. Its
   /// `position` / `orientation` / `velocity` / `is_morphed` feed `draw_player`
@@ -204,6 +215,8 @@ impl WorldRenderer {
       hovered_tri: None,
       tri_picker_enabled: false,
       morphball_failsafe: None,
+      reposition_failsafe_enabled: false,
+      reposition_failsafe: None,
       player: PlayerGhost::default(),
       player_ghosts: [PlayerGhost::default(); 5],
       last_known_non_colliding_pos: Vec3::ZERO,
@@ -466,6 +479,10 @@ impl WorldRenderer {
       }
     }
     self.morphball_failsafe = self.predict_morphball_failsafe(ctx);
+    self.reposition_failsafe = self
+      .reposition_failsafe_enabled
+      .then(|| self.predict_reposition_failsafe(ctx))
+      .flatten();
 
     // --- CPU geometry into the immediate buffers ---
     self.render_buff.clear();
@@ -503,6 +520,30 @@ impl WorldRenderer {
       self.render_buff.set_color([1.0, 1.0, 1.0, 1.0]);
     }
 
+    // Collision-reposition failsafe: every candidate offset the game's
+    // `FindNonIntersectingVector` would try, fanning out from the primitive
+    // centre. Green = the one it picks; red = path to it is blocked; yellow =
+    // path clear but the primitive is still stuck there; grey = outside the area.
+    if let Some(rf) = &self.reposition_failsafe {
+      self.render_buff.set_transform(Mat4::IDENTITY);
+      for a in &rf.attempts {
+        let color = if a.selected {
+          [0.15, 1.0, 0.25, 1.0]
+        } else if !a.in_area {
+          [0.4, 0.4, 0.4, 0.5]
+        } else if !a.ray_clear {
+          [1.0, 0.3, 0.2, 0.7]
+        } else if !a.prim_clear {
+          [1.0, 0.85, 0.2, 0.8]
+        } else {
+          [0.15, 1.0, 0.25, 1.0]
+        };
+        self.render_buff.set_color(color);
+        self.render_buff.add_line(rf.center, a.end_point);
+      }
+      self.render_buff.set_color([1.0, 1.0, 1.0, 1.0]);
+    }
+
     // --- entities + player ---
     self.render_entities(ctx, objects, highlighted);
 
@@ -523,6 +564,17 @@ impl WorldRenderer {
         // teal
         self.draw_player(&ghost, Vec4::new(0.0, 1.0, 1.0, 0.5));
       }
+    }
+
+    // Where the reposition failsafe would drop the player, once it actually has
+    // something to escape from.
+    if let Some(rf) = &self.reposition_failsafe
+      && rf.is_stuck
+      && let Some(pos) = rf.resulting_pos
+    {
+      let mut ghost = self.player;
+      ghost.position = pos;
+      self.draw_player(&ghost, Vec4::new(0.15, 1.0, 0.3, 0.5));
     }
   }
 
@@ -588,5 +640,24 @@ impl WorldRenderer {
       return None;
     }
     predict_failsafe_from_live(ctx, self.mesh_by_mrea.values())
+  }
+
+  /// Predict `CGameCollision::FindNonIntersectingVector` against the live static
+  /// collision world — where the reposition failsafe would shove the player if
+  /// it fired this frame. See [`crate::world::collision_failsafe`]. `None` until
+  /// a collision mesh exists.
+  pub fn predict_reposition_failsafe(&self, ctx: &Ctx) -> Option<RepositionPrediction> {
+    if self.mesh_by_mrea.is_empty() {
+      return None;
+    }
+    let area_aabbs: Vec<Aabb> = self
+      .mesh_by_mrea
+      .values()
+      .map(|m| Aabb {
+        min: m.min,
+        max: m.max,
+      })
+      .collect();
+    predict_reposition_from_live(ctx, self.mesh_by_mrea.values(), &area_aabbs)
   }
 }
