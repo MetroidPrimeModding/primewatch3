@@ -9,8 +9,10 @@
 //! almost exactly the hit distance, which does not matter for an inspection
 //! overlay.
 //!
-//! The material filter (§9) is not implemented yet; every triangle passes. A
-//! `CMaterialFilter` port slots in at the `filter_passes` call site.
+//! The material filter (§9) is a caller-supplied [`MaterialFilter`] predicate
+//! (`|_| true` / [`pass_everything`] is the `skPassEverything` default). A full
+//! `CMaterialFilter` include/exclude port can wrap into that predicate; see
+//! `ball_camera_failsafe::ball_camera_filter` for the first real one.
 
 use glam::Vec3;
 
@@ -88,11 +90,29 @@ pub fn moller_trumbore_two_sided(
   Some(t)
 }
 
+/// A material predicate — the `CMaterialFilter::Passes` hook (doc §9). Return
+/// `true` to let a triangle participate in the cast. `|_| true` is the
+/// pass-everything default (`skPassEverything`).
+pub type MaterialFilter<'a> = &'a dyn Fn(ECollisionMaterial) -> bool;
+
+/// `skPassEverything` — every triangle passes. The default filter for a generic
+/// "what would a ray hit" query.
+pub fn pass_everything(_: ECollisionMaterial) -> bool {
+  true
+}
+
 /// Brute-force the master triangle list of one area mesh (doc §7).
 ///
 /// `max_t` bounds the search (world units); pass `<= 0.0` for an unbounded ray.
-/// Returns the nearest triangle hit in `(0, max_t]`, or `None`.
-pub fn raycast_mesh(mesh: &CollisionMesh, ray: Ray, max_t: f32) -> Option<RayHit> {
+/// `filter` is the `CMaterialFilter` hook (doc §9) — a triangle is only tested
+/// when `filter(tri.material)` is `true`. Returns the nearest passing triangle
+/// hit in `(0, max_t]`, or `None`.
+pub fn raycast_mesh(
+  mesh: &CollisionMesh,
+  ray: Ray,
+  max_t: f32,
+  filter: MaterialFilter<'_>,
+) -> Option<RayHit> {
   let mut best_t = if max_t.is_finite() && max_t > 0.0 {
     max_t
   } else {
@@ -104,7 +124,9 @@ pub fn raycast_mesh(mesh: &CollisionMesh, ray: Ray, max_t: f32) -> Option<RayHit
     let Some(tri) = mesh.master_list_triangle(idx) else {
       continue;
     };
-    // TODO: CMaterialFilter (doc §9). For now every triangle passes.
+    if !filter(tri.material) {
+      continue;
+    }
     let [v0, v1, v2] = tri.verts;
     if let Some(t) = moller_trumbore_two_sided(ray.origin, ray.dir, v0, v1, v2, 0.0, best_t) {
       best_t = t;
@@ -118,6 +140,32 @@ pub fn raycast_mesh(mesh: &CollisionMesh, ray: Ray, max_t: f32) -> Option<RayHit
     }
   }
 
+  best
+}
+
+/// `RayStaticIntersection` (`CGameCollision.cpp:249`) — brute-force every area
+/// mesh and keep the single nearest hit. This is the static half of
+/// `RayWorldIntersection`; the dynamic half (doc §8) is still deferred.
+pub fn raycast_world<'a>(
+  meshes: impl IntoIterator<Item = &'a CollisionMesh>,
+  ray: Ray,
+  max_t: f32,
+  filter: MaterialFilter<'_>,
+) -> Option<RayHit> {
+  let mut best_t = if max_t.is_finite() && max_t > 0.0 {
+    max_t
+  } else {
+    f32::INFINITY
+  };
+  let mut best: Option<RayHit> = None;
+  for mesh in meshes {
+    if let Some(hit) = raycast_mesh(mesh, ray, best_t, filter)
+      && hit.t < best_t
+    {
+      best_t = hit.t;
+      best = Some(hit);
+    }
+  }
   best
 }
 
@@ -220,6 +268,7 @@ mod tests {
         dir: Vec3::new(0.0, 0.0, -1.0),
       },
       0.0,
+      &pass_everything,
     )
     .unwrap();
     assert_eq!(hit.tri_index, 0);
@@ -253,6 +302,7 @@ mod tests {
         dir: Vec3::new(0.0, 0.0, -1.0),
       },
       0.0,
+      &pass_everything,
     )
     .unwrap();
     assert_eq!(hit.tri_index, 1);
@@ -266,7 +316,38 @@ mod tests {
       origin: Vec3::new(0.2, 0.2, 5.0),
       dir: Vec3::new(0.0, 0.0, -1.0),
     };
-    assert!(raycast_mesh(&mesh, ray, 1.0).is_none());
-    assert!(raycast_mesh(&mesh, ray, 10.0).is_some());
+    assert!(raycast_mesh(&mesh, ray, 1.0, &pass_everything).is_none());
+    assert!(raycast_mesh(&mesh, ray, 10.0, &pass_everything).is_some());
+  }
+
+  #[test]
+  fn raycast_mesh_skips_filtered_out_triangles() {
+    let mesh = single_triangle(ECollisionMaterial::SOLID);
+    let ray = Ray {
+      origin: Vec3::new(0.2, 0.2, 5.0),
+      dir: Vec3::new(0.0, 0.0, -1.0),
+    };
+    // reject everything -> miss; require SOLID -> hit
+    assert!(raycast_mesh(&mesh, ray, 0.0, &|_| false).is_none());
+    assert!(
+      raycast_mesh(&mesh, ray, 0.0, &|m: ECollisionMaterial| m
+        .contains(ECollisionMaterial::SOLID))
+      .is_some()
+    );
+  }
+
+  #[test]
+  fn raycast_world_keeps_the_nearest_across_meshes() {
+    let far = single_triangle(ECollisionMaterial(0)); // z = 0
+    let mut near = single_triangle(ECollisionMaterial(0));
+    for v in &mut near.raw_verts {
+      v.z += 2.0; // z = 2
+    }
+    let ray = Ray {
+      origin: Vec3::new(0.2, 0.2, 5.0),
+      dir: Vec3::new(0.0, 0.0, -1.0),
+    };
+    let hit = raycast_world([&far, &near], ray, 0.0, &pass_everything).unwrap();
+    assert!((hit.t - 3.0).abs() < 1e-4);
   }
 }

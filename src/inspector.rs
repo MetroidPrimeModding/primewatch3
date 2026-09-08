@@ -163,15 +163,17 @@ pub fn format_vec3(ctx: &Ctx, name: &str, inst: &GameInstance, exact: bool) -> S
 }
 
 pub fn format_quat(ctx: &Ctx, name: &str, inst: &GameInstance, exact: bool) -> String {
+  // In-memory CQuaternion is w-first (`{ f32 w; CVector3f v; }`); shown in memory
+  // order with an explicit `w`. See prime_defs/prime1/math/CQuaternion.bs.
   let a = inst.address;
-  let x = ctx.mem.read_f32(a).unwrap_or(0.0);
-  let y = ctx.mem.read_f32(a.wrapping_add(4)).unwrap_or(0.0);
-  let z = ctx.mem.read_f32(a.wrapping_add(8)).unwrap_or(0.0);
-  let w = ctx.mem.read_f32(a.wrapping_add(12)).unwrap_or(0.0);
+  let w = ctx.mem.read_f32(a).unwrap_or(0.0);
+  let x = ctx.mem.read_f32(a.wrapping_add(4)).unwrap_or(0.0);
+  let y = ctx.mem.read_f32(a.wrapping_add(8)).unwrap_or(0.0);
+  let z = ctx.mem.read_f32(a.wrapping_add(12)).unwrap_or(0.0);
   if exact {
-    format!("{name} [{x:.8}, {y:.8}, {z:.8}, {w:.8}]")
+    format!("{name} [w {w:.8}, {x:.8}, {y:.8}, {z:.8}]")
   } else {
-    format!("{name} [{x:.3}, {y:.3}, {z:.3}, {w:.3}]")
+    format!("{name} [w {w:.3}, {x:.3}, {y:.3}, {z:.3}]")
   }
 }
 
@@ -580,16 +582,16 @@ mod tests {
   fn format_quat_non_exact() {
     let structs = GameStructs::new_empty();
     let mem = mem_with(&[
-      (0, &0.0f32.to_be_bytes()),
+      (0, &1.0f32.to_be_bytes()), // w
       (4, &0.0f32.to_be_bytes()),
       (8, &0.0f32.to_be_bytes()),
-      (12, &1.0f32.to_be_bytes()),
+      (12, &0.0f32.to_be_bytes()),
     ]);
     let ctx = Ctx::new(&structs, &mem);
     let inst = GameInstance::new(0x8000_0000, "CQuaternion".to_string());
     assert_eq!(
       format_quat(&ctx, "q", &inst, false),
-      "q [0.000, 0.000, 0.000, 1.000]"
+      "q [w 1.000, 0.000, 0.000, 0.000]"
     );
   }
 

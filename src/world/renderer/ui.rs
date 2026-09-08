@@ -132,6 +132,18 @@ impl WorldRenderer {
         ui.label("hover tri: none");
       }
     }
+
+    // Instant unmorph failsafe
+    match &self.morphball_failsafe {
+      Some(p) => {
+        if p.would_trigger {
+          ui.separator();
+          ui.label("Instant unmorph likely");
+        }
+      }
+      None => {
+      }
+    }
   }
 
   /// The render-config half of `PrimeWatch::doMainMenu` — the Culling / Camera /

@@ -126,13 +126,15 @@ mod tests {
         member_def("z", "f32", 0x8),
       ],
     ));
+    // In-memory CQuaternion is w-first ({ f32 w; CVector3f v; }) — see
+    // prime_defs/prime1/math/CQuaternion.bs.
     s.insert_struct(&game_struct(
       "CQuaternion",
       &[
-        member_def("x", "f32", 0x0),
-        member_def("y", "f32", 0x4),
-        member_def("z", "f32", 0x8),
-        member_def("w", "f32", 0xC),
+        member_def("w", "f32", 0x0),
+        member_def("x", "f32", 0x4),
+        member_def("y", "f32", 0x8),
+        member_def("z", "f32", 0xC),
       ],
     ));
     s.insert_struct(&game_struct(
@@ -170,9 +172,10 @@ mod tests {
   }
 
   #[test]
-  fn quat_unpacks_xyzw_in_order() {
+  fn quat_unpacks_wxyz_memory_order_into_xyzw() {
     let structs = math_structs();
-    let mem = mem_with_floats(BASE, &[0.1, 0.2, 0.3, 0.9]);
+    // memory is w, x, y, z
+    let mem = mem_with_floats(BASE, &[0.9, 0.1, 0.2, 0.3]);
     let ctx = Ctx::new(&structs, &mem);
     let inst = GameInstance::new(BASE, "CQuaternion".to_string());
     let q = read_as_quat(&ctx, &inst).unwrap();

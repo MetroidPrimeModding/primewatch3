@@ -36,8 +36,9 @@ use crate::mem::game_object_utils::{TUniqueID, get_object_by_entity_id};
 use crate::mem::globals::get_state_manager;
 use crate::mem::math_utils::{read_as_matrix4f, read_as_quat, read_as_transform, read_as_vec3};
 use crate::structs::prime_structs::GameInstance;
+use crate::world::ball_camera_failsafe::{FailsafePrediction, predict_failsafe_from_live};
 use crate::world::collision_mesh::CollisionMesh;
-use crate::world::ray_trace::{Ray, raycast_mesh};
+use crate::world::ray_trace::{self, Ray, raycast_mesh};
 
 pub use camera::quat_from_euler;
 pub use types::{
@@ -112,6 +113,12 @@ pub struct WorldRenderer {
   /// pointer ray (`WorldInput::hover_pos`). Recomputed at the end of every
   /// [`WorldRenderer::update`]; drawn as a highlight overlay by [`gpu`].
   pub hovered_tri: Option<HoveredTri>,
+
+  /// The morph-ball unmorph failsafe prediction, recomputed each
+  /// [`WorldRenderer::update`] (`None` until a collision mesh + `CBallCamera`
+  /// exist). Drawn as a spline overlay by [`WorldRenderer::update`] and shown as
+  /// text by the WorldStatus window.
+  pub morphball_failsafe: Option<FailsafePrediction>,
 
   // --- cached per-frame player state ---
   /// The live player, read from `g_stateManager["player"]` each frame. Its
@@ -191,6 +198,7 @@ impl WorldRenderer {
       game_cam: GameCamera::default(),
       text_overlays: Vec::new(),
       hovered_tri: None,
+      morphball_failsafe: None,
       player: PlayerGhost::default(),
       player_ghosts: [PlayerGhost::default(); 5],
       last_known_non_colliding_pos: Vec3::ZERO,
@@ -438,6 +446,7 @@ impl WorldRenderer {
 
     // --- hovered collision triangle (mouse pick) ---
     self.hovered_tri = self.pick_hovered_tri(input.hover_pos);
+    self.morphball_failsafe = self.predict_morphball_failsafe(ctx);
 
     // --- CPU geometry into the immediate buffers ---
     self.render_buff.clear();
@@ -456,6 +465,23 @@ impl WorldRenderer {
           self.game_cam.transform,
           self.cam_line_length,
         ));
+    }
+
+    // Morph-ball failsafe pull-back spline: red when unmorphing here would trip
+    // the failsafe (cinematic skipped), green when clear.
+    if let Some(fs) = &self.morphball_failsafe {
+      let color = if fs.would_trigger {
+        [1.0, 0.25, 0.1, 1.0]
+      } else {
+        [0.2, 1.0, 0.35, 1.0]
+      };
+      let line = fs.spline_polyline(30);
+      self.render_buff.set_transform(Mat4::IDENTITY);
+      self.render_buff.set_color(color);
+      for seg in line.windows(2) {
+        self.render_buff.add_line(seg[0], seg[1]);
+      }
+      self.render_buff.set_color([1.0, 1.0, 1.0, 1.0]);
     }
 
     // --- entities + player ---
@@ -496,7 +522,9 @@ impl WorldRenderer {
     let mut best: Option<HoveredTri> = None;
     let mut best_t = f32::INFINITY;
     for (&mrea, mesh) in &self.mesh_by_mrea {
-      let Some(hit) = raycast_mesh(mesh, ray, best_t) else {
+      // The hover overlay answers "what geometry is here", so it uses the
+      // pass-everything filter rather than any actor's `CMaterialFilter`.
+      let Some(hit) = raycast_mesh(mesh, ray, best_t, &ray_trace::pass_everything) else {
         continue;
       };
       if hit.t >= best_t {
@@ -518,5 +546,20 @@ impl WorldRenderer {
       });
     }
     best
+  }
+
+  /// Predict `CBallCamera::CheckFailsafeFromMorphBallState` against the live
+  /// static collision world — would unmorphing right now skip the cinematic
+  /// camera dolly? See [`crate::world::ball_camera_failsafe`].
+  ///
+  /// Only computed while the player is morphed: the `CBallCamera` object
+  /// persists when unmorphed but stops being updated, so its transform /
+  /// `lookPos` are stale and the reconstructed spline would be meaningless.
+  /// `None` also until a collision mesh exists.
+  pub fn predict_morphball_failsafe(&self, ctx: &Ctx) -> Option<FailsafePrediction> {
+    if self.mesh_by_mrea.is_empty() || !self.player.is_morphed {
+      return None;
+    }
+    predict_failsafe_from_live(ctx, self.mesh_by_mrea.values())
   }
 }
