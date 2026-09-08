@@ -1,12 +1,14 @@
-//! Brute-force world ray cast — the static half of `CGameCollision::RayWorldIntersection`.
+//! Static world ray cast — the static half of `CGameCollision::RayWorldIntersection`.
 //!
 //! See `src/world/collision_ray_tracing.md` for the full research notes. This is
 //! the "recommended implementation" from §7: for each area's already-parsed
-//! [`CollisionMesh`], reconstruct every master-list triangle (§5.2), run the
+//! [`CollisionMesh`], reconstruct master-list triangles (§5.2), run the
 //! two-sided Möller–Trumbore test the octree uses (§5.1), and keep the nearest
-//! hit. No octree traversal — a front-to-back octree descent and a min-`t` scan
-//! return the same triangle for any ray that isn't grazing a node boundary at
-//! almost exactly the hit distance, which does not matter for an inspection
+//! hit. Not the game's octree — candidate triangles come from the mesh's own
+//! [`Bvh`](crate::world::bvh::Bvh) (a plain median-split tree built at load
+//! time; brute-force fallback when it is absent). A BVH descent and a min-`t`
+//! scan return the same triangle for any ray that isn't grazing a node boundary
+//! at almost exactly the hit distance, which does not matter for an inspection
 //! overlay.
 //!
 //! The material filter (§9) is a caller-supplied [`MaterialFilter`] predicate
@@ -91,21 +93,11 @@ pub fn moller_trumbore_two_sided(
 }
 
 /// Triangle-facing filter for a cast, mirroring the renderer's Culling menu.
-///
-/// "Facing" is the sign of `render_normal · ray.dir`: negative when the
-/// triangle's outward normal points back toward the ray origin (a front face),
-/// positive when it points away (a back face). The normal comes from
-/// [`CollisionMesh::render_tri_normal`] so this matches what the GPU draws under
-/// the same `CullType`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TriCull {
-  /// Keep every triangle — the game's own two-sided behaviour. The default for
-  /// game-logic casts (`raycast_world`).
   #[default]
   None,
-  /// Keep only front faces — matches `CullType::Back` ("Show Front").
   FrontOnly,
-  /// Keep only back faces — matches `CullType::Front` ("Show Back").
   BackOnly,
 }
 
@@ -124,18 +116,19 @@ impl TriCull {
   }
 }
 
-/// A material predicate — the `CMaterialFilter::Passes` hook (doc §9). Return
-/// `true` to let a triangle participate in the cast. `|_| true` is the
-/// pass-everything default (`skPassEverything`).
 pub type MaterialFilter<'a> = &'a dyn Fn(ECollisionMaterial) -> bool;
 
-/// `skPassEverything` — every triangle passes. The default filter for a generic
-/// "what would a ray hit" query.
 pub fn pass_everything(_: ECollisionMaterial) -> bool {
   true
 }
 
-/// Brute-force the master triangle list of one area mesh (doc §7).
+/// Cast against the master triangle list of one area mesh (doc §7).
+///
+/// Uses the mesh's [`Bvh`](crate::world::bvh::Bvh) when
+/// [`build_bvh`](CollisionMesh::build_bvh) has run (every `load_mesh` result);
+/// otherwise brute-forces every triangle. Both paths return the identical
+/// nearest hit — the BVH only changes which triangles get the Möller–Trumbore
+/// test, not the result.
 ///
 /// `max_t` bounds the search (world units); pass `<= 0.0` for an unbounded ray.
 /// `filter` is the `CMaterialFilter` hook (doc §9) — a triangle is only tested
@@ -155,37 +148,51 @@ pub fn raycast_mesh(
   } else {
     f32::INFINITY
   };
-  let mut best: Option<RayHit> = None;
 
-  for idx in 0..mesh.tri_count() {
-    let Some(tri) = mesh.master_list_triangle(idx) else {
-      continue;
-    };
+  // The full per-triangle test, shared by both traversal strategies. Returns the
+  // hit within `(0, hi)`, or `None` if the triangle is filtered, culled, or
+  // missed.
+  let test_tri = |idx: usize, hi: f32| -> Option<RayHit> {
+    let tri = mesh.master_list_triangle(idx)?;
     if !filter(tri.material) {
-      continue;
+      return None;
     }
     if !cull.keeps(mesh.render_tri_normal(idx), ray.dir) {
-      continue;
+      return None;
     }
     let [v0, v1, v2] = tri.verts;
-    if let Some(t) = moller_trumbore_two_sided(ray.origin, ray.dir, v0, v1, v2, 0.0, best_t) {
-      best_t = t;
-      best = Some(RayHit {
-        t,
-        point: ray.origin + ray.dir * t,
-        normal: (v1 - v0).cross(v2 - v0).normalize_or_zero(),
-        tri_index: idx,
-        material: tri.material,
-      });
-    }
+    let t = moller_trumbore_two_sided(ray.origin, ray.dir, v0, v1, v2, 0.0, hi)?;
+    Some(RayHit {
+      t,
+      point: ray.origin + ray.dir * t,
+      normal: (v1 - v0).cross(v2 - v0).normalize_or_zero(),
+      tri_index: idx,
+      material: tri.material,
+    })
+  };
+
+  if let Some(bvh) = mesh.bvh.as_ref().filter(|b| !b.is_empty()) {
+    let hit = bvh.nearest_hit(ray.origin, ray.dir, best_t, |prim, bound| {
+      test_tri(prim as usize, bound).map(|h| h.t)
+    })?;
+    // Recompute the winning triangle's full hit (deterministic — same `t`).
+    return test_tri(hit.prim as usize, f32::INFINITY);
   }
 
+  let mut best: Option<RayHit> = None;
+  for idx in 0..mesh.tri_count() {
+    if let Some(hit) = test_tri(idx, best_t) {
+      best_t = hit.t;
+      best = Some(hit);
+    }
+  }
   best
 }
 
-/// `RayStaticIntersection` (`CGameCollision.cpp:249`) — brute-force every area
-/// mesh and keep the single nearest hit. This is the static half of
-/// `RayWorldIntersection`; the dynamic half (doc §8) is still deferred.
+/// `RayStaticIntersection` (`CGameCollision.cpp:249`) — cast against every area
+/// mesh (each via its own BVH, see [`raycast_mesh`]) and keep the single nearest
+/// hit. This is the static half of `RayWorldIntersection`; the dynamic half
+/// (doc §8) is still deferred.
 pub fn raycast_world<'a>(
   meshes: impl IntoIterator<Item = &'a CollisionMesh>,
   ray: Ray,
@@ -419,5 +426,53 @@ mod tests {
     };
     let hit = raycast_world([&far, &near], ray, 0.0, &pass_everything).unwrap();
     assert!((hit.t - 3.0).abs() < 1e-4);
+  }
+
+  /// A mesh with its BVH built must return the byte-identical hit the brute
+  /// path returns — the index only changes which triangles get tested.
+  #[test]
+  fn raycast_mesh_bvh_matches_brute_force() {
+    // A 10x10 grid of stacked triangles at varying heights.
+    let mut mesh = CollisionMesh::default();
+    let mut z = 0.0_f32;
+    for gx in 0..10 {
+      for gy in 0..10 {
+        let base = mesh.raw_verts.len() as u16;
+        let (x, y) = (gx as f32, gy as f32);
+        z += 0.37;
+        mesh.raw_verts.push(Vec3::new(x, y, z));
+        mesh.raw_verts.push(Vec3::new(x + 1.0, y, z));
+        mesh.raw_verts.push(Vec3::new(x, y + 1.0, z));
+        mesh.raw_edges.push([base, base + 1]);
+        mesh.raw_edges.push([base + 1, base + 2]);
+        mesh.raw_edges.push([base + 2, base]);
+        let e = (mesh.raw_edges.len() - 3) as u16;
+        mesh.raw_polys.push([e, e + 1, e + 2]);
+        mesh.raw_poly_materials.push(0);
+      }
+    }
+    mesh.materials.push(ECollisionMaterial(0));
+    mesh.build_vertices();
+
+    let brute = mesh.clone(); // bvh still None
+    mesh.build_bvh();
+    assert!(mesh.bvh.as_ref().is_some_and(|b| !b.is_empty()));
+
+    for i in 0..40 {
+      let ray = Ray {
+        origin: Vec3::new(1.0 + (i as f32) * 0.2, 1.0 + (i as f32) * 0.15, 100.0),
+        dir: Vec3::new(0.02, -0.01, -1.0).normalize(),
+      };
+      let a = raycast_mesh(&brute, ray, 0.0, &pass_everything, TriCull::None);
+      let b = raycast_mesh(&mesh, ray, 0.0, &pass_everything, TriCull::None);
+      match (a, b) {
+        (None, None) => {}
+        (Some(a), Some(b)) => {
+          assert_eq!(a.tri_index, b.tri_index, "ray {i}");
+          assert!((a.t - b.t).abs() < 1e-5, "ray {i}: {} vs {}", a.t, b.t);
+        }
+        (a, b) => panic!("ray {i}: brute {a:?} vs bvh {b:?}"),
+      }
+    }
   }
 }

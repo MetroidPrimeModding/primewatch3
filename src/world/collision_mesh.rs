@@ -6,6 +6,7 @@ use glam::Vec3;
 use crate::ctx::Ctx;
 use crate::gl::Vert;
 use crate::structs::prime_structs::GameInstance;
+use crate::world::bvh::{Aabb, Bvh};
 
 /// Collision-surface material bitflags (mirrored by `enum CollisionMaterial` in
 /// `prime_defs/prime1/CAreaOctTree.bs`).
@@ -87,6 +88,10 @@ pub struct CollisionMesh {
   pub materials: Vec<ECollisionMaterial>,
   /// Filled by [`CollisionMesh::build_vertices`] — the tri soup the renderer uploads.
   pub verts: Vec<Vert>,
+  /// Spatial index over the master triangle list, built by
+  /// [`CollisionMesh::build_bvh`]. `None` until built (test fixtures, the
+  /// default mesh); the ray tracer brute-forces when it is absent.
+  pub bvh: Option<Bvh>,
 }
 
 /// Read `x` / `y` / `z` `f32` members off a `CVector3f`-shaped handle.
@@ -218,6 +223,7 @@ pub fn load_mesh(ctx: &Ctx, area: &GameInstance) -> Option<CollisionMesh> {
 
   // 7.
   res.build_vertices();
+  res.build_bvh();
   Some(res)
 }
 
@@ -230,7 +236,6 @@ pub struct MasterTri {
 }
 
 impl CollisionMesh {
-  /// Number of triangles in the master list (`polyCount`).
   pub fn tri_count(&self) -> usize {
     self.raw_polys.len()
   }
@@ -280,20 +285,22 @@ impl CollisionMesh {
     })
   }
 
-  /// The renderer's outward surface normal for triangle `idx` — the `normal`
-  /// [`build_vertices`] wrote onto that poly's verts. `None` when the render
-  /// soup isn't built yet. The ray picker uses this (not the master-list
-  /// winding) so its front/back cull matches exactly what the GPU draws.
   pub fn render_tri_normal(&self, idx: usize) -> Option<Vec3> {
     self.verts.get(idx * 3).map(|v| Vec3::from_array(v.normal))
   }
 
+  /// Builds [`CollisionMesh::bvh`] from the master triangle list
+  pub fn build_bvh(&mut self) {
+    let aabbs: Vec<Aabb> = (0..self.tri_count())
+      .map(|i| match self.master_list_triangle(i) {
+        Some(tri) => Aabb::from_points(tri.verts),
+        None => Aabb::EMPTY,
+      })
+      .collect();
+    self.bvh = Some(Bvh::build(&aabbs));
+  }
+
   /// Fills [`CollisionMesh::verts`]
-  ///
-  /// Every lookup is `.get(..).copied().unwrap_or_default()` (or
-  /// `unwrap_or(ECollisionMaterial(0))`) so a corrupt index degrades to a
-  /// zero/origin value instead of panicking — the repo "OOB -> skip, never
-  /// panic" convention.
   pub fn build_vertices(&mut self) {
     let mut verts: Vec<Vert> = Vec::with_capacity(self.raw_polys.len() * 3);
 
@@ -395,8 +402,6 @@ mod tests {
   use crate::mem::game_memory::GameMemory;
   use crate::structs::prime_structs::GameStructs;
 
-  /// A single triangle: verts (0,0,0) / (1,0,0) / (0,1,0), edges
-  /// `[0,1] / [1,2] / [2,0]`, one poly referencing all three edges, one material.
   fn single_triangle(mat: ECollisionMaterial) -> CollisionMesh {
     CollisionMesh {
       raw_verts: vec![

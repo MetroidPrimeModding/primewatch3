@@ -4,6 +4,7 @@
 //! in `crate::gl`.
 
 pub mod ball_camera_failsafe;
+pub mod bvh;
 pub mod collision_mesh;
 pub mod ray_trace;
 pub mod renderer;
