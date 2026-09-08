@@ -278,6 +278,10 @@ impl AppWindow {
                   &mut fs.inspector.exact_values,
                   "Show exact floating point values",
                 );
+                ui.checkbox(
+                  &mut self.world.tri_picker_enabled,
+                  "Collision triangle picker",
+                );
                 ui.separator();
                 ui.checkbox(&mut fs.scripts.show_window, "Scripting");
                 if ui.button("Reload Scripts").clicked() {

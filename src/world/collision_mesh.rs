@@ -280,6 +280,14 @@ impl CollisionMesh {
     })
   }
 
+  /// The renderer's outward surface normal for triangle `idx` — the `normal`
+  /// [`build_vertices`] wrote onto that poly's verts. `None` when the render
+  /// soup isn't built yet. The ray picker uses this (not the master-list
+  /// winding) so its front/back cull matches exactly what the GPU draws.
+  pub fn render_tri_normal(&self, idx: usize) -> Option<Vec3> {
+    self.verts.get(idx * 3).map(|v| Vec3::from_array(v.normal))
+  }
+
   /// Fills [`CollisionMesh::verts`]
   ///
   /// Every lookup is `.get(..).copied().unwrap_or_default()` (or

@@ -90,6 +90,40 @@ pub fn moller_trumbore_two_sided(
   Some(t)
 }
 
+/// Triangle-facing filter for a cast, mirroring the renderer's Culling menu.
+///
+/// "Facing" is the sign of `render_normal · ray.dir`: negative when the
+/// triangle's outward normal points back toward the ray origin (a front face),
+/// positive when it points away (a back face). The normal comes from
+/// [`CollisionMesh::render_tri_normal`] so this matches what the GPU draws under
+/// the same `CullType`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TriCull {
+  /// Keep every triangle — the game's own two-sided behaviour. The default for
+  /// game-logic casts (`raycast_world`).
+  #[default]
+  None,
+  /// Keep only front faces — matches `CullType::Back` ("Show Front").
+  FrontOnly,
+  /// Keep only back faces — matches `CullType::Front` ("Show Back").
+  BackOnly,
+}
+
+impl TriCull {
+  /// Whether a triangle with outward `normal` survives this cull for a ray
+  /// traveling `dir`. A `None` normal (render soup not built) always passes.
+  fn keeps(self, normal: Option<Vec3>, dir: Vec3) -> bool {
+    let Some(n) = normal else {
+      return true;
+    };
+    match self {
+      TriCull::None => true,
+      TriCull::FrontOnly => n.dot(dir) < 0.0,
+      TriCull::BackOnly => n.dot(dir) > 0.0,
+    }
+  }
+}
+
 /// A material predicate — the `CMaterialFilter::Passes` hook (doc §9). Return
 /// `true` to let a triangle participate in the cast. `|_| true` is the
 /// pass-everything default (`skPassEverything`).
@@ -105,13 +139,16 @@ pub fn pass_everything(_: ECollisionMaterial) -> bool {
 ///
 /// `max_t` bounds the search (world units); pass `<= 0.0` for an unbounded ray.
 /// `filter` is the `CMaterialFilter` hook (doc §9) — a triangle is only tested
-/// when `filter(tri.material)` is `true`. Returns the nearest passing triangle
-/// hit in `(0, max_t]`, or `None`.
+/// when `filter(tri.material)` is `true`. `cull` drops front- or back-facing
+/// triangles to mirror the renderer's Culling menu ([`TriCull::None`] keeps the
+/// game's two-sided behaviour). Returns the nearest passing triangle hit in
+/// `(0, max_t]`, or `None`.
 pub fn raycast_mesh(
   mesh: &CollisionMesh,
   ray: Ray,
   max_t: f32,
   filter: MaterialFilter<'_>,
+  cull: TriCull,
 ) -> Option<RayHit> {
   let mut best_t = if max_t.is_finite() && max_t > 0.0 {
     max_t
@@ -125,6 +162,9 @@ pub fn raycast_mesh(
       continue;
     };
     if !filter(tri.material) {
+      continue;
+    }
+    if !cull.keeps(mesh.render_tri_normal(idx), ray.dir) {
       continue;
     }
     let [v0, v1, v2] = tri.verts;
@@ -159,7 +199,8 @@ pub fn raycast_world<'a>(
   };
   let mut best: Option<RayHit> = None;
   for mesh in meshes {
-    if let Some(hit) = raycast_mesh(mesh, ray, best_t, filter)
+    // Game-logic casts are two-sided, like the game's own octree.
+    if let Some(hit) = raycast_mesh(mesh, ray, best_t, filter, TriCull::None)
       && hit.t < best_t
     {
       best_t = hit.t;
@@ -269,6 +310,7 @@ mod tests {
       },
       0.0,
       &pass_everything,
+      TriCull::None,
     )
     .unwrap();
     assert_eq!(hit.tri_index, 0);
@@ -303,6 +345,7 @@ mod tests {
       },
       0.0,
       &pass_everything,
+      TriCull::None,
     )
     .unwrap();
     assert_eq!(hit.tri_index, 1);
@@ -316,8 +359,8 @@ mod tests {
       origin: Vec3::new(0.2, 0.2, 5.0),
       dir: Vec3::new(0.0, 0.0, -1.0),
     };
-    assert!(raycast_mesh(&mesh, ray, 1.0, &pass_everything).is_none());
-    assert!(raycast_mesh(&mesh, ray, 10.0, &pass_everything).is_some());
+    assert!(raycast_mesh(&mesh, ray, 1.0, &pass_everything, TriCull::None).is_none());
+    assert!(raycast_mesh(&mesh, ray, 10.0, &pass_everything, TriCull::None).is_some());
   }
 
   #[test]
@@ -328,12 +371,39 @@ mod tests {
       dir: Vec3::new(0.0, 0.0, -1.0),
     };
     // reject everything -> miss; require SOLID -> hit
-    assert!(raycast_mesh(&mesh, ray, 0.0, &|_| false).is_none());
+    assert!(raycast_mesh(&mesh, ray, 0.0, &|_| false, TriCull::None).is_none());
     assert!(
-      raycast_mesh(&mesh, ray, 0.0, &|m: ECollisionMaterial| m
-        .contains(ECollisionMaterial::SOLID))
+      raycast_mesh(
+        &mesh,
+        ray,
+        0.0,
+        &|m: ECollisionMaterial| m.contains(ECollisionMaterial::SOLID),
+        TriCull::None,
+      )
       .is_some()
     );
+  }
+
+  #[test]
+  fn raycast_mesh_honours_tri_cull() {
+    // A single triangle in the z = 0 plane. `build_vertices` gives it an
+    // outward normal; a ray straight down (dir -Z) hits its front face.
+    let mut mesh = single_triangle(ECollisionMaterial(0));
+    mesh.build_vertices();
+    let n = mesh.render_tri_normal(0).unwrap();
+    let ray = Ray {
+      origin: Vec3::new(0.2, 0.2, 5.0),
+      dir: Vec3::new(0.0, 0.0, -1.0),
+    };
+    let front_facing = n.dot(ray.dir) < 0.0;
+    let (front, back) = if front_facing {
+      (TriCull::FrontOnly, TriCull::BackOnly)
+    } else {
+      (TriCull::BackOnly, TriCull::FrontOnly)
+    };
+    assert!(raycast_mesh(&mesh, ray, 0.0, &pass_everything, front).is_some());
+    assert!(raycast_mesh(&mesh, ray, 0.0, &pass_everything, back).is_none());
+    assert!(raycast_mesh(&mesh, ray, 0.0, &pass_everything, TriCull::None).is_some());
   }
 
   #[test]

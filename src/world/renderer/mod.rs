@@ -113,6 +113,10 @@ pub struct WorldRenderer {
   /// pointer ray (`WorldInput::hover_pos`). Recomputed at the end of every
   /// [`WorldRenderer::update`]; drawn as a highlight overlay by [`gpu`].
   pub hovered_tri: Option<HoveredTri>,
+  /// Whether the mouse-hover collision-triangle pick runs. Off by default — the
+  /// brute-force per-frame ray cast scans every loaded area's master triangle
+  /// list. Toggled from the Tools menu.
+  pub tri_picker_enabled: bool,
 
   /// The morph-ball unmorph failsafe prediction, recomputed each
   /// [`WorldRenderer::update`] (`None` until a collision mesh + `CBallCamera`
@@ -198,6 +202,7 @@ impl WorldRenderer {
       game_cam: GameCamera::default(),
       text_overlays: Vec::new(),
       hovered_tri: None,
+      tri_picker_enabled: false,
       morphball_failsafe: None,
       player: PlayerGhost::default(),
       player_ghosts: [PlayerGhost::default(); 5],
@@ -445,7 +450,21 @@ impl WorldRenderer {
     ];
 
     // --- hovered collision triangle (mouse pick) ---
-    self.hovered_tri = self.pick_hovered_tri(input.hover_pos);
+    self.hovered_tri = if self.tri_picker_enabled {
+      self.pick_hovered_tri(input.hover_pos)
+    } else {
+      None
+    };
+    // Label the picked triangle's three verts in the world view, the same way
+    // entity overlays are placed (`project` then flip Y into overlay space).
+    if let Some(verts) = self.hovered_tri.as_ref().map(|h| h.verts) {
+      for (i, v) in verts.iter().enumerate() {
+        if let Some(s) = camera::project(*v, self.cam_view, self.cam_projection, self.cam_viewport)
+        {
+          self.add_text_overlay(Vec2::new(s.x, self.cam_viewport[3] - s.y), format!("p{i}"));
+        }
+      }
+    }
     self.morphball_failsafe = self.predict_morphball_failsafe(ctx);
 
     // --- CPU geometry into the immediate buffers ---
@@ -519,12 +538,20 @@ impl WorldRenderer {
     )?;
     let ray = Ray { origin, dir };
 
+    // Follow the Culling menu: "Show Front" hides back faces from the pick too,
+    // "Show Back" hides front faces, "Show All" is two-sided.
+    let cull = match self.culling {
+      CullType::Back => ray_trace::TriCull::FrontOnly,
+      CullType::Front => ray_trace::TriCull::BackOnly,
+      CullType::None => ray_trace::TriCull::None,
+    };
+
     let mut best: Option<HoveredTri> = None;
     let mut best_t = f32::INFINITY;
     for (&mrea, mesh) in &self.mesh_by_mrea {
       // The hover overlay answers "what geometry is here", so it uses the
       // pass-everything filter rather than any actor's `CMaterialFilter`.
-      let Some(hit) = raycast_mesh(mesh, ray, best_t, &ray_trace::pass_everything) else {
+      let Some(hit) = raycast_mesh(mesh, ray, best_t, &ray_trace::pass_everything, cull) else {
         continue;
       };
       if hit.t >= best_t {
