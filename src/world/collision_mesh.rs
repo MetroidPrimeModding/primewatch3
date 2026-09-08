@@ -6,6 +6,7 @@ use glam::Vec3;
 use crate::ctx::Ctx;
 use crate::gl::Vert;
 use crate::structs::prime_structs::GameInstance;
+use crate::world::bvh::{Aabb, Bvh};
 
 /// Collision-surface material bitflags (mirrored by `enum CollisionMaterial` in
 /// `prime_defs/prime1/CAreaOctTree.bs`).
@@ -17,6 +18,12 @@ use crate::structs::prime_structs::GameInstance;
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ECollisionMaterial(pub u32);
+
+impl std::fmt::Debug for ECollisionMaterial {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    write!(f, "ECollisionMaterial({:#010x})", self.0)
+  }
+}
 
 #[allow(unused)]
 impl ECollisionMaterial {
@@ -81,6 +88,10 @@ pub struct CollisionMesh {
   pub materials: Vec<ECollisionMaterial>,
   /// Filled by [`CollisionMesh::build_vertices`] — the tri soup the renderer uploads.
   pub verts: Vec<Vert>,
+  /// Spatial index over the master triangle list, built by
+  /// [`CollisionMesh::build_bvh`]. `None` until built (test fixtures, the
+  /// default mesh); the ray tracer brute-forces when it is absent.
+  pub bvh: Option<Bvh>,
 }
 
 /// Read `x` / `y` / `z` `f32` members off a `CVector3f`-shaped handle.
@@ -212,16 +223,84 @@ pub fn load_mesh(ctx: &Ctx, area: &GameInstance) -> Option<CollisionMesh> {
 
   // 7.
   res.build_vertices();
+  res.build_bvh();
   Some(res)
 }
 
+/// One reconstructed master-list triangle: its 3 world-space verts (winding
+/// already resolved) and its surface material word.
+#[derive(Clone, Copy, Debug)]
+pub struct MasterTri {
+  pub verts: [Vec3; 3],
+  pub material: ECollisionMaterial,
+}
+
 impl CollisionMesh {
-  /// Fills [`CollisionMesh::verts`]
+  pub fn tri_count(&self) -> usize {
+    self.raw_polys.len()
+  }
+
+  /// Reconstruct triangle `idx` exactly as the game's `GetMasterListTriangle`
+  /// does (`CAreaOctTree.cpp:591-604`, doc §5.2): pick the 3 verts from the
+  /// **first two** of the triangle's edges, and swap the first two verts when
+  /// the surface word has bit `0x0200_0000` (`FLIPPED_TRI`).
   ///
-  /// Every lookup is `.get(..).copied().unwrap_or_default()` (or
-  /// `unwrap_or(ECollisionMaterial(0))`) so a corrupt index degrades to a
-  /// zero/origin value instead of panicking — the repo "OOB -> skip, never
-  /// panic" convention.
+  /// This is deliberately *not* the 3-edge walk [`build_vertices`] uses for
+  /// rendering — the ray tracer replicates the game's own reconstruction so a
+  /// hit's winding/normal matches what the game's collision would report.
+  ///
+  /// Returns `None` if any edge or vertex index is out of range.
+  ///
+  /// [`build_vertices`]: CollisionMesh::build_vertices
+  pub fn master_list_triangle(&self, idx: usize) -> Option<MasterTri> {
+    let poly_edges = *self.raw_polys.get(idx)?;
+    let e0 = *self.raw_edges.get(poly_edges[0] as usize)?;
+    let e1 = *self.raw_edges.get(poly_edges[1] as usize)?;
+
+    // vert2 = the endpoint of e1 that isn't shared with e0.
+    let vert2 = if e1[0] != e0[0] && e1[0] != e0[1] {
+      e1[0]
+    } else {
+      e1[1]
+    };
+
+    let material = self
+      .raw_poly_materials
+      .get(idx)
+      .and_then(|&m| self.materials.get(m as usize))
+      .copied()
+      .unwrap_or(ECollisionMaterial(0));
+
+    let vert = |i: u16| self.raw_verts.get(i as usize).copied();
+    let (a, b) = if material.contains(ECollisionMaterial::FLIPPED_TRI) {
+      (vert(e0[1])?, vert(e0[0])?)
+    } else {
+      (vert(e0[0])?, vert(e0[1])?)
+    };
+    let c = vert(vert2)?;
+
+    Some(MasterTri {
+      verts: [a, b, c],
+      material,
+    })
+  }
+
+  pub fn render_tri_normal(&self, idx: usize) -> Option<Vec3> {
+    self.verts.get(idx * 3).map(|v| Vec3::from_array(v.normal))
+  }
+
+  /// Builds [`CollisionMesh::bvh`] from the master triangle list
+  pub fn build_bvh(&mut self) {
+    let aabbs: Vec<Aabb> = (0..self.tri_count())
+      .map(|i| match self.master_list_triangle(i) {
+        Some(tri) => Aabb::from_points(tri.verts),
+        None => Aabb::EMPTY,
+      })
+      .collect();
+    self.bvh = Some(Bvh::build(&aabbs));
+  }
+
+  /// Fills [`CollisionMesh::verts`]
   pub fn build_vertices(&mut self) {
     let mut verts: Vec<Vert> = Vec::with_capacity(self.raw_polys.len() * 3);
 
@@ -323,8 +402,6 @@ mod tests {
   use crate::mem::game_memory::GameMemory;
   use crate::structs::prime_structs::GameStructs;
 
-  /// A single triangle: verts (0,0,0) / (1,0,0) / (0,1,0), edges
-  /// `[0,1] / [1,2] / [2,0]`, one poly referencing all three edges, one material.
   fn single_triangle(mat: ECollisionMaterial) -> CollisionMesh {
     CollisionMesh {
       raw_verts: vec![
@@ -380,6 +457,35 @@ mod tests {
     assert_eq!(flipped.verts[0].pos, plain.verts[2].pos);
     assert_eq!(flipped.verts[2].pos, plain.verts[0].pos);
     assert_eq!(flipped.verts[1].pos, plain.verts[1].pos);
+  }
+
+  #[test]
+  fn master_list_triangle_uses_first_two_edges() {
+    let mesh = single_triangle(ECollisionMaterial(0));
+    let tri = mesh.master_list_triangle(0).unwrap();
+    // e0 = [0,1] -> verts[0], verts[1]; e1 = [1,2] -> unshared endpoint is 2.
+    assert_eq!(tri.verts[0], Vec3::new(0.0, 0.0, 0.0));
+    assert_eq!(tri.verts[1], Vec3::new(1.0, 0.0, 0.0));
+    assert_eq!(tri.verts[2], Vec3::new(0.0, 1.0, 0.0));
+  }
+
+  #[test]
+  fn master_list_triangle_flipped_swaps_first_two() {
+    let plain = single_triangle(ECollisionMaterial(0))
+      .master_list_triangle(0)
+      .unwrap();
+    let flipped = single_triangle(ECollisionMaterial::FLIPPED_TRI)
+      .master_list_triangle(0)
+      .unwrap();
+    assert_eq!(flipped.verts[0], plain.verts[1]);
+    assert_eq!(flipped.verts[1], plain.verts[0]);
+    assert_eq!(flipped.verts[2], plain.verts[2]);
+  }
+
+  #[test]
+  fn master_list_triangle_out_of_range_is_none() {
+    let mesh = single_triangle(ECollisionMaterial(0));
+    assert!(mesh.master_list_triangle(1).is_none());
   }
 
   #[test]

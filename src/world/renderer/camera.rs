@@ -3,7 +3,7 @@
 //! `WorldRenderer::render`, factored out so it's unit-testable without a GPU
 //! device.
 
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 
 use super::types::{CameraMode, GameCamera, OrbitPlayerCameraOrigin};
 
@@ -158,6 +158,46 @@ pub(crate) fn project(pos: Vec3, view: Mat4, projection: Mat4, viewport: [f32; 4
   ))
 }
 
+/// Inverse of [`project`]: turn a pixel on the world view into a world-space
+/// ray `(origin, dir)` (`dir` unit length).
+///
+/// `screen_px` is **top-left origin, Y-down** (egui image-local pixels) —
+/// `project` returns bottom-left-origin Y-up, so this flips Y internally.
+/// `viewport` is `[x, y, width, height]` in the same pixels as `screen_px`.
+///
+/// Unprojects the near (NDC z = 0) and far (NDC z = 1) points through
+/// `(projection * view)⁻¹` — the [0, 1] clip-depth convention of the renderer's
+/// DirectX-style RH projection. Returns `None` on a degenerate viewport / matrix.
+pub(crate) fn unproject_ray(
+  screen_px: Vec2,
+  view: Mat4,
+  projection: Mat4,
+  viewport: [f32; 4],
+) -> Option<(Vec3, Vec3)> {
+  let (w, h) = (viewport[2], viewport[3]);
+  if w <= 0.0 || h <= 0.0 {
+    return None;
+  }
+  let ndc_x = (screen_px.x - viewport[0]) / w * 2.0 - 1.0;
+  // egui pixels are Y-down from the top; NDC Y is up from the centre.
+  let ndc_y = 1.0 - (screen_px.y - viewport[1]) / h * 2.0;
+
+  let inv = (projection * view).inverse();
+  let near = inv * Vec4::new(ndc_x, ndc_y, 0.0, 1.0);
+  let far = inv * Vec4::new(ndc_x, ndc_y, 1.0, 1.0);
+  if near.w.abs() < 1e-9 || far.w.abs() < 1e-9 {
+    return None;
+  }
+  let near = near.truncate() / near.w;
+  let far = far.truncate() / far.w;
+
+  let dir = (far - near).normalize_or_zero();
+  if dir == Vec3::ZERO {
+    return None;
+  }
+  Some((near, dir))
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -293,6 +333,47 @@ mod tests {
     let vp = [0.0, 0.0, 800.0, 600.0];
     assert!(project(Vec3::new(0.0, 0.0, 5.0), Mat4::IDENTITY, proj, vp).is_none());
     assert!(project(Vec3::new(0.0, 0.0, -5.0), Mat4::IDENTITY, proj, vp).is_some());
+  }
+
+  #[test]
+  fn unproject_ray_inverts_project() {
+    let proj = perspective(45.0_f32.to_radians(), 4.0 / 3.0, 0.1, 1000.0);
+    let view = glam::camera::rh::view::look_at_mat4(
+      Vec3::new(0.0, -10.0, 3.0),
+      Vec3::new(1.0, 2.0, 0.5),
+      Vec3::Z,
+    );
+    let vp = [0.0, 0.0, 800.0, 600.0];
+
+    for world in [
+      Vec3::new(1.0, 2.0, 0.5),
+      Vec3::new(-3.0, 0.0, 2.0),
+      Vec3::new(4.0, -1.0, -1.0),
+    ] {
+      // `project` gives bottom-left-origin Y-up pixels; flip to egui's top-down.
+      let s = project(world, view, proj, vp).unwrap();
+      let egui_px = Vec2::new(s.x, vp[3] - s.y);
+
+      let (origin, dir) = unproject_ray(egui_px, view, proj, vp).unwrap();
+      assert!((dir.length() - 1.0).abs() < 1e-4);
+      // `world` must lie on the ray: its rejection from `dir` is ~0.
+      let to_world = world - origin;
+      let perp = to_world - dir * to_world.dot(dir);
+      assert!(perp.length() < 1e-2, "point off ray by {}", perp.length());
+    }
+  }
+
+  #[test]
+  fn unproject_ray_rejects_degenerate_viewport() {
+    assert!(
+      unproject_ray(
+        Vec2::ZERO,
+        Mat4::IDENTITY,
+        Mat4::IDENTITY,
+        [0.0, 0.0, 0.0, 600.0]
+      )
+      .is_none()
+    );
   }
 
   #[test]

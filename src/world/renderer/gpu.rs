@@ -132,6 +132,29 @@ impl WorldRenderer {
         .add_lines(&shapes::generate_cube_lines(mesh.min, mesh.max, Vec4::ONE));
     }
 
+    // Hovered collision triangle: a translucent magenta fill (drawn both
+    // windings so it shows from either side) plus a short normal spike. Biased
+    // toward the camera along the normal to beat z-fighting with the mesh.
+    if let Some(h) = self.hovered_tri {
+      let [a, b, c] = h.verts;
+      let side = (self.cam_eye - h.point).dot(h.normal).signum();
+      let bias = h.normal * 0.02 * side;
+      let (a, b, c) = (a + bias, b + bias, c + bias);
+
+      self.translucent_render_buff.set_transform(Mat4::IDENTITY);
+      self
+        .translucent_render_buff
+        .set_color([1.0, 0.15, 0.7, 0.55]);
+      self.translucent_render_buff.add_tri(a, b, c);
+      self.translucent_render_buff.add_tri(a, c, b);
+      self.translucent_render_buff.set_color([1.0, 1.0, 1.0, 1.0]);
+
+      self.render_buff.set_transform(Mat4::IDENTITY);
+      self.render_buff.set_color([1.0, 1.0, 0.0, 1.0]);
+      self.render_buff.add_line(h.point, h.point + h.normal * 0.5);
+      self.render_buff.set_color([1.0, 1.0, 1.0, 1.0]);
+    }
+
     // Upload the two immediate buffers into the four dynamic meshes.
     self
       .opaque_tris

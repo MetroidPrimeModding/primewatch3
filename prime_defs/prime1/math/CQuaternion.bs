@@ -1,6 +1,8 @@
+// Layout corrected 2026-09-07, confirmed against the GameCube decomp:
+// prime-decomp/include/Kyoto/Math/CQuaternion.hpp lines 89-91
 struct CQuaternion {
+    f32 w
     f32 x
     f32 y
     f32 z
-    f32 w
 }

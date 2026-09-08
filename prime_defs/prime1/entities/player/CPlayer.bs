@@ -5,6 +5,7 @@ struct CPlayer: CPhysicsActor {
     f32 startingJumpTimeout 0x288
     f32 minJumpTimeout 0x290
     f32 jumpPresses 0x298
+    CAABB fpBounds 0x2d8
     EPlayerCameraState cameraState 0x2F4
     EPlayerMorphBallState morphState 0x2F8
     EPlayerMorphBallState spawnedMorphBallState 0x2FC
@@ -43,6 +44,7 @@ struct CPlayer: CPhysicsActor {
     i32 additionalIceBreakJumps 0x75c
     bool controlsFrozen 0x760
     f32 controlsFrozenTimeout 0x764
+    f32 eyeZBias 0x9c8
     u32 bombJumpCount 0x9d0
     i32 bombJumpCheckDelayFrames 0x9d4
 

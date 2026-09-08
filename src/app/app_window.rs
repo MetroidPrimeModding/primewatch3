@@ -278,6 +278,10 @@ impl AppWindow {
                   &mut fs.inspector.exact_values,
                   "Show exact floating point values",
                 );
+                ui.checkbox(
+                  &mut self.world.tri_picker_enabled,
+                  "Collision triangle picker",
+                );
                 ui.separator();
                 ui.checkbox(&mut fs.scripts.show_window, "Scripting");
                 if ui.button("Reload Scripts").clicked() {
@@ -355,6 +359,13 @@ impl AppWindow {
         }
         if resp.hovered() {
           world_view_input.scroll = ui.input(|i| i.smooth_scroll_delta.y);
+        }
+        // Pointer position over the image, in world-target physical pixels
+        // (image-local, top-left origin) — drives the hovered-triangle pick.
+        if let Some(p) = resp.hover_pos() {
+          let ppp = ui.ctx().pixels_per_point();
+          let local = (p - rect.min) * ppp;
+          world_view_input.hover_pos = Some((local.x, local.y));
         }
 
         // Paint the queued overlays. `screen_pos` is in world-target physical pixels (Y-down,

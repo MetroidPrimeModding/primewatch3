@@ -117,6 +117,30 @@ impl WorldRenderer {
         ));
       }
     }
+
+    // Hovered collision triangle (mouse pick). Only shown while the Tools-menu
+    // toggle is on.
+    if self.tri_picker_enabled {
+      ui.separator();
+      match &self.hovered_tri {
+        Some(h) => {
+          ui.label(format!("hover tri #{}", h.tri_index));
+          ui.label(format!("  material {:08x}", h.material.0));
+          for (i, v) in h.verts.iter().enumerate() {
+            ui.label(format!("  p{i} ({:.3}, {:.3}, {:.3})", v.x, v.y, v.z));
+          }
+        }
+        None => {
+          ui.label("hover tri: none");
+        }
+      }
+    }
+
+    // Instant unmorph failsafe
+     if let Some(p) = &self.morphball_failsafe && p.would_trigger {
+      ui.separator();
+      ui.label("Instant unmorph likely");
+    }
   }
 
   /// The render-config half of `PrimeWatch::doMainMenu` — the Culling / Camera /

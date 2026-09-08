@@ -3,5 +3,8 @@
 //! view. The vertex type ([`crate::gl::Vert`]) and wgpu upload / pipelines live
 //! in `crate::gl`.
 
+pub mod ball_camera_failsafe;
+pub mod bvh;
 pub mod collision_mesh;
+pub mod ray_trace;
 pub mod renderer;

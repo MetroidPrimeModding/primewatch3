@@ -36,12 +36,14 @@ use crate::mem::game_object_utils::{TUniqueID, get_object_by_entity_id};
 use crate::mem::globals::get_state_manager;
 use crate::mem::math_utils::{read_as_matrix4f, read_as_quat, read_as_transform, read_as_vec3};
 use crate::structs::prime_structs::GameInstance;
+use crate::world::ball_camera_failsafe::{FailsafePrediction, predict_failsafe_from_live};
 use crate::world::collision_mesh::CollisionMesh;
+use crate::world::ray_trace::{self, Ray, raycast_mesh};
 
 pub use camera::quat_from_euler;
 pub use types::{
-  ActorRenderConfig, CameraMode, CullType, GameCamera, OrbitPlayerCameraOrigin, PlayerClipConfig,
-  PlayerGhost, ShadowConfig, TextOverlay, TriggerRenderConfig, WorldInput,
+  ActorRenderConfig, CameraMode, CullType, GameCamera, HoveredTri, OrbitPlayerCameraOrigin,
+  PlayerClipConfig, PlayerGhost, ShadowConfig, TextOverlay, TriggerRenderConfig, WorldInput,
 };
 
 mod types;
@@ -106,6 +108,21 @@ pub struct WorldRenderer {
   /// Screen-space labels accumulated this frame (HP / item / fuse counts).
   /// Cleared at the top of every [`WorldRenderer::update`].
   pub text_overlays: Vec<TextOverlay>,
+
+  /// The collision triangle the mouse is over this frame, from the un-projected
+  /// pointer ray (`WorldInput::hover_pos`). Recomputed at the end of every
+  /// [`WorldRenderer::update`]; drawn as a highlight overlay by [`gpu`].
+  pub hovered_tri: Option<HoveredTri>,
+  /// Whether the mouse-hover collision-triangle pick runs. Off by default — the
+  /// brute-force per-frame ray cast scans every loaded area's master triangle
+  /// list. Toggled from the Tools menu.
+  pub tri_picker_enabled: bool,
+
+  /// The morph-ball unmorph failsafe prediction, recomputed each
+  /// [`WorldRenderer::update`] (`None` until a collision mesh + `CBallCamera`
+  /// exist). Drawn as a spline overlay by [`WorldRenderer::update`] and shown as
+  /// text by the WorldStatus window.
+  pub morphball_failsafe: Option<FailsafePrediction>,
 
   // --- cached per-frame player state ---
   /// The live player, read from `g_stateManager["player"]` each frame. Its
@@ -184,6 +201,9 @@ impl WorldRenderer {
       cam_viewport: [0.0, 0.0, size.0 as f32, size.1 as f32],
       game_cam: GameCamera::default(),
       text_overlays: Vec::new(),
+      hovered_tri: None,
+      tri_picker_enabled: false,
+      morphball_failsafe: None,
       player: PlayerGhost::default(),
       player_ghosts: [PlayerGhost::default(); 5],
       last_known_non_colliding_pos: Vec3::ZERO,
@@ -429,6 +449,24 @@ impl WorldRenderer {
       viewport_size.1.max(1) as f32,
     ];
 
+    // --- hovered collision triangle (mouse pick) ---
+    self.hovered_tri = if self.tri_picker_enabled {
+      self.pick_hovered_tri(input.hover_pos)
+    } else {
+      None
+    };
+    // Label the picked triangle's three verts in the world view, the same way
+    // entity overlays are placed (`project` then flip Y into overlay space).
+    if let Some(verts) = self.hovered_tri.as_ref().map(|h| h.verts) {
+      for (i, v) in verts.iter().enumerate() {
+        if let Some(s) = camera::project(*v, self.cam_view, self.cam_projection, self.cam_viewport)
+        {
+          self.add_text_overlay(Vec2::new(s.x, self.cam_viewport[3] - s.y), format!("p{i}"));
+        }
+      }
+    }
+    self.morphball_failsafe = self.predict_morphball_failsafe(ctx);
+
     // --- CPU geometry into the immediate buffers ---
     self.render_buff.clear();
     self.translucent_render_buff.clear();
@@ -446,6 +484,23 @@ impl WorldRenderer {
           self.game_cam.transform,
           self.cam_line_length,
         ));
+    }
+
+    // Morph-ball failsafe pull-back spline: red when unmorphing here would trip
+    // the failsafe (cinematic skipped), green when clear.
+    if let Some(fs) = &self.morphball_failsafe {
+      let color = if fs.would_trigger {
+        [1.0, 0.25, 0.1, 1.0]
+      } else {
+        [0.2, 1.0, 0.35, 1.0]
+      };
+      let line = fs.spline_polyline(30);
+      self.render_buff.set_transform(Mat4::IDENTITY);
+      self.render_buff.set_color(color);
+      for seg in line.windows(2) {
+        self.render_buff.add_line(seg[0], seg[1]);
+      }
+      self.render_buff.set_color([1.0, 1.0, 1.0, 1.0]);
     }
 
     // --- entities + player ---
@@ -469,5 +524,69 @@ impl WorldRenderer {
         self.draw_player(&ghost, Vec4::new(0.0, 1.0, 1.0, 0.5));
       }
     }
+  }
+
+  /// Un-project `hover_px` into a world ray with the current camera and
+  /// brute-force it against every loaded area's collision mesh
+  /// (`ray_trace::raycast_mesh`), returning the nearest triangle hit.
+  fn pick_hovered_tri(&self, hover_px: Option<Vec2>) -> Option<HoveredTri> {
+    let (origin, dir) = camera::unproject_ray(
+      hover_px?,
+      self.cam_view,
+      self.cam_projection,
+      self.cam_viewport,
+    )?;
+    let ray = Ray { origin, dir };
+
+    // Follow the Culling menu: "Show Front" hides back faces from the pick too,
+    // "Show Back" hides front faces, "Show All" is two-sided.
+    let cull = match self.culling {
+      CullType::Back => ray_trace::TriCull::FrontOnly,
+      CullType::Front => ray_trace::TriCull::BackOnly,
+      CullType::None => ray_trace::TriCull::None,
+    };
+
+    let mut best: Option<HoveredTri> = None;
+    let mut best_t = f32::INFINITY;
+    for (&mrea, mesh) in &self.mesh_by_mrea {
+      // The hover overlay answers "what geometry is here", so it uses the
+      // pass-everything filter rather than any actor's `CMaterialFilter`.
+      let Some(hit) = raycast_mesh(mesh, ray, best_t, &ray_trace::pass_everything, cull) else {
+        continue;
+      };
+      if hit.t >= best_t {
+        continue;
+      }
+      let verts = mesh
+        .master_list_triangle(hit.tri_index)
+        .map(|t| t.verts)
+        .unwrap_or([hit.point; 3]);
+      best_t = hit.t;
+      best = Some(HoveredTri {
+        mrea,
+        tri_index: hit.tri_index,
+        verts,
+        point: hit.point,
+        normal: hit.normal,
+        material: hit.material,
+        t: hit.t,
+      });
+    }
+    best
+  }
+
+  /// Predict `CBallCamera::CheckFailsafeFromMorphBallState` against the live
+  /// static collision world — would unmorphing right now skip the cinematic
+  /// camera dolly? See [`crate::world::ball_camera_failsafe`].
+  ///
+  /// Only computed while the player is morphed: the `CBallCamera` object
+  /// persists when unmorphed but stops being updated, so its transform /
+  /// `lookPos` are stale and the reconstructed spline would be meaningless.
+  /// `None` also until a collision mesh exists.
+  pub fn predict_morphball_failsafe(&self, ctx: &Ctx) -> Option<FailsafePrediction> {
+    if self.mesh_by_mrea.is_empty() || !self.player.is_morphed {
+      return None;
+    }
+    predict_failsafe_from_live(ctx, self.mesh_by_mrea.values())
   }
 }

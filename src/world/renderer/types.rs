@@ -4,6 +4,8 @@
 
 use glam::{Vec2, Vec3};
 
+use crate::world::collision_mesh::ECollisionMaterial;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CullType {
   Back,
@@ -45,6 +47,24 @@ pub struct WorldInput {
   pub cam_pitch: f32,
   pub cam_yaw: f32,
   pub cam_zoom: f32,
+  /// Pointer position over the world view, in world-target physical pixels
+  /// (top-left origin, Y-down). `None` when the pointer isn't over the view.
+  /// Drives the hovered-collision-triangle pick.
+  pub hover_pos: Option<Vec2>,
+}
+
+#[derive(Clone, Copy, Debug)]
+#[allow(dead_code)]
+pub struct HoveredTri {
+  pub mrea: u32,
+  /// Index into that mesh's master triangle list.
+  pub tri_index: usize,
+  pub verts: [Vec3; 3],
+  pub point: Vec3,
+  pub normal: Vec3,
+  pub material: ECollisionMaterial,
+  /// Ray distance to the hit (world units from the camera).
+  pub t: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
