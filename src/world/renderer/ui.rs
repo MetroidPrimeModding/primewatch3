@@ -137,14 +137,9 @@ impl WorldRenderer {
     }
 
     // Instant unmorph failsafe
-    match &self.morphball_failsafe {
-      Some(p) => {
-        if p.would_trigger {
-          ui.separator();
-          ui.label("Instant unmorph likely");
-        }
-      }
-      None => {}
+     if let Some(p) = &self.morphball_failsafe && p.would_trigger {
+      ui.separator();
+      ui.label("Instant unmorph likely");
     }
   }
 
