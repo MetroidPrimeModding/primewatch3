@@ -26,6 +26,25 @@
 //!
 //! The first accepted `vec` is returned; `None` if the whole sweep fails.
 //!
+//! Gate 2 is the interesting one: the game's octree `LineTest` **leaks through
+//! geometry seams** — a segment grazing a leaf-node boundary can skip the
+//! triangles stored in the node it barely misses. That is how a reposition ends
+//! up flinging the player out of bounds: it accepts a `vec` whose straight-line
+//! path visibly crosses a wall. Our [`raycast_world`] tests every triangle the
+//! path could hit, so it never leaks. We keep both answers:
+//! [`RepositionPrediction::selected_vec`] (all three gates, our strict ray test)
+//! and [`RepositionPrediction::seam_leak_vec`] (gate 3 only — where the game's
+//! leaky test lands when no clean escape exists).
+//!
+//! Whether the leak actually fires is a centimetre-scale floating-point matter
+//! we can't reproduce from the triangle soup alone. Empirically (mem1 dumps) it
+//! tracks whether the region has real open volume, and the game's own tell for
+//! that is whether the larger `0.2`-expanded box finds a *clean*
+//! `FindNonIntersectingVector` from the same pose — [`RepositionPrediction::region_open`].
+//! No open box escape ⇒ enclosed ⇒ no leak ⇒ the failsafe just gives up
+//! ([`RepositionOutcome::NoSafeSpot`]) instead of warping
+//! ([`RepositionOutcome::SeamWarp`]).
+//!
 //! ## Deviations
 //! - **Static world only.** No dynamic-actor collision / `nearList` — same scope
 //!   cut as [`crate::world::ball_camera_failsafe`]. The ray gate collapses to a
@@ -249,7 +268,7 @@ fn world_intersects_sphere<'a>(
 // --- prediction ---------------------------------------------------------------
 
 /// The player collision primitive, already resolved to world space.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum RepositionPrim {
   /// `0.2`-expanded when it comes from the unmorphed player path.
   Aabox {
@@ -322,6 +341,10 @@ pub enum RepositionPrimSource {
   /// here, would the ball be clipped into terrain?". Identical to [`Self::Live`]
   /// once the player is already morphed.
   MorphBall,
+  /// Force the `0.2`-expanded unmorphed collision AABox regardless of morph
+  /// state (diagnostic use).
+  #[allow(dead_code)]
+  UnmorphedBox,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -342,16 +365,42 @@ pub struct RepositionAttempt {
   /// `center + vec` — the ray-gate endpoint (also where the overlay draws to).
   pub end_point: Vec3,
   pub in_area: bool,
-  /// Path `center → center + vec` is unobstructed (only meaningful when `in_area`).
+  /// Path `center → center + vec` is unobstructed (only evaluated when `in_area`).
   pub ray_clear: bool,
   /// Primitive at `orig_origin + vec` no longer intersects the world (only
-  /// evaluated when `in_area && ray_clear`).
+  /// evaluated when `in_area`).
   pub prim_clear: bool,
   pub selected: bool,
 }
 
+/// What `CGameCollision::CollisionFailsafe` would do with this primitive once
+/// its stuck-tick gate elapses.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RepositionOutcome {
+  /// Not clipped — the failsafe leaves the player alone.
+  Clear,
+  /// Clipped, and the sweep found an offset that clears both our ray gate and
+  /// the overlap test. The player is moved to `resulting_pos`.
+  Nudged,
+  /// Clipped; no offset clears our (non-leaky) ray gate, but one clears the
+  /// overlap test *and* a larger probe primitive finds real open space here
+  /// (`region_open`). The game's octree ray test leaks through the thin geometry
+  /// in between and returns that offset anyway — warping the player to
+  /// [`RepositionPrediction::destination_center`], almost always out of bounds.
+  /// This is the failure this overlay is here to catch.
+  SeamWarp,
+  /// Clipped, and either nothing in range clears the overlap test, or the region
+  /// around the primitive is enclosed (`!region_open`) so the octree ray test
+  /// won't leak. The failsafe gives up (halves the stored velocity, leaves the
+  /// player embedded); collision resolution then squeezes the primitive out over
+  /// many frames, or it just stays stuck.
+  NoSafeSpot,
+}
+
 #[derive(Clone, Debug)]
 pub struct RepositionPrediction {
+  /// The collision primitive the sweep ran against, in world space.
+  pub prim: RepositionPrim,
   /// The primitive intersects static geometry at the current pose — the game's
   /// reposition would actually move the player.
   pub is_stuck: bool,
@@ -359,8 +408,48 @@ pub struct RepositionPrediction {
   /// out from.
   pub center: Vec3,
   pub attempts: Vec<RepositionAttempt>,
+  /// First swept offset that clears all three gates (in-area, ray, overlap).
   pub selected_vec: Option<Vec3>,
+  /// First swept offset that clears the in-area + overlap gates but *not* our
+  /// ray gate — where the game's leaky octree ray test warps the player when no
+  /// clean escape exists. `Some` only when `selected_vec` is `None` *and*
+  /// `region_open`.
+  pub seam_leak_vec: Option<Vec3>,
+  /// A larger probe primitive (the `0.2`-expanded unmorphed box) finds a fully
+  /// clean escape from this pose — evidence the surrounding geometry is sparse
+  /// enough that the game's octree ray test will leak. Gates [`Self::seam_leak_vec`].
+  pub region_open: bool,
+  /// `player_pos + selected_vec`.
   pub resulting_pos: Option<Vec3>,
+}
+
+impl RepositionPrediction {
+  /// Record whether a larger probe primitive found real open space from this
+  /// pose. When `false`, the seam-leak prediction is retracted (the game's
+  /// octree ray test won't leak through enclosed geometry).
+  pub fn set_region_open(&mut self, open: bool) {
+    self.region_open = open;
+    if !open {
+      self.seam_leak_vec = None;
+    }
+  }
+
+  pub fn outcome(&self) -> RepositionOutcome {
+    match (self.is_stuck, self.selected_vec, self.seam_leak_vec) {
+      (false, _, _) => RepositionOutcome::Clear,
+      (true, Some(_), _) => RepositionOutcome::Nudged,
+      (true, None, Some(_)) => RepositionOutcome::SeamWarp,
+      (true, None, None) => RepositionOutcome::NoSafeSpot,
+    }
+  }
+
+  /// The primitive's post-reposition centre — the destination the overlay draws
+  /// the ghost primitive at. `None` for [`RepositionOutcome::Clear`] /
+  /// [`RepositionOutcome::NoSafeSpot`].
+  pub fn destination_center(&self) -> Option<Vec3> {
+    let off = self.selected_vec.or(self.seam_leak_vec)?;
+    Some(self.center + off)
+  }
 }
 
 /// `FindNonIntersectingVector`'s radius schedule: `for (i = 2; i < 1000; i += i/2)`,
@@ -393,6 +482,11 @@ const MAX_ATTEMPTS: usize = 4096;
 
 /// Pure core: port of `FindNonIntersectingVector`. `meshes` is iterated once per
 /// candidate, so it must be cheaply `Clone` (e.g. `HashMap::values()`).
+///
+/// The returned prediction assumes `region_open == true` (seam-leak surfaced
+/// whenever a ray-blocked overlap-clear candidate exists). Callers with a
+/// larger probe primitive should set [`RepositionPrediction::region_open`]
+/// afterwards via [`RepositionPrediction::set_region_open`].
 pub fn predict_reposition<'a>(
   inp: &RepositionInputs,
   meshes: impl IntoIterator<Item = &'a CollisionMesh> + Clone,
@@ -405,6 +499,12 @@ pub fn predict_reposition<'a>(
 
   let mut attempts: Vec<RepositionAttempt> = Vec::new();
   let mut selected_vec = None;
+  // First in-area candidate whose overlap test clears — regardless of the ray
+  // gate. The game's octree `LineTest` leaks through thin geometry seams, so
+  // when our stricter raycast blocks every clean escape the game still returns
+  // this one and warps the player (usually out of bounds). Superset of
+  // `selected_vec`, so it is always set by the time we break on a strict hit.
+  let mut prim_clear_vec = None;
 
   'sweep: for radius in radius_steps() {
     for dir in DIRS {
@@ -432,12 +532,10 @@ pub fn predict_reposition<'a>(
           )
           .is_none();
 
-        if ray_clear {
-          prim_clear = !inp
-            .prim
-            .translated(vec)
-            .intersects_world(meshes.clone(), filter);
-        }
+        prim_clear = !inp
+          .prim
+          .translated(vec)
+          .intersects_world(meshes.clone(), filter);
       }
 
       let selected = in_area && ray_clear && prim_clear;
@@ -450,6 +548,9 @@ pub fn predict_reposition<'a>(
         selected,
       });
 
+      if in_area && prim_clear && prim_clear_vec.is_none() {
+        prim_clear_vec = Some(vec);
+      }
       if selected {
         selected_vec = Some(vec);
         break 'sweep;
@@ -460,11 +561,22 @@ pub fn predict_reposition<'a>(
     }
   }
 
+  // Surface the seam-leak target when no strictly-clean escape was found;
+  // `set_region_open(false)` clears it later if the region turns out enclosed.
+  let seam_leak_vec = if selected_vec.is_none() {
+    prim_clear_vec
+  } else {
+    None
+  };
+
   RepositionPrediction {
+    prim: inp.prim,
     is_stuck,
     center,
     attempts,
     selected_vec,
+    seam_leak_vec,
+    region_open: true,
     resulting_pos: selected_vec.map(|v| inp.player_pos + v),
   }
 }
@@ -510,6 +622,21 @@ pub fn predict_reposition_from_live<'a>(
   let use_sphere = match prim_source {
     RepositionPrimSource::Live => morphed,
     RepositionPrimSource::MorphBall => true,
+    RepositionPrimSource::UnmorphedBox => false,
+  };
+
+  // The `0.2`-expanded unmorphed AABox — the game's failsafe primitive while
+  // unmorphed, and also our "is the region open here" probe.
+  let box_prim = {
+    let aabb = player
+      .get_member(ctx, "collisionPrimitive")?
+      .get_member(ctx, "aabb")?;
+    let local_min = read_vec3_member(ctx, &aabb, "min")?;
+    let local_max = read_vec3_member(ctx, &aabb, "max")?;
+    RepositionPrim::Aabox {
+      world_min: orig_origin + local_min - AABOX_EXPAND,
+      world_max: orig_origin + local_max + AABOX_EXPAND,
+    }
   };
 
   let prim = if use_sphere {
@@ -524,26 +651,32 @@ pub fn predict_reposition_from_live<'a>(
       radius,
     }
   } else {
-    let aabb = player
-      .get_member(ctx, "collisionPrimitive")?
-      .get_member(ctx, "aabb")?;
-    let local_min = read_vec3_member(ctx, &aabb, "min")?;
-    let local_max = read_vec3_member(ctx, &aabb, "max")?;
-    RepositionPrim::Aabox {
-      world_min: orig_origin + local_min - AABOX_EXPAND,
-      world_max: orig_origin + local_max + AABOX_EXPAND,
-    }
+    box_prim
   };
 
-  Some(predict_reposition(
-    &RepositionInputs {
-      prim,
-      orig_origin,
-      player_pos,
-    },
-    meshes,
-    area_aabbs,
-  ))
+  let inputs = |prim| RepositionInputs {
+    prim,
+    orig_origin,
+    player_pos,
+  };
+
+  let mut pred = predict_reposition(&inputs(prim), meshes.clone(), area_aabbs);
+
+  // A seam-warp only happens where the geometry is sparse enough for the game's
+  // octree ray test to leak. Proxy: the larger `0.2`-box primitive finds a
+  // strictly-clean escape from the same pose. Only worth probing when we
+  // actually have a seam-leak candidate to gate.
+  if pred.seam_leak_vec.is_some() {
+    let region_open = if prim == box_prim {
+      false // the box already failed to find a clean escape (it *is* this prediction)
+    } else {
+      predict_reposition(&inputs(box_prim), meshes, area_aabbs)
+        .selected_vec
+        .is_some()
+    };
+    pred.set_region_open(region_open);
+  }
+  Some(pred)
 }
 
 #[cfg(test)]
@@ -751,6 +884,44 @@ mod tests {
     );
   }
 
+  /// The primitive can only reach open space by passing straight through the
+  /// wall it is embedded in (every clean-ray direction is walled off or leaves
+  /// the area). The game's leaky octree ray test accepts that anyway and warps
+  /// the player out of bounds — [`RepositionOutcome::SeamWarp`].
+  #[test]
+  fn only_escape_is_through_the_wall_seam() {
+    let inp = RepositionInputs {
+      prim: RepositionPrim::Aabox {
+        world_min: Vec3::new(-0.35, -0.3, -0.3),
+        world_max: Vec3::new(0.25, 0.3, 0.3),
+      },
+      orig_origin: Vec3::ZERO,
+      player_pos: Vec3::ZERO,
+    };
+    let meshes = [wall_at_x(0.0)];
+    // Area cut off just behind the box: backing out (-x) leaves the area, and
+    // no lateral move clears the x=0 plane, so the only overlap-free offset is
+    // forward through the wall — where the escape ray is blocked.
+    let area = [Aabb {
+      min: Vec3::new(-0.2, -50.0, -50.0),
+      max: Vec3::new(50.0, 50.0, 50.0),
+    }];
+    let mut p = predict_reposition(&inp, meshes.iter(), &area);
+    assert!(p.is_stuck);
+    assert_eq!(p.selected_vec, None, "every clean-ray escape is blocked");
+    let v = p.seam_leak_vec.expect("forward-through-the-wall offset");
+    assert!(v.x > 0.0, "seam leak points through the wall, got {v:?}");
+    assert_eq!(p.outcome(), RepositionOutcome::SeamWarp);
+    assert_eq!(p.destination_center(), Some(inp.prim.center() + v));
+
+    // If a larger probe primitive also can't find open space here, the octree
+    // ray test won't leak — the seam warp is retracted.
+    p.set_region_open(false);
+    assert_eq!(p.seam_leak_vec, None);
+    assert_eq!(p.destination_center(), None);
+    assert_eq!(p.outcome(), RepositionOutcome::NoSafeSpot);
+  }
+
   #[test]
   fn out_of_area_candidates_are_never_selected() {
     let inp = RepositionInputs {
@@ -830,6 +1001,77 @@ mod tests {
         read_vec3_member(&ctx, &s, "origin"),
         s.get_member(&ctx, "radius").and_then(|m| m.read_f32(&ctx)),
       );
+    }
+  }
+
+  #[test]
+  #[ignore = "diagnostic dump; run explicitly with --nocapture"]
+  fn dump_reposition_prediction_from_live() {
+    use crate::mem::area_utils::get_areas;
+    use crate::mem::game_memory::GameMemory;
+    use crate::structs::prime_structs::GameStructs;
+    use crate::world::collision_mesh::load_mesh;
+
+    let path = std::env::var("PRIMEWATCH_MEM1_RAW")
+      .unwrap_or_else(|_| format!("{}/mem1.raw", env!("CARGO_MANIFEST_DIR")));
+    if !std::path::Path::new(&path).exists() {
+      eprintln!("skipping: {path} not found");
+      return;
+    }
+    let mut mem = GameMemory::new();
+    mem.load_from_file(&path).expect("read dump");
+    let mut structs = GameStructs::new_empty();
+    structs
+      .load_from_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/prime_defs"))
+      .expect("load prime_defs");
+    let ctx = Ctx::new(&structs, &mem);
+
+    let meshes: Vec<CollisionMesh> = get_areas(&ctx)
+      .iter()
+      .filter_map(|a| load_mesh(&ctx, a))
+      .collect();
+    let area_aabbs: Vec<Aabb> = meshes
+      .iter()
+      .map(|m| Aabb {
+        min: m.min,
+        max: m.max,
+      })
+      .collect();
+
+    let player = get_state_manager().get_member(&ctx, "player").unwrap();
+    let player_pos = read_as_transform(&ctx, &player.get_member(&ctx, "transform").unwrap())
+      .unwrap()
+      .w_axis
+      .truncate();
+    eprintln!(
+      "{path}: {} meshes, morphState={:?}",
+      meshes.len(),
+      player
+        .get_member(&ctx, "morphState")
+        .and_then(|m| m.read_u32(&ctx)),
+    );
+    eprintln!(
+      "  player_pos={player_pos:?} lastNonColliding={:?} velocity={:?} numTicksStuck={:?}",
+      player
+        .get_member(&ctx, "lastNonCollidingState")
+        .and_then(|m| read_vec3_member(&ctx, &m, "translation")),
+      read_vec3_member(&ctx, &player, "velocity"),
+      ctx.mem.read_u32(player.address + 0x24c),
+    );
+
+    for src in [
+      RepositionPrimSource::UnmorphedBox,
+      RepositionPrimSource::MorphBall,
+    ] {
+      match predict_reposition_from_live(&ctx, meshes.iter(), &area_aabbs, src) {
+        None => eprintln!("{src:?}: prediction returned None (a read failed)"),
+        Some(p) => eprintln!(
+          "{src:?}: outcome={:?} selected_vec={:?} seam_leak_vec={:?}",
+          p.outcome(),
+          p.selected_vec,
+          p.seam_leak_vec,
+        ),
+      }
     }
   }
 }

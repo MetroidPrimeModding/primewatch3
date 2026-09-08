@@ -39,7 +39,8 @@ use crate::structs::prime_structs::GameInstance;
 use crate::world::ball_camera_failsafe::{FailsafePrediction, predict_failsafe_from_live};
 use crate::world::bvh::Aabb;
 use crate::world::collision_failsafe::{
-  RepositionPrediction, RepositionPrimSource, predict_reposition_from_live,
+  RepositionOutcome, RepositionPrediction, RepositionPrim, RepositionPrimSource,
+  predict_reposition_from_live,
 };
 use crate::world::collision_mesh::CollisionMesh;
 use crate::world::ray_trace::{self, Ray, raycast_mesh};
@@ -612,24 +613,30 @@ impl WorldRenderer {
       self.draw_player(&ghost, Vec4::new(0.15, 1.0, 0.3, 0.5));
     }
 
-    // "If you morphed right here": the morph-ball sphere would be clipped and
-    // `CGameCollision::CollisionFailsafe` would try to shove it clear. Purple
-    // ghost = where the ball ends up; purple line = the escape offset it picks.
+    // "If you morphed right here": draw the morph-ball collision sphere where
+    // `CGameCollision::CollisionFailsafe` would leave it. Purple = a clean
+    // reposition; orange = the game only gets there by leaking its ray test
+    // through a wall seam, so this warps you out of bounds.
     if let Some(rf) = &self.reposition_failsafe_morph
-      && rf.is_stuck
+      && let RepositionPrim::Sphere { radius, .. } = rf.prim
+      && let Some(dest) = rf.destination_center()
+      && matches!(
+        rf.outcome(),
+        RepositionOutcome::Nudged | RepositionOutcome::SeamWarp
+      )
     {
-      if let Some(v) = rf.selected_vec {
-        self.render_buff.set_transform(Mat4::IDENTITY);
-        self.render_buff.set_color([0.7, 0.3, 1.0, 1.0]);
-        self.render_buff.add_line(rf.center, rf.center + v);
-        self.render_buff.set_color([1.0, 1.0, 1.0, 1.0]);
-      }
-      if let Some(pos) = rf.resulting_pos {
-        let mut ghost = self.player;
-        ghost.position = pos;
-        ghost.is_morphed = true;
-        self.draw_player(&ghost, Vec4::new(0.7, 0.3, 1.0, 0.5));
-      }
+      let (line_color, fill) = match rf.outcome() {
+        RepositionOutcome::SeamWarp => ([1.0, 0.55, 0.1, 1.0], Vec4::new(1.0, 0.55, 0.1, 0.35)),
+        _ => ([0.7, 0.3, 1.0, 1.0], Vec4::new(0.7, 0.3, 1.0, 0.35)),
+      };
+      self.translucent_render_buff.set_transform(Mat4::IDENTITY);
+      self
+        .translucent_render_buff
+        .add_tris(&shapes::generate_sphere(dest, radius, fill));
+      self.render_buff.set_transform(Mat4::IDENTITY);
+      self.render_buff.set_color(line_color);
+      self.render_buff.add_line(rf.center, dest);
+      self.render_buff.set_color([1.0, 1.0, 1.0, 1.0]);
     }
   }
 
