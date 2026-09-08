@@ -282,6 +282,10 @@ impl AppWindow {
                   &mut self.world.tri_picker_enabled,
                   "Collision triangle picker",
                 );
+                ui.checkbox(
+                  &mut self.world.reposition_failsafe_enabled,
+                  "Collision reposition failsafe",
+                );
                 ui.separator();
                 ui.checkbox(&mut fs.scripts.show_window, "Scripting");
                 if ui.button("Reload Scripts").clicked() {

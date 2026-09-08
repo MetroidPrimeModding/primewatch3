@@ -53,6 +53,15 @@ impl Aabb {
     (self.min + self.max) * 0.5
   }
 
+  /// Overlap test (touching counts). Both boxes must be [`valid`](Aabb::is_valid).
+  pub fn intersects(&self, other: Aabb) -> bool {
+    self.min.cmple(other.max).all() && other.min.cmple(self.max).all()
+  }
+
+  pub fn contains_point(&self, p: Vec3) -> bool {
+    self.min.cmple(p).all() && p.cmple(self.max).all()
+  }
+
   /// Slab test. `inv_dir` is the component-wise reciprocal of the (unit) ray
   /// direction. Returns the entry distance (clamped to `>= 0`, so an origin
   /// inside the box gives `0.0`) when the ray meets the box within
@@ -192,6 +201,38 @@ impl Bvh {
     }
 
     best
+  }
+
+  /// Visit every primitive whose leaf box overlaps `query`. `f(prim_id)` returns
+  /// `true` to stop the traversal early (e.g. a boolean "any overlap?" query).
+  /// No ordering guarantee. Primitive boxes are the leaf's own bounds, so `f`
+  /// still has to run the exact primitive test.
+  pub fn for_each_overlapping<F>(&self, query: Aabb, mut f: F)
+  where
+    F: FnMut(u32) -> bool,
+  {
+    if self.nodes.is_empty() {
+      return;
+    }
+    let mut stack: Vec<u32> = Vec::with_capacity(64);
+    stack.push(0);
+    while let Some(ni) = stack.pop() {
+      let node = &self.nodes[ni as usize];
+      if !node.bounds.intersects(query) {
+        continue;
+      }
+      if node.count > 0 {
+        let lo = node.first as usize;
+        for &prim in &self.prims[lo..lo + node.count as usize] {
+          if f(prim) {
+            return;
+          }
+        }
+        continue;
+      }
+      stack.push(node.first);
+      stack.push(node.right);
+    }
   }
 }
 
@@ -398,5 +439,77 @@ mod tests {
     let h = bvh.nearest_hit(o, d, 20.0, test).unwrap();
     assert_eq!(h.prim, 0);
     assert!((h.t - 10.0).abs() < 1e-4);
+  }
+
+  #[test]
+  fn for_each_overlapping_matches_brute_force() {
+    let mut rng = Rng(0xD1B54A32D192ED03);
+    let tris = scene(&mut rng, 400);
+    let aabbs: Vec<Aabb> = tris
+      .iter()
+      .map(|t| Aabb::from_points(t.iter().copied()))
+      .collect();
+    let bvh = Bvh::build(&aabbs);
+
+    for _ in 0..500 {
+      let c = rng.vec(-90.0, 90.0);
+      let h = rng.vec(1.0, 20.0).abs();
+      let query = Aabb {
+        min: c - h,
+        max: c + h,
+      };
+
+      let mut expected: Vec<u32> = aabbs
+        .iter()
+        .enumerate()
+        .filter(|(_, a)| a.is_valid() && a.intersects(query))
+        .map(|(i, _)| i as u32)
+        .collect();
+      let mut got: Vec<u32> = Vec::new();
+      bvh.for_each_overlapping(query, |p| {
+        got.push(p);
+        false
+      });
+      expected.sort_unstable();
+
+      // No false negatives: every truly-overlapping prim is visited.
+      for e in &expected {
+        assert!(got.contains(e), "prim {e} missed by for_each_overlapping");
+      }
+      // Extras are only ever prims sharing a leaf box with the query — filtering
+      // by the exact prim AABB (what a real callback does) recovers `expected`.
+      let mut refined: Vec<u32> = got
+        .iter()
+        .copied()
+        .filter(|&p| aabbs[p as usize].intersects(query))
+        .collect();
+      refined.sort_unstable();
+      refined.dedup();
+      assert_eq!(refined, expected);
+    }
+  }
+
+  #[test]
+  fn for_each_overlapping_stops_early_on_true() {
+    let aabbs: Vec<Aabb> = (0..20)
+      .map(|i| {
+        let x = i as f32;
+        Aabb {
+          min: Vec3::new(x, 0.0, 0.0),
+          max: Vec3::new(x + 0.5, 1.0, 1.0),
+        }
+      })
+      .collect();
+    let bvh = Bvh::build(&aabbs);
+    let query = Aabb {
+      min: Vec3::splat(-100.0),
+      max: Vec3::splat(100.0),
+    };
+    let mut visited = 0;
+    bvh.for_each_overlapping(query, |_| {
+      visited += 1;
+      true
+    });
+    assert_eq!(visited, 1);
   }
 }

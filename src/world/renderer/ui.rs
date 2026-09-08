@@ -137,9 +137,33 @@ impl WorldRenderer {
     }
 
     // Instant unmorph failsafe
-     if let Some(p) = &self.morphball_failsafe && p.would_trigger {
+    if let Some(p) = &self.morphball_failsafe
+      && p.would_trigger
+    {
       ui.separator();
       ui.label("Instant unmorph likely");
+    }
+
+    // Collision reposition failsafe
+    if let Some(rf) = &self.reposition_failsafe {
+      ui.separator();
+      ui.label(if rf.is_stuck {
+        "Reposition: player stuck"
+      } else {
+        "Reposition: clear"
+      });
+      if let Some(v) = rf.selected_vec {
+        ui.label(format!(
+          "  push ({:.3}, {:.3}, {:.3})  |{:.3}|",
+          v.x,
+          v.y,
+          v.z,
+          v.length()
+        ));
+      } else {
+        ui.label("  no escape vector found");
+      }
+      ui.label(format!("  {} candidates tried", rf.attempts.len()));
     }
   }
 
