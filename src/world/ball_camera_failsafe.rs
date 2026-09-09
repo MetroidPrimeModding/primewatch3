@@ -1,17 +1,17 @@
 //! Predicts `CBallCamera::CheckFailsafeFromMorphBallState`
-//! (metaforce `Runtime/Camera/CBallCamera.cpp:1547`) against the live static
-//! collision world.
+//! (prime-decomp `src/MetroidPrime/Cameras/CBallCamera.cpp:2680`) against the
+//! live static collision world.
 //!
 //! The game runs this the instant you unmorph. `CBallCamera::TransitionFromMorphBallState`
-//! (`CBallCamera.cpp:2005`) builds a 4-point Bézier "pull-back" spline from the
-//! current camera position out to the player's eye, then
+//! (`CBallCameraFailsafeState.cpp:68`) builds a 4-point Bézier "pull-back" spline
+//! from the current camera position out to the player's eye, then
 //! `CheckFailsafeFromMorphBallState` samples that spline in 6 segments and casts
 //! a ray forward and backward along each. If any segment's ray-entry and
 //! ray-exit points are more than `0.3` apart — i.e. the spline passes through a
 //! meaningful slab of solid geometry — it returns `false`, and the caller
-//! (`CPlayer::TransitionFromMorphBallState`, `CPlayer.cpp:460`) snaps the
-//! transition filter and calls `LeaveMorphBallState` immediately instead of
-//! playing the cinematic camera dolly.
+//! (`CPlayer::TransitionFromMorphBallState`, `CPlayerDynamics.cpp:1393`; snap at
+//! `:1495-1499`) forces `x824_transitionFilterTimer` to `0.95` and calls
+//! `LeaveMorphBallState` immediately instead of playing the cinematic camera dolly.
 //!
 //! **"The failsafe will trigger" == this function returns `false`.**
 //! [`FailsafePrediction::would_trigger`] is that inverted sense.
@@ -23,7 +23,7 @@
 //! the brute-force static cast in [`crate::world::ray_trace`]. No dynamic-actor
 //! schema or collision-primitive work is needed here.
 //!
-//! ## Deviation: `CheckTransitionLineOfSight` (`CBallCamera.cpp:1967`)
+//! ## Deviation: `CheckTransitionLineOfSight` (`CBallCameraFailsafeState.cpp:15`)
 //! The real code pulls the middle spline control point in toward the eye when a
 //! **moving `0.6` sphere** swept from `eyePos` to `behindPos` hits world
 //! geometry (`CGameCollision::DetectCollision_Cached_Moving`, plus an area
@@ -54,6 +54,12 @@ fn read_vec3_member(ctx: &Ctx, parent: &GameInstance, name: &str) -> Option<Vec3
   read_as_vec3(ctx, &parent.get_member(ctx, name)?)
 }
 
+/// `kLineOfSightFilter` (`CBallCamera.cpp:34`), also used verbatim by
+/// `CheckTransitionLineOfSight`: `MakeIncludeExclude({Solid}, {ProjectilePassthrough,
+/// Player, Character, CameraPassthrough})`. `Player` / `Character` are
+/// `EMaterialTypes` that only tag dynamic collision actors — they have no
+/// `CAreaOctTree` surface bit, and this sweep hits only the static mesh (empty
+/// `nearList`), so the two remaining exclusions are the whole filter here.
 pub fn ball_camera_filter(m: ECollisionMaterial) -> bool {
   m.contains(ECollisionMaterial::SOLID)
     && !m.contains(ECollisionMaterial::SHOOT_THRU) // EMaterialTypes::ProjectilePassthrough
@@ -70,11 +76,11 @@ fn bezier_point(a: Vec3, b: Vec3, c: Vec3, d: Vec3, t: f32) -> Vec3 {
   q0 * omt + q1 * t
 }
 
-/// `CBallCamera::GetFailsafeSplinePoint` (`CBallCamera.cpp:1537`) for the
-/// 4-control-point case the morph-ball transition always uses: `points.size() - 3
-/// == 1`, so `t` is not remapped and `baseIdx` stays `0`, leaving a plain cubic
-/// Bézier over all four points. `t` is passed unclamped by the game but only
-/// ever in `[0, 1]` here.
+/// `CBallCamera::GetFailsafeBezierPoint` (`CBallCameraFailsafeState.cpp:57`) for
+/// the 4-control-point case the morph-ball transition always uses: `points.size()
+/// - 3 == 1`, so `t` is not remapped and `baseIdx` stays `0`, leaving a plain
+/// cubic Bézier over all four points (`CMath::GetBezierPoint`, nested-`Lerp` de
+/// Casteljau). `t` is passed unclamped by the game but only ever in `[0, 1]` here.
 pub fn failsafe_spline_point(p: &[Vec3; 4], t: f32) -> Vec3 {
   bezier_point(p[0], p[1], p[2], p[3], t)
 }
@@ -117,8 +123,8 @@ impl FailsafePrediction {
 }
 
 const SEGMENTS: u32 = 6;
-/// `CheckTransitionLineOfSight`'s `colRadius` (`CBallCamera.cpp:2014`) — kept for
-/// the behind-point placement math, not (yet) as a sphere radius.
+/// `CheckTransitionLineOfSight`'s `colRadius` (`CBallCameraFailsafeState.cpp:78`) —
+/// kept for the behind-point placement math, not (yet) as a sphere radius.
 const LOS_COL_RADIUS: f32 = 0.6;
 
 /// Pure core: reconstruct the spline from [`FailsafeInputs`] and run the
@@ -130,14 +136,15 @@ pub fn predict_failsafe<'a>(
 ) -> FailsafePrediction {
   let filter: MaterialFilter = &ball_camera_filter;
 
-  // --- reconstruct the spline (CBallCamera::TransitionFromMorphBallState :2010-2024) ---
+  // --- reconstruct the spline (CBallCamera::TransitionFromMorphBallState, CBallCameraFailsafeState.cpp:73-90) ---
   let look_dist = (inp.look_pos - inp.cam_origin).length();
   let behind_pos = inp.player_forward * (LOS_COL_RADIUS * -look_dist) + inp.eye_pos;
 
-  // CheckTransitionLineOfSight (:1967), approximated by a single ray — see module docs.
+  // CheckTransitionLineOfSight (CBallCameraFailsafeState.cpp:15), approximated by a single ray — see module docs.
   let eye_to_behind = behind_pos - inp.eye_pos;
   let mag = eye_to_behind.length();
-  let mid = if mag > 1.0e-6 {
+  // CBallCameraFailsafeState.cpp:23 — `deltaMag > FLT_EPSILON * 10.f`.
+  let mid = if mag > f32::EPSILON * 10.0 {
     let dir = eye_to_behind / mag;
     match raycast_world(
       meshes.clone(),
@@ -158,7 +165,7 @@ pub fn predict_failsafe<'a>(
 
   let pts = [inp.cam_origin, mid, mid, inp.eye_pos];
 
-  // --- the 6-segment sweep (CheckFailsafeFromMorphBallState :1553-1580) ---
+  // --- the 6-segment sweep (CheckFailsafeFromMorphBallState, CBallCamera.cpp:2687-2722) ---
   let mut worst_separation = 0.0_f32;
   let mut obstructed_segments = 0u8;
 
@@ -193,10 +200,10 @@ pub fn predict_failsafe<'a>(
 
     let Some(res_a) = res_a else { continue };
 
-    // The C++ reads `resB.GetPoint()` unconditionally; a default / invalid
-    // CRayCastResult has `point == (0,0,0)`, so an invalid `res_b` produces a
-    // separation of `|res_a.point|` (huge, in world coords) and trips the
-    // failsafe. Faithful port of that quirk.
+    // The C++ reads `resB.GetPoint()` unconditionally (CBallCamera.cpp:2711); a
+    // default / invalid CRayCastResult has `point == (0,0,0)`, so an invalid
+    // `res_b` produces a separation of `|res_a.point|` (huge, in world coords)
+    // and trips the failsafe. Faithful port of that quirk.
     let b_point = res_b.map(|h| h.point).unwrap_or(Vec3::ZERO);
     let mut separation = res_a.point - b_point;
     if separation.length() < 0.00001 {
@@ -222,16 +229,25 @@ pub fn predict_failsafe<'a>(
 /// direction + eye height. Returns `None` if any required read fails (e.g. no
 /// `CBallCamera` yet, schema miss).
 ///
-/// **`player_forward` is `x518_leaveMorphDir`, not the player transform basis.**
-/// While morphed the player's `x34_transform` *rolls with the ball*, so its
-/// `GetForward()` tumbles as you move. The game reconstructs the spline in
-/// `CBallCamera::TransitionFromMorphBallState` only *after*
-/// `CPlayer::LeaveMorphBallState` has re-set the transform to
-/// `LookAt(pos, pos + f31)` where `f31 == x518_leaveMorphDir` (`CPlayer.cpp:397,
-/// 420`) — a flattened, normalised travel direction maintained by
-/// `CalculatePlayerMovementDirection`. So we use that direction directly.
-/// Fallbacks: `x50c_moveDir`, then flattened `player_pos - cam_origin`
-/// (`camToPlayer`, `CPlayer.cpp:392`).
+/// **`player_forward` reproduces `CPlayer::TransitionFromMorphBallState`'s
+/// `direction`** (`CPlayerDynamics.cpp:1420-1463`), *not* the player transform
+/// basis. While morphed, `x34_transform` rolls with the ball, so its
+/// `GetForward()` tumbles as you move. `CBallCamera::TransitionFromMorphBallState`
+/// reads `playerXf.GetForward()`, but only *after*
+/// `CPlayer::TransitionFromMorphBallState` (`CPlayerDynamics.cpp:1393`) has re-set
+/// the transform to `LookAt(pos, pos + direction)` (`CPlayerDynamics.cpp:1455`).
+/// That `direction` is:
+/// - `x518_leaveMorphDir` — a flattened, normalised travel direction snapshotted
+///   by `CalculateLeaveMorphBallDirection` (`CPlayerDynamics.cpp:808`);
+/// - overridden by `camToPlayer` (flattened `player_pos - cam_origin`,
+///   `CPlayerDynamics.cpp:1420`) when `flat(x500_lookDir)` is near-vertical
+///   (`|·| < 0.1`, `:1427`) or when `direction` sits >150° from `camToPlayer`
+///   (`acosf(Limit(Dot, 1)) >= M_PIF / 1.2`, `:1453`);
+/// - flattened `x50c_moveDir` (else `+Y`) when `camToPlayer` itself is degenerate
+///   (`CreateTransformFromMovementDirection`, `CPlayerDynamics.cpp:873`).
+///
+/// Not modelled (item 4): the `outOfBallLookAtHint` / `outOfBallLookAtHintActor`
+/// overrides (`:1430`, `:1440`) and the too-close-actor post-override (`:1464`).
 pub fn predict_failsafe_from_live<'a>(
   ctx: &Ctx,
   meshes: impl IntoIterator<Item = &'a CollisionMesh> + Clone,
@@ -249,12 +265,29 @@ pub fn predict_failsafe_from_live<'a>(
   let player_xf = read_as_transform(ctx, &player.get_member(ctx, "transform")?)?;
   let player_pos = player_xf.w_axis.truncate();
 
-  // Flatten to the horizontal plane + normalise; `None` if degenerate.
-  let flat_dir = |v: Vec3| Vec3::new(v.x, v.y, 0.0).try_normalize();
-  let player_forward = read_vec3_member(ctx, &player, "leaveMorphDir")
-    .and_then(flat_dir)
-    .or_else(|| read_vec3_member(ctx, &player, "moveDir").and_then(flat_dir))
-    .or_else(|| flat_dir(player_pos - cam_origin))?;
+  let flat = |v: Vec3| Vec3::new(v.x, v.y, 0.0);
+  let flat_norm = |v: Vec3| flat(v).try_normalize();
+  let cam_to_player = flat_norm(player_pos - cam_origin);
+  let player_forward = match cam_to_player {
+    // `camToPlayer` degenerate (camera directly above the player):
+    // `CreateTransformFromMovementDirection` — flattened `x50c_moveDir`, else `+Y`.
+    None => read_vec3_member(ctx, &player, "moveDir")
+      .and_then(flat_norm)
+      .unwrap_or(Vec3::Y),
+    Some(c2p) => {
+      let mut dir = read_vec3_member(ctx, &player, "leaveMorphDir")
+        .and_then(flat_norm)
+        .unwrap_or(c2p);
+      let look_flat = read_vec3_member(ctx, &player, "lookDir").map(flat);
+      if look_flat.is_none_or(|l| !l.is_finite() || l.length() < 0.1) {
+        dir = c2p;
+      }
+      if dir.dot(c2p).clamp(-1.0, 1.0).acos() >= std::f32::consts::PI / 1.2 {
+        dir = c2p;
+      }
+      dir
+    }
+  };
 
   let eye_height = player_eye_height(ctx, &player)?;
   let eye_pos = player_pos + Vec3::new(0.0, 0.0, eye_height);
@@ -270,8 +303,9 @@ pub fn predict_failsafe_from_live<'a>(
   ))
 }
 
-/// `CPlayer::GetEyeHeight` (`CPlayer.cpp:5084`):
-/// `x9c8_eyeZBias + (x2d8_fpBounds.max.z - g_tweakPlayer->GetEyeOffset())`.
+/// `CPlayer::GetEyeHeight` (`CPlayerDynamics.cpp:1025`):
+/// `x9c8_eyeZBias + (x2d8_fpBounds.GetPointD().GetZ() - g_tweakPlayer->GetEyeOffset())`.
+/// `CAABox::GetPointD()` is `(min.x, min.y, max.z)`, hence `fpBounds.max.z` here.
 fn player_eye_height(ctx: &Ctx, player: &GameInstance) -> Option<f32> {
   let eye_z_bias = player.get_member(ctx, "eyeZBias")?.read_f32(ctx)?;
   let fp_bounds_max_z = player
