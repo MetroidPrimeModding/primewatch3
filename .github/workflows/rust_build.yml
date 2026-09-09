@@ -69,6 +69,7 @@ jobs:
         Copy-Item -Recurse prime_defs primewatch3/
         Copy-Item -Recurse scripts primewatch3/
         Copy-Item packaging/primewatch_scripts.ron primewatch3/
+        Copy-Item README.md primewatch3/
         Copy-Item "target/release/${{ matrix.bin }}" primewatch3/
         Compress-Archive -Path primewatch3 -DestinationPath "${{ matrix.archive }}"
 
@@ -81,6 +82,7 @@ jobs:
         cp -r prime_defs primewatch3/
         cp -r scripts primewatch3/
         cp packaging/primewatch_scripts.ron primewatch3/
+        cp README.md primewatch3/
         cp "target/release/${{ matrix.bin }}" primewatch3/
         tar -czf "${{ matrix.archive }}" primewatch3
 
