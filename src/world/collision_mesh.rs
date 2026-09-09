@@ -1,10 +1,11 @@
 //! The memory -> struct parse ([`load_mesh`]) and the triangle-soup build
 //! ([`CollisionMesh::build_vertices`]). No GPU code lives here.
 
-use glam::Vec3;
+use glam::{Vec3, Vec4};
 
 use crate::ctx::Ctx;
 use crate::gl::Vert;
+use crate::gl::shapes;
 use crate::structs::prime_structs::GameInstance;
 use crate::world::bvh::{Aabb, Bvh};
 
@@ -360,16 +361,7 @@ impl CollisionMesh {
 
       let n = (v1 - v3).cross(v1 - v2).normalize();
 
-      // this is how the game calculates standability
-      // (C++ has a redundant `|| n.z > 0.85` on all three arms; preserved verbatim)
-      let mut color = [0.2f32, 0.2, 0.2, 1.0];
-      if poly_flags.contains(ECollisionMaterial::FLOOR) || n.z > 0.85 {
-        color = [0.4, 0.6, 0.4, 1.0];
-      } else if poly_flags.contains(ECollisionMaterial::WALL) || n.z > 0.85 {
-        color = [0.6, 0.6, 0.6, 1.0];
-      } else if poly_flags.contains(ECollisionMaterial::CEILING) || n.z > 0.85 {
-        color = [0.8, 0.5, 0.5, 1.0];
-      }
+      let color = surface_color(poly_flags, n);
 
       verts.push(Vert {
         pos: v1.to_array(),
@@ -393,6 +385,54 @@ impl CollisionMesh {
 
     self.verts = verts;
   }
+}
+
+/// The game's standability tint for a collision surface, from its material
+/// flags and world-space normal — `WorldRenderer::loadMesh`'s colour ladder.
+///
+/// The redundant `|| normal.z > 0.85` on all three arms is a verbatim C++
+/// quirk: in practice only a `FLOOR` flag (or a steeply upward normal, which
+/// takes the first arm) ever leaves the default grey, so walls/ceilings show
+/// grey unless their flag is set.
+pub fn surface_color(flags: ECollisionMaterial, normal: Vec3) -> [f32; 4] {
+  if flags.contains(ECollisionMaterial::FLOOR) || normal.z > 0.85 {
+    [0.4, 0.6, 0.4, 1.0]
+  } else if flags.contains(ECollisionMaterial::WALL) || normal.z > 0.85 {
+    [0.6, 0.6, 0.6, 1.0]
+  } else if flags.contains(ECollisionMaterial::CEILING) || normal.z > 0.85 {
+    [0.8, 0.5, 0.5, 1.0]
+  } else {
+    [0.2, 0.2, 0.2, 1.0]
+  }
+}
+
+/// Standability tint from an axis-aligned face normal alone, for geometry that
+/// carries no material flags (a `CPhysicsActor`'s AABox primitive).
+///
+/// [`surface_color`] can't be used here: its verbatim `|| n.z > 0.85` quirk
+/// makes the wall and ceiling arms unreachable without a flag, so every
+/// non-top face falls through to the near-black `0.2` default. This picks the
+/// same three tints geometrically instead, so side faces read as walls.
+fn box_face_color(normal: Vec3) -> [f32; 4] {
+  if normal.z > 0.85 {
+    [0.4, 0.6, 0.4, 1.0] // floor
+  } else if normal.z < -0.85 {
+    [0.8, 0.5, 0.5, 1.0] // ceiling
+  } else {
+    [0.6, 0.6, 0.6, 1.0] // wall
+  }
+}
+
+/// A collision-styled axis-aligned box: [`shapes::generate_cube`] geometry
+/// (per-face normals + barycentric wireframe intact) recoloured face-by-face
+/// with [`box_face_color`] — so a `CPhysicsActor`'s AABox collision primitive
+/// draws with the same look as the area mesh.
+pub fn collision_box_verts(min: Vec3, max: Vec3) -> Vec<Vert> {
+  let mut verts = shapes::generate_cube(min, max, Vec4::ONE);
+  for v in &mut verts {
+    v.color = box_face_color(Vec3::from_array(v.normal));
+  }
+  verts
 }
 
 #[cfg(test)]
@@ -419,6 +459,52 @@ mod tests {
 
   fn norm_len(v: [f32; 3]) -> f32 {
     (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt()
+  }
+
+  #[test]
+  fn surface_color_arms() {
+    // Steep upward normal -> floor tint via the first arm, no flag needed.
+    assert_eq!(
+      surface_color(ECollisionMaterial(0), Vec3::Z),
+      [0.4, 0.6, 0.4, 1.0]
+    );
+    // Flat normal, no flags -> default grey. The verbatim `|| n.z > 0.85` quirk
+    // makes the WALL / CEILING arms unreachable without their flag.
+    assert_eq!(
+      surface_color(ECollisionMaterial(0), Vec3::X),
+      [0.2, 0.2, 0.2, 1.0]
+    );
+    assert_eq!(
+      surface_color(ECollisionMaterial::WALL, Vec3::X),
+      [0.6, 0.6, 0.6, 1.0]
+    );
+    assert_eq!(
+      surface_color(ECollisionMaterial::CEILING, Vec3::NEG_Z),
+      [0.8, 0.5, 0.5, 1.0]
+    );
+  }
+
+  #[test]
+  fn collision_box_verts_tints_each_face_by_orientation() {
+    let verts = collision_box_verts(Vec3::splat(-1.0), Vec3::splat(1.0));
+    assert_eq!(verts.len(), 36);
+    for v in &verts {
+      let want = if v.normal[2] > 0.85 {
+        [0.4, 0.6, 0.4, 1.0] // floor
+      } else if v.normal[2] < -0.85 {
+        [0.8, 0.5, 0.5, 1.0] // ceiling
+      } else {
+        [0.6, 0.6, 0.6, 1.0] // wall — never the near-black default
+      };
+      assert_eq!(v.color, want);
+    }
+    // 6 verts up, 6 down, 24 on the four side faces.
+    assert_eq!(verts.iter().filter(|v| v.normal[2] > 0.85).count(), 6);
+    assert_eq!(verts.iter().filter(|v| v.normal[2] < -0.85).count(), 6);
+    assert_eq!(
+      verts.iter().filter(|v| v.normal[2].abs() <= 0.85).count(),
+      24
+    );
   }
 
   #[test]

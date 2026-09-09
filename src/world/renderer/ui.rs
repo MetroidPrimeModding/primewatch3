@@ -395,6 +395,10 @@ pub(crate) fn render_menu_bar(
     ui.checkbox(&mut actors.render_ai, "Render AI");
     ui.checkbox(&mut actors.render_pickups, "Render Pickups");
     ui.checkbox(&mut actors.render_physics_actors, "Render physics actors");
+    ui.checkbox(
+      &mut actors.render_physics_collision,
+      "Render physics collision",
+    );
     ui.checkbox(&mut actors.render_actors, "Render actors");
     ui.checkbox(&mut actors.render_all_actors, "Render all actors");
   });

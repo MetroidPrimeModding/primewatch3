@@ -4,6 +4,7 @@ use crate::ctx::Ctx;
 use crate::gl::shapes;
 use crate::mem::math_utils::read_as_transform;
 use crate::structs::prime_structs::GameInstance;
+use crate::world::collision_mesh::collision_box_verts;
 
 use super::super::WorldRenderer;
 use super::{is_degenerate_bbox, read_vec3_at};
@@ -30,6 +31,55 @@ pub(crate) fn physics_actor_bbox(
 }
 
 impl WorldRenderer {
+  /// The actor's collision primitive (`x1c0_collisionPrimitive`, a
+  /// `CCollidableAABox`) drawn as opaque, standability-tinted, wireframed
+  /// geometry — the same look as the area collision mesh — so physics actors
+  /// read as solid collision rather than a translucent debug box.
+  ///
+  /// World box = the local primitive AABB shifted by `translation +
+  /// primitiveOffset`; `primitiveOffset` (`CPhysicsActor::GetPrimitiveTransform`)
+  /// is `Zero` for most actors. Draws nothing when the primitive is degenerate
+  /// (the actor has no real collision hull).
+  ///
+  /// Subclasses with a richer representation (e.g. `CScriptPlatform`'s
+  /// `COBBTree`) draw that instead and skip this.
+  pub(super) fn draw_physics_actor_collision(
+    &mut self,
+    ctx: &Ctx,
+    entity: &GameInstance,
+    is_highlighted: bool,
+  ) {
+    let Some(transform) = entity
+      .get_member(ctx, "transform")
+      .and_then(|m| read_as_transform(ctx, &m))
+    else {
+      return;
+    };
+    let pos = transform.w_axis.truncate();
+    let offset = read_vec3_at(ctx, entity, &["primitiveOffset"]).unwrap_or(Vec3::ZERO);
+
+    let Some(cp_min) = read_vec3_at(ctx, entity, &["collisionPrimitive", "aabb", "min"]) else {
+      return;
+    };
+    let Some(cp_max) = read_vec3_at(ctx, entity, &["collisionPrimitive", "aabb", "max"]) else {
+      return;
+    };
+    let (min, max) = (pos + offset + cp_min, pos + offset + cp_max);
+    if is_degenerate_bbox(min, max) {
+      return;
+    }
+
+    self.render_buff.set_transform(Mat4::IDENTITY);
+    self.render_buff.add_tris(&collision_box_verts(min, max));
+    if is_highlighted {
+      self.render_buff.add_lines(&shapes::generate_cube_lines(
+        min,
+        max,
+        Vec4::new(1.0, 0.0, 0.0, 1.0),
+      ));
+    }
+  }
+
   /// `WorldRenderer::drawPhysicsActor`.
   pub(super) fn draw_physics_actor(
     &mut self,

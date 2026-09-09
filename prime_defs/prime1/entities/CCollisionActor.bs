@@ -32,7 +32,7 @@ struct CCollidableOBBTreeGroup: CCollisionPrimitive {
 }
 
 struct CCollidableOBBTreeGroupContainer {
-    rstl::vector<*COBBTree> trees 0x4
+    rstl::vector<rstl::autoptr<COBBTree>> trees 0x4
     rstl::vector<CAABB> aabbs 0x14
     CAABB aabb 0x20
 }
@@ -45,19 +45,15 @@ struct COBBTree {
   *CNode root 0x88
 }
 
+// decomp `COBBTree::SIndexData` (0x70): seven `rstl::vector`s at 0x0, 0x10 …
+// 0x60. `rstl::vector` here points its member offset at `count` (allocator + 4),
+// so each offset below is the decomp field offset + 4.
 struct SIndexData {
-  rstl::vector<u32> materials 0x0
-  rstl::vector<u8> vertMaterials 0x10
-  rstl::vector<u8> edgeMaterials 0x20
-  rstl::vector<u8> surfaceMaterials 0x30
-  rstl::vector<CCollisionEdge> edges 0x40
-  rstl::vector<u16> surfaceIndices 0x50
-  rstl::vector<CVector3f> vertices 0x60
-  //*u32 materials 0x4
-  //*u8 vertMaterials 0x8
-  //*u8 edgeMaterials 0xC
-  //*u8 surfaceMaterials 0x10
-  //*CCollisionEdge edges 0x14
-  //*u16 surfaceIndices 0x18
-  //*CVector3f vertices 0x1C
+  rstl::vector<u32> materials 0x4
+  rstl::vector<u8> vertMaterials 0x14
+  rstl::vector<u8> edgeMaterials 0x24
+  rstl::vector<u8> surfaceMaterials 0x34
+  rstl::vector<CCollisionEdge> edges 0x44
+  rstl::vector<u16> surfaceIndices 0x54
+  rstl::vector<CVector3f> vertices 0x64
 }

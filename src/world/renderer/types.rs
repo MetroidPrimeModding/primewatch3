@@ -122,6 +122,10 @@ pub struct ActorRenderConfig {
   pub render_pickups: bool,
   pub render_collision_actors: bool,
   pub render_physics_actors: bool,
+  /// `CPhysicsActor` collision, drawn like the area mesh: the `CCollidableAABox`
+  /// primitive for a plain actor, or a subclass's richer hull where there is one
+  /// (`CScriptPlatform`'s `COBBTree`).
+  pub render_physics_collision: bool,
   pub render_actors: bool,
   pub render_all_actors: bool,
 }
@@ -134,6 +138,7 @@ impl Default for ActorRenderConfig {
       render_pickups: true,
       render_collision_actors: true,
       render_physics_actors: false,
+      render_physics_collision: true,
       render_actors: false,
       render_all_actors: false,
     }

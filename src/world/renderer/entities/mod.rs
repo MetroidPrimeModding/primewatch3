@@ -13,6 +13,7 @@ mod collision_actor;
 mod dock;
 mod physics_actor;
 mod pickup;
+mod platform;
 mod player;
 mod power_bomb;
 mod projectile;
@@ -129,7 +130,20 @@ impl WorldRenderer {
         if self.actor_render_config.render_ai {
           self.draw_ai(ctx, entity, is_highlighted);
         }
+      } else if entity.extends_class(ctx, "CScriptPlatform") {
+        if self.actor_render_config.render_physics_collision
+          && !self.draw_platform_collision(ctx, entity, is_highlighted)
+        {
+          // No `COBBTree` (simple platform) — show the AABox primitive instead.
+          self.draw_physics_actor_collision(ctx, entity, is_highlighted);
+        }
+        if self.actor_render_config.render_physics_actors {
+          self.draw_physics_actor(ctx, entity, is_highlighted);
+        }
       } else if entity.extends_class(ctx, "CPhysicsActor") {
+        if self.actor_render_config.render_physics_collision {
+          self.draw_physics_actor_collision(ctx, entity, is_highlighted);
+        }
         if self.actor_render_config.render_physics_actors {
           self.draw_physics_actor(ctx, entity, is_highlighted);
         }

@@ -7,5 +7,6 @@ pub mod ball_camera_failsafe;
 pub mod bvh;
 pub mod collision_failsafe;
 pub mod collision_mesh;
+pub mod platform_collision;
 pub mod ray_trace;
 pub mod renderer;
