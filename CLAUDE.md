@@ -21,7 +21,18 @@ that live memory.
 | Live handles | `src/ctx.rs`, `GameInstance` | `Ctx<'a>` bundles `&GameStructs` / `&GameMemory`; `GameInstance` is the (address, type_name) accessor. |
 | Inspector / UI | `src/inspector.rs`, `src/app/`, `src/ui_state.rs` | egui windows, input, scripting (`src/app/scripting/`, rhai). |
 | 3D world view | `src/world/`, `src/gl/` | wgpu renderer, BVH, cameras. |
-| Reference decomp | `../prime-decomp`, `../metaforce` | Real struct offsets and behavior; trust `prime-decomp` for layout. |
+| Reference decomp | `../prime-decomp`, `../metaforce` | See "Reference decomps" below. |
+
+## Reference decomps
+
+If either is not available, and you need to use them, prompt the user to clone them for reference.
+
+- `../prime-decomp` is a **matching** decomp (compiles to byte-identical game code).
+  Its struct layouts and offsets are authoritative — prefer it as the reference
+  whenever it has what's needed.
+- `../metaforce` is a **non-matching** decomp (readable reimplementation, layout not
+  guaranteed to match). Use it only when `prime-decomp` doesn't cover the code or
+  behavior in question.
 
 ## Build & check
 
