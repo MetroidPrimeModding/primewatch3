@@ -313,7 +313,8 @@ impl GameInstance {
   pub fn get_member(&self, ctx: &Ctx, name: &str) -> Option<GameInstance> {
     let struct_ = self.get_type(ctx)?;
     let member = struct_.get_member_by_name(ctx.structs, name)?;
-    let mut addr = self.address + member.offset as u32;
+    // wrapping add to prevent panics in case of overflow - which can happen in case of a bad read
+    let mut addr = self.address.wrapping_add(member.offset as u32);
     if member.pointer {
       addr = ctx.mem.read_u32(addr)?
     }

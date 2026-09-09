@@ -1,30 +1,34 @@
+// Layouts verified against ../prime-decomp (include/rstl/*.hpp).
+//
+// `rstl::vector` in the game is 4 words: an empty `x0_allocator`, then
+// `x4_count`, `x8_capacity`, `xc_items`. `rstl::vector` here points its member
+// offset at `count` (the containing struct's offsets already skip the 4-byte
+// allocator); `rstl::vector2` points at the allocator and spells all 4 words.
 struct rstl::vector<T> {
-    u32 end
-    u32 size
+    u32 count
+    u32 capacity
     *T first
 }
 
 struct rstl::vector2<T> {
-    u32 start 0x0
-    u32 len 0x4
-    u32 end 0x4
-    u32 max 0x8
-    u32 size 0x8
+    u32 allocator 0x0
+    u32 count 0x4
+    u32 capacity 0x8
     *T first 0xC
 }
 
 
 // TODO: maybe set the size of this properly later
+// decomp: `int x0_count; uchar x4_data[N * sizeof(T)]` (inline storage).
 struct rstl::reserved_vector<T> {
-    u32 size
+    u32 count
     *T first
 }
 
+// decomp `rstl::auto_ptr`: `mutable bool x0_has; T* x4_item`.
 struct rstl::autoptr<T> {
     size 0x8
-    u32 unknown 0x0
-    u8 referenced 0x0
-    // u32 data 0x4
+    u8 owned 0x0
     *T value 0x4
 }
 
@@ -41,10 +45,13 @@ struct rstl::CRefData<T> {
   u32 refCount
 }
 
+// decomp `rstl::red_black_tree`: `x4_count`, then an `x8_header` of
+// `{ node* mLeftmost; node* mRightmost; node* mRootNode }`. Member offset
+// points at `count`.
 struct rstl::rbtree<T> {
-    u32 size 0x0
-    *rstl::rbtree_node<T> first 0x4
-    *rstl::rbtree_node<T> last 0x8
+    u32 count 0x0
+    *rstl::rbtree_node<T> leftmost 0x4
+    *rstl::rbtree_node<T> rightmost 0x8
     *rstl::rbtree_node<T> root 0xC
 }
 
@@ -52,17 +59,19 @@ struct rstl::rbtree_node<T> {
     *rstl::rbtree_node<T> left 0x0
     *rstl::rbtree_node<T> right 0x4
     *rstl::rbtree_node<T> parent 0x8
-    u32 redOrBlack 0xC
+    u32 color 0xC
     T data 0x10
 }
 
 struct rstl::pair<A, B> {
-    A a
-    B b
+    A first
+    B second
 }
 
+// decomp `rstl::list`: `x0_allocator`, `x4_start`, `x8_end`, `xc_empty_prev`,
+// `x10_empty_next`, `x14_count`. Member offset points at `x8_end`; the sentinel
+// node lives there, so its `next`/`prev` fields are the first/last real nodes.
 struct rstl::list<T> {
-    //u32 unknown 0x0
     *rstl::list_node<T> end 0x0
     *rstl::list_node<T> last 0x4
     *rstl::list_node<T> first 0x8

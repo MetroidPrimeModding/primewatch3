@@ -1,3 +1,7 @@
 struct CScriptPlatform: CPhysicsActor {
     vtable 0x803df220
+
+    CHealthInfo initialHealth 0x28C
+    CHealthInfo health 0x294
+    
 }

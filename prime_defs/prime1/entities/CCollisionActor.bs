@@ -8,18 +8,26 @@ struct CCollisionActor: CPhysicsActor {
   }
 
 struct CCollisionPrimitive {
+  vtable 0x803d97e4
+
   *u8 info 0x4
 }
 
 struct CCollidableSphere: CCollisionPrimitive {
+  vtable 0x803ecaf8
+
   CSphere sphere 0x10
 }
 
 struct CCollidableAABox: CCollisionPrimitive {
+  vtable 0x803ecad0
+
   CAABB aabb 0x10
 }
 
 struct CCollidableOBBTreeGroup: CCollisionPrimitive {
+  vtable 0x803ec470
+
   *CCollidableOBBTreeGroupContainer container 0x10
 }
 

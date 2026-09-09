@@ -11,8 +11,8 @@ const AREA_CAP: u32 = 1024;
 
 /// `g_stateManager["world"]` (auto-derefs `*CWorld`) -> `["areas"]` (the
 /// `rstl::vector<rstl::autoptr<CGameArea>>` value member at `CWorld` +0x18).
-/// `areas["end"]` is — despite the name — the element count (`rstl.bs`
-/// `rstl::vector<T> { u32 end; u32 size; *T first }`). `areas["first"]`
+/// `areas["count"]` is the element count (`rstl.bs`
+/// `rstl::vector<T> { u32 count; u32 capacity; *T first }`). `areas["first"]`
 /// auto-derefs `*T` to a handle of type `rstl::autoptr<CGameArea>`; each
 /// element is `sizeof(rstl::autoptr<T>)` = 0x8 apart, and `["value"]`
 /// auto-derefs `*CGameArea` to the area handle.
@@ -29,7 +29,7 @@ pub fn get_areas(ctx: &Ctx) -> Vec<GameInstance> {
   let Some(areas) = world.get_member(ctx, "areas") else {
     return vec![];
   };
-  let Some(end) = areas.get_member(ctx, "end").and_then(|e| e.read_u32(ctx)) else {
+  let Some(count) = areas.get_member(ctx, "count").and_then(|e| e.read_u32(ctx)) else {
     return vec![];
   };
   let Some(first) = areas.get_member(ctx, "first") else {
@@ -37,7 +37,7 @@ pub fn get_areas(ctx: &Ctx) -> Vec<GameInstance> {
   };
 
   let mut result = Vec::new();
-  for i in 0..end.min(AREA_CAP) {
+  for i in 0..count.min(AREA_CAP) {
     let item = first.element(ctx, i);
     if let Some(area) = item.get_member(ctx, "value") {
       result.push(area);

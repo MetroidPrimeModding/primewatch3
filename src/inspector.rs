@@ -366,20 +366,20 @@ impl Inspector {
     resp.header_response.on_hover_text(hover_text(inst));
   }
 
-  /// Renders an `rstl::vector`. `end` is the live count, `size` the capacity
-  /// A per-vector `InputInt` index selects the one element rendered.
+  /// Renders an `rstl::vector`. `count` is the live element count, `capacity`
+  /// the allocation. A per-vector `InputInt` index selects the one element rendered.
   fn render_vector(&self, ui: &mut egui::Ui, ctx: &Ctx, name: &str, inst: &GameInstance) {
     let resp = egui::CollapsingHeader::new(name)
       .id_salt((name, inst.address))
       .show(ui, |ui| {
-        let end = inst.member(ctx, "end").read_u32(ctx).unwrap_or(0);
-        let size = inst.member(ctx, "size").read_u32(ctx).unwrap_or(0);
-        ui.label(format!("size: {end} max size: {size}"));
+        let count = inst.member(ctx, "count").read_u32(ctx).unwrap_or(0);
+        let capacity = inst.member(ctx, "capacity").read_u32(ctx).unwrap_or(0);
+        ui.label(format!("size: {count} max size: {capacity}"));
 
         let id = ui.make_persistent_id((inst.address, "vec_index"));
         let mut index: i32 = ui.ctx().data_mut(|d| d.get_temp(id).unwrap_or(0));
-        // Clamp to a sane i32; a garbage `end` must not make `min > max` (panics).
-        let max_index = end.saturating_sub(1).min(i32::MAX as u32) as i32;
+        // Clamp to a sane i32; a garbage `count` must not make `min > max` (panics).
+        let max_index = count.saturating_sub(1).min(i32::MAX as u32) as i32;
         ui.add(egui::DragValue::new(&mut index).range(0..=max_index));
         index = index.clamp(0, max_index);
         ui.ctx().data_mut(|d| d.insert_temp(id, index));
