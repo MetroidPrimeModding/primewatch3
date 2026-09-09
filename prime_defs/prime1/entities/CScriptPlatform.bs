@@ -3,5 +3,6 @@ struct CScriptPlatform: CPhysicsActor {
 
     CHealthInfo initialHealth 0x28C
     CHealthInfo health 0x294
-    
+    rstl::optional_object<TLockedToken<CCollidableOBBTreeGroupContainer>> treeGroupContainer 0x304
+    rstl::single_ptr<CCollidableOBBTreeGroup> treeGroup 0x314
 }

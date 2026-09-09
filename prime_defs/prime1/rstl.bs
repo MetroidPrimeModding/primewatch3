@@ -32,6 +32,15 @@ struct rstl::autoptr<T> {
     *T value 0x4
 }
 
+// decomp `rstl::optional_object`: `uchar m_data[sizeof(T)]` inline storage, then
+// `bool m_valid ATTRIBUTE_ALIGN(4)`. Member offset points at the inline T. The
+// real size is `align4(sizeof(T)) + 4`; only `sizeof(T) + 1` is spelled here, so
+// give any member that follows an optional_object an explicit offset.
+struct rstl::optional_object<T> {
+    T value 0x0
+    u8 valid
+}
+
 struct rstl::rc_ptr<T> {
     *rstl::CRefData<T> ref
 }
