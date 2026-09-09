@@ -78,6 +78,9 @@ Start Dolphin, load Metroid Prime, and Prime Watch will attach on its own.
 
 ## Version History
 
+### 1.3.1
+Improved instant unmorph detection
+
 ### 1.3.0
 Add reposition failsafe detection
 
