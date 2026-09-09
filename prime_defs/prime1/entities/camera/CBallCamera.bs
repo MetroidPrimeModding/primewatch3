@@ -1,4 +1,6 @@
 struct CBallCamera: CGameCamera {
     vtable 0x803dab90
     CVector3f lookPos 0x1d8
+    u16 tooCloseActorId 0x3dc
+    f32 tooCloseActorDist 0x3e0
 }

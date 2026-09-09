@@ -44,6 +44,7 @@
 use glam::Vec3;
 
 use crate::ctx::Ctx;
+use crate::mem::game_object_utils::get_object_by_entity_id;
 use crate::mem::globals::{get_state_manager, get_tweak_player};
 use crate::mem::math_utils::{read_as_transform, read_as_vec3};
 use crate::structs::prime_structs::GameInstance;
@@ -109,6 +110,12 @@ pub struct FailsafePrediction {
   /// The reconstructed pull-back spline's 4 Bézier control points:
   /// `[camXf.origin, behindPos, behindPos, eyePos]`.
   pub spline_points: [Vec3; 4],
+  /// A `CScriptPlayerHint` look-at override (`outOfBallLookAtHint` /
+  /// `outOfBallLookAtHintActor`) is active, so the unmorph facing direction the
+  /// game will use isn't `x518_leaveMorphDir` and this prediction's
+  /// `player_forward` — hence the whole spline — may be wrong. Detection only;
+  /// the override itself is not modelled. See [`predict_failsafe_from_live`].
+  pub facing_uncertain: bool,
 }
 
 impl FailsafePrediction {
@@ -219,6 +226,7 @@ pub fn predict_failsafe<'a>(
   FailsafePrediction {
     would_trigger: obstructed_segments > 0,
     spline_points: pts,
+    facing_uncertain: false,
   }
 }
 
@@ -244,10 +252,15 @@ pub fn predict_failsafe<'a>(
 ///   (`|·| < 0.1`, `:1427`) or when `direction` sits >150° from `camToPlayer`
 ///   (`acosf(Limit(Dot, 1)) >= M_PIF / 1.2`, `:1453`);
 /// - flattened `x50c_moveDir` (else `+Y`) when `camToPlayer` itself is degenerate
-///   (`CreateTransformFromMovementDirection`, `CPlayerDynamics.cpp:873`).
+///   (`CreateTransformFromMovementDirection`, `CPlayerDynamics.cpp:873`);
+/// - re-aimed at a camera-flagged too-close actor by [`too_close_actor_facing`]
+///   (`CPlayerDynamics.cpp:1464`).
 ///
-/// Not modelled (item 4): the `outOfBallLookAtHint` / `outOfBallLookAtHintActor`
-/// overrides (`:1430`, `:1440`) and the too-close-actor post-override (`:1464`).
+/// The `outOfBallLookAtHint` / `outOfBallLookAtHintActor` `CScriptPlayerHint`
+/// overrides (`:1430`, `:1440`) aim `direction` at a scripted target instead;
+/// that target (esp. the actor case's virtual `GetOrbitPosition`) isn't
+/// reproduced here — when either bit is set we only flag the prediction via
+/// [`FailsafePrediction::facing_uncertain`].
 pub fn predict_failsafe_from_live<'a>(
   ctx: &Ctx,
   meshes: impl IntoIterator<Item = &'a CollisionMesh> + Clone,
@@ -268,7 +281,7 @@ pub fn predict_failsafe_from_live<'a>(
   let flat = |v: Vec3| Vec3::new(v.x, v.y, 0.0);
   let flat_norm = |v: Vec3| flat(v).try_normalize();
   let cam_to_player = flat_norm(player_pos - cam_origin);
-  let player_forward = match cam_to_player {
+  let mut player_forward = match cam_to_player {
     // `camToPlayer` degenerate (camera directly above the player):
     // `CreateTransformFromMovementDirection` — flattened `x50c_moveDir`, else `+Y`.
     None => read_vec3_member(ctx, &player, "moveDir")
@@ -289,10 +302,18 @@ pub fn predict_failsafe_from_live<'a>(
     }
   };
 
+  if let Some(dir) = too_close_actor_facing(ctx, &ball_cam, player_pos, cam_origin) {
+    player_forward = dir;
+  }
+
   let eye_height = player_eye_height(ctx, &player)?;
   let eye_pos = player_pos + Vec3::new(0.0, 0.0, eye_height);
 
-  Some(predict_failsafe(
+  let hint_override = ["outOfBallLookAtHint", "outOfBallLookAtHintActor"]
+    .iter()
+    .any(|b| player.get_member(ctx, b).and_then(|m| m.read_bool(ctx)) == Some(true));
+
+  let mut pred = predict_failsafe(
     &FailsafeInputs {
       cam_origin,
       look_pos,
@@ -300,7 +321,61 @@ pub fn predict_failsafe_from_live<'a>(
       eye_pos,
     },
     meshes,
-  ))
+  );
+  pred.facing_uncertain = hint_override;
+  Some(pred)
+}
+
+/// Too-close-actor post-override (`CPlayer::TransitionFromMorphBallState`,
+/// `CPlayerDynamics.cpp:1464-1483`). When `CBallCamera::UpdateObjectTooCloseId`
+/// has flagged an actor `1 < x3e0_tooCloseActorDist < 20` away, and that actor
+/// sits roughly between the ball camera's forward and the player
+/// (`Dot(toActor, camToActor) >= .3` and `Dot(camToActor, camForward) >= .7`,
+/// all flattened + normalised), the unmorph transform is re-aimed straight at
+/// it. `None` when the override doesn't apply.
+///
+/// `mgr.GetObjectById` is an O(1) slot index (`id & 0x3FF`), not an object-list
+/// walk; the version check against the slot entity's `uniqueID` rejects a stale
+/// id whose slot has been recycled.
+fn too_close_actor_facing(
+  ctx: &Ctx,
+  ball_cam: &GameInstance,
+  player_pos: Vec3,
+  cam_origin: Vec3,
+) -> Option<Vec3> {
+  let dist = ball_cam
+    .get_member(ctx, "tooCloseActorDist")?
+    .read_f32(ctx)?;
+  if !(1.0..20.0).contains(&dist) {
+    return None;
+  }
+  let actor_id = ball_cam.get_member(ctx, "tooCloseActorId")?.read_u16(ctx)?;
+  if actor_id == 0xFFFF {
+    return None;
+  }
+  let mut actor = get_object_by_entity_id(ctx, actor_id)?;
+  if actor.address & 0x7FFF_FFFF == 0 {
+    return None;
+  }
+  if actor.get_member(ctx, "uniqueID")?.read_u16(ctx)? != actor_id {
+    return None;
+  }
+  // `x34_transform` is at a fixed offset for every `CActor` subclass; retype the
+  // bare `CEntity` handle from the slot so the member resolves.
+  actor.type_name = "CActor".into();
+  let actor_pos = read_as_transform(ctx, &actor.get_member(ctx, "transform")?)?
+    .w_axis
+    .truncate();
+  let cam_forward = read_as_transform(ctx, &ball_cam.get_member(ctx, "transform")?)?
+    .y_axis
+    .truncate();
+
+  let flat = |v: Vec3| Vec3::new(v.x, v.y, 0.0);
+  let to_actor = flat(actor_pos - player_pos).try_normalize()?;
+  let cam_to_actor = flat(actor_pos - cam_origin).try_normalize()?;
+  let cam_forward = flat(cam_forward).try_normalize()?;
+
+  (to_actor.dot(cam_to_actor) >= 0.3 && cam_to_actor.dot(cam_forward) >= 0.7).then_some(to_actor)
 }
 
 /// `CPlayer::GetEyeHeight` (`CPlayerDynamics.cpp:1025`):
@@ -379,6 +454,12 @@ mod tests {
         .get_member(&ctx, "morphState")
         .and_then(|m| m.read_u32(&ctx))
     );
+    for b in ["outOfBallLookAtHint", "outOfBallLookAtHintActor"] {
+      eprintln!(
+        "player.{b} = {:?}",
+        player.get_member(&ctx, b).and_then(|m| m.read_bool(&ctx))
+      );
+    }
 
     // raw 4 floats at orientation offset
     let oaddr = player.get_member(&ctx, "orientation").unwrap().address;
@@ -429,6 +510,13 @@ mod tests {
           .get_member(&ctx, "lookPos")
           .and_then(|m| read_as_vec3(&ctx, &m));
         eprintln!("  ballCamera.lookPos = {lp:?}");
+        eprintln!(
+          "  ballCamera.tooCloseActorId = {:?}  tooCloseActorDist = {:?}",
+          bc.get_member(&ctx, "tooCloseActorId")
+            .and_then(|m| m.read_u16(&ctx)),
+          bc.get_member(&ctx, "tooCloseActorDist")
+            .and_then(|m| m.read_f32(&ctx))
+        );
       }
       None => eprintln!("ballCamera: <none>"),
     }

@@ -144,10 +144,15 @@ impl WorldRenderer {
 
     // Instant unmorph failsafe
     if let Some(p) = &self.morphball_failsafe
-      && p.would_trigger
+      && (p.would_trigger || p.facing_uncertain)
     {
       ui.separator();
-      ui.label("Instant unmorph likely");
+      if p.would_trigger {
+        ui.label("Instant unmorph likely");
+      }
+      if p.facing_uncertain {
+        ui.label("IU prediction may be inaccurate: look-at hint overrides unmorph facing");
+      }
     }
 
     // Collision reposition failsafe
