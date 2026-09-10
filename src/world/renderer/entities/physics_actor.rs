@@ -4,10 +4,10 @@ use crate::ctx::Ctx;
 use crate::gl::shapes;
 use crate::mem::math_utils::read_as_transform;
 use crate::structs::prime_structs::GameInstance;
-use crate::world::collision_mesh::{CollisionMesh, collision_box_verts, collision_sphere_verts};
-use crate::world::platform_collision::load_obb_group_meshes;
+use crate::world::collision_mesh::{collision_box_verts, collision_sphere_verts};
+use crate::world::platform_collision::{load_obb_group_meshes, obb_group_container_addr};
 
-use super::super::WorldRenderer;
+use super::super::{ObbHull, WorldRenderer};
 use super::{is_degenerate_bbox, read_vec3_at, walk_member};
 
 /// A handful of `CPhysicsActor` subclasses override `GetCollisionPrimitive` to
@@ -176,38 +176,62 @@ impl WorldRenderer {
         self.draw_collision_sphere(base + center, radius, is_highlighted);
       }
       PrimShape::Obb => {
-        let Some(meshes) = load_obb_group_meshes(ctx, entity, member) else {
-          return;
-        };
         // `CPuddleToadGamma::GetPrimitiveTransform` is the full actor transform
         // plus `primitiveOffset` — the model-space hull rotates with the actor.
         let mut xf = transform;
         xf.w_axis = base.extend(1.0);
-        self.draw_collision_obb_meshes(&meshes, xf, is_highlighted);
+        self.sync_obb_hull(ctx, entity, member, xf, is_highlighted);
       }
     }
   }
 
-  /// Draw a set of model-space [`CollisionMesh`] hulls under `transform` — the
-  /// shared body of [`Self::draw_platform_collision`] and the OBB arm of
-  /// [`Self::draw_ai_collision`].
-  pub(super) fn draw_collision_obb_meshes(
+  /// Ensure the OBB hull group behind `owner.<member>` is cached
+  /// (`obb_hull_cache`, keyed by container address — built once, the container
+  /// is immutable static data), refresh its `transform` from the owner's live
+  /// pose, and mark it live for this frame's eviction pass.
+  ///
+  /// The hull tris are drawn from the world-space GPU cache in
+  /// [`WorldRenderer::render`]; the red bounds box for a highlighted entity is
+  /// added to the immediate buffer here (it tracks the live transform). Returns
+  /// whether a hull is present — the caller falls back to a simple primitive
+  /// when it isn't.
+  pub(super) fn sync_obb_hull(
     &mut self,
-    meshes: &[CollisionMesh],
+    ctx: &Ctx,
+    owner: &GameInstance,
+    member: &str,
     transform: Mat4,
     is_highlighted: bool,
-  ) {
-    self.render_buff.set_transform(transform);
-    for mesh in meshes {
-      self.render_buff.add_tris(&mesh.verts);
-      if is_highlighted {
+  ) -> bool {
+    let Some(key) = obb_group_container_addr(ctx, owner, member) else {
+      return false;
+    };
+    self.obb_hulls_seen.insert(key);
+
+    let hull = match self.obb_hull_cache.entry(key) {
+      std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+      std::collections::hash_map::Entry::Vacant(e) => {
+        let meshes = load_obb_group_meshes(ctx, owner, member).unwrap_or_default();
+        if meshes.is_empty() {
+          return false;
+        }
+        e.insert(ObbHull { meshes, transform })
+      }
+    };
+    hull.transform = transform;
+
+    if is_highlighted {
+      let bounds: Vec<(Vec3, Vec3)> = hull.meshes.iter().map(|m| (m.min, m.max)).collect();
+      self.render_buff.set_transform(transform);
+      for (min, max) in bounds {
         self.render_buff.add_lines(&shapes::generate_cube_lines(
-          mesh.min,
-          mesh.max,
+          min,
+          max,
           Vec4::new(1.0, 0.0, 0.0, 1.0),
         ));
       }
     }
+    true
   }
 
   /// Solid, standability-tinted AABox (the shared tail of

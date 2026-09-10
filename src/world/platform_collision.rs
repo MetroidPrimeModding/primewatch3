@@ -17,10 +17,10 @@
 //! `CPuddleToadGamma` override `GetPrimitiveTransform` to the full actor
 //! transform, so the hull rotates with the actor).
 
-use glam::{Mat4, Vec3};
+use glam::Vec3;
 
 use crate::ctx::Ctx;
-use crate::mem::math_utils::{read_as_transform, read_as_vec3};
+use crate::mem::math_utils::read_as_vec3;
 use crate::structs::prime_structs::GameInstance;
 use crate::world::collision_mesh::{CollisionMesh, ECollisionMaterial};
 
@@ -35,30 +35,21 @@ const COUNT_CAP: u32 = 20_000;
 /// Defensive cap on `CCollidableOBBTreeGroupContainer::x0_trees`.
 const TREE_CAP: u32 = 64;
 
-/// One platform's model-space collision, ready to draw under `transform`.
-pub struct PlatformCollision {
-  /// World transform read off the platform's `CActor::transform`.
-  pub transform: Mat4,
-  /// Model-space triangle soup, one per `COBBTree` in the container. Each has
-  /// [`CollisionMesh::verts`] built; no BVH (OBB platforms aren't ray-traced).
-  pub meshes: Vec<CollisionMesh>,
-}
-
-/// Full walk for one platform: `transform` + every `COBBTree` mesh. Returns
-/// `None` when the platform has no complex collision (null `treeGroup`) or the
-/// walk hits an unreadable link; an empty `meshes` is possible if every tree
-/// fails validation.
-pub fn load_platform_collision(ctx: &Ctx, platform: &GameInstance) -> Option<PlatformCollision> {
-  let transform = read_as_transform(ctx, &platform.get_member(ctx, "transform")?)?;
-  let meshes = load_platform_meshes(ctx, platform)?;
-  Some(PlatformCollision { transform, meshes })
-}
-
-/// `platform -> treeGroup.value -> container -> trees[] -> COBBTree`, one
-/// model-space [`CollisionMesh`] per tree. `None` when `treeGroup` is null or a
-/// structural link is unreadable.
-pub fn load_platform_meshes(ctx: &Ctx, platform: &GameInstance) -> Option<Vec<CollisionMesh>> {
-  load_obb_group_meshes(ctx, platform, "treeGroup")
+/// The `CCollidableOBBTreeGroupContainer` address behind `owner.<member>` (an
+/// inline `rstl::single_ptr<CCollidableOBBTreeGroup>`), or `None` when the owner
+/// has no complex collision (null pointer).
+///
+/// Cheap — just the pointer chain, no array reads. Callers cache the built hull
+/// ([`load_obb_group_meshes`]) on this address: the container and its
+/// `COBBTree`s are immutable static data loaded with the owner's `dcln`, so only
+/// the owner's live transform needs re-reading each frame.
+pub fn obb_group_container_addr(ctx: &Ctx, owner: &GameInstance, member: &str) -> Option<u32> {
+  let group = owner.get_member(ctx, member)?.get_member(ctx, "value")?;
+  if group.address == 0 {
+    return None;
+  }
+  let container = group.get_member(ctx, "container")?;
+  (container.address != 0).then_some(container.address)
 }
 
 /// `owner -> <member>.value -> container -> trees[] -> COBBTree`, one
@@ -233,6 +224,7 @@ mod tests {
   use crate::mem::area_utils::get_areas;
   use crate::mem::game_memory::GameMemory;
   use crate::mem::game_object_utils::get_all_objects;
+  use crate::mem::math_utils::read_as_transform;
   use crate::structs::prime_structs::GameStructs;
 
   fn load_defs() -> GameStructs {
@@ -289,7 +281,8 @@ mod tests {
     let mem = GameMemory::new();
     let ctx = Ctx::new(&structs, &mem);
     let platform = GameInstance::new(0x8000_0000, "CScriptPlatform".to_string());
-    assert!(load_platform_collision(&ctx, &platform).is_none());
+    assert!(obb_group_container_addr(&ctx, &platform, "treeGroup").is_none());
+    assert!(load_obb_group_meshes(&ctx, &platform, "treeGroup").is_none());
   }
 
   #[test]
@@ -311,10 +304,13 @@ mod tests {
       })
       .expect("platform 0x0014009B present in the dump");
 
-    let pc = load_platform_collision(&ctx, &platform).expect("platform has complex collision");
-    assert!(!pc.meshes.is_empty(), "expected at least one COBBTree");
+    let transform = read_as_transform(&ctx, &platform.get_member(&ctx, "transform").unwrap())
+      .expect("platform transform");
+    let meshes =
+      load_obb_group_meshes(&ctx, &platform, "treeGroup").expect("platform has complex collision");
+    assert!(!meshes.is_empty(), "expected at least one COBBTree");
 
-    for (i, m) in pc.meshes.iter().enumerate() {
+    for (i, m) in meshes.iter().enumerate() {
       eprintln!(
         "tree {i}: {} verts, {} tris, model bounds {:?}..{:?}",
         m.raw_verts.len(),
@@ -326,7 +322,7 @@ mod tests {
 
     let areas = get_areas(&ctx);
 
-    for mesh in &pc.meshes {
+    for mesh in &meshes {
       assert_eq!(mesh.verts.len() % 3, 0);
       assert!(!mesh.verts.is_empty(), "reconstructed a non-empty tri soup");
       // Every reconstructed index resolved (no silent clamp to vert 0 only).
@@ -334,8 +330,8 @@ mod tests {
 
       // Model-space verts, transformed by the platform, should land inside some
       // loaded area's AABB — a sanity check on both the offsets and the walk.
-      let world_min = pc.transform.transform_point3(mesh.min);
-      let world_max = pc.transform.transform_point3(mesh.max);
+      let world_min = transform.transform_point3(mesh.min);
+      let world_max = transform.transform_point3(mesh.max);
       let center = (world_min + world_max) * 0.5;
       let in_an_area = areas.iter().any(|a| {
         let mn = read_as_vec3(&ctx, &a.member(&ctx, "aabb").member(&ctx, "min"));

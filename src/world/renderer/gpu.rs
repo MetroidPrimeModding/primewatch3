@@ -2,18 +2,18 @@
 //! `gpu_mesh_by_mrea` collision-mesh cache (`WorldRenderer::updateAreas`), and
 //! the render pass itself (`WorldRenderer::render`, minus `renderEntities`).
 
-use glam::{Mat4, Vec3, Vec4};
+use glam::{Mat3, Mat4, Vec3, Vec4};
 
 use crate::ctx::Ctx;
 use crate::gl::mesh::DynamicMesh;
 use crate::gl::shader::WorldUniforms;
-use crate::gl::{WORLD_COLOR_FORMAT, WORLD_DEPTH_FORMAT, shapes};
+use crate::gl::{Vert, WORLD_COLOR_FORMAT, WORLD_DEPTH_FORMAT, shapes};
 use crate::mem::area_utils::get_areas;
 use crate::world::collision_mesh::{CollisionMesh, load_mesh};
 
-use super::WorldRenderer;
 use super::camera::orbit_z_nudge;
 use super::types::OrbitPlayerCameraOrigin;
+use super::{ObbGpuHull, WorldRenderer};
 
 pub(super) fn clamp_size(size: (u32, u32)) -> (u32, u32) {
   (size.0.max(1), size.1.max(1))
@@ -122,6 +122,50 @@ impl WorldRenderer {
     self
       .gpu_mesh_by_mrea
       .retain(|k, _| self.mesh_by_mrea.contains_key(k));
+
+    // OBB collision hulls (`draw_platform_collision` / `draw_ai_collision`):
+    // bake each cached model-space hull group to world space under its owner's
+    // current transform, into one buffer per group. A hull re-uploads only when
+    // the owner actually moved (`baked_transform`), so a static platform
+    // uploads once — same as an area mesh.
+    self
+      .obb_gpu_hull_cache
+      .retain(|k, _| self.obb_hull_cache.contains_key(k));
+    for (&key, hull) in &self.obb_hull_cache {
+      let up_to_date = self
+        .obb_gpu_hull_cache
+        .get(&key)
+        .is_some_and(|g| g.baked_transform == hull.transform);
+      if up_to_date {
+        continue;
+      }
+      let normal_mat = Mat3::from_mat4(hull.transform).inverse().transpose();
+      let world: Vec<Vert> = hull
+        .meshes
+        .iter()
+        .flat_map(|m| &m.verts)
+        .map(|v| Vert {
+          pos: hull
+            .transform
+            .transform_point3(Vec3::from_array(v.pos))
+            .to_array(),
+          color: v.color,
+          normal: (normal_mat * Vec3::from_array(v.normal))
+            .normalize()
+            .to_array(),
+          barycentric: v.barycentric,
+        })
+        .collect();
+      let entry = self
+        .obb_gpu_hull_cache
+        .entry(key)
+        .or_insert_with(|| ObbGpuHull {
+          mesh: DynamicMesh::new(device, "obb-hull"),
+          baked_transform: Mat4::IDENTITY,
+        });
+      entry.mesh.upload(device, queue, &world);
+      entry.baked_transform = hull.transform;
+    }
 
     // Per-mesh AABB wireframe boxes — done here so
     // it happens after `update_areas` regardless of call ordering.
@@ -282,10 +326,15 @@ impl WorldRenderer {
     pass.set_bind_group(0, &self.pipelines.bind_group, &[]);
     pass.set_bind_group(1, &self.pipelines.shadow_tex_bind_group, &[]);
 
-    // (a) collision meshes — honour `self.culling`.
+    // (a) collision meshes — honour `self.culling`. OBB hulls are collision
+    // geometry too, so they ride the same pipeline (world-space, identity
+    // model) and the same cull setting as the area meshes.
     pass.set_pipeline(self.pipelines.mesh(false, mesh_cull));
     for dm in self.gpu_mesh_by_mrea.values() {
       dm.draw(&mut pass);
+    }
+    for hull in self.obb_gpu_hull_cache.values() {
+      hull.mesh.draw(&mut pass);
     }
 
     // (b) opaque immediate buffer — tris always back-culled, lines never culled.

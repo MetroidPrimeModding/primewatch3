@@ -72,6 +72,7 @@ impl WorldRenderer {
   ) {
     self.render_buff.set_transform(Mat4::IDENTITY);
     let trigger_flags = trigger::trigger_render_flags(&self.trigger_render_config);
+    self.obb_hulls_seen.clear();
 
     for entity in objects.values() {
       let active = entity
@@ -159,6 +160,10 @@ impl WorldRenderer {
         }
       }
     }
+
+    self
+      .obb_hull_cache
+      .retain(|addr, _| self.obb_hulls_seen.contains(addr));
   }
 
   /// `WorldRenderer::getScreenspacePosForActor`: project the entity's transform

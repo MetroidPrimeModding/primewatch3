@@ -1,3 +1,7 @@
 struct CRipper: CPatterned {
 
 }
+
+struct CRipperControlledPlatform: CScriptPlatform {
+  vtable 0x803e80c0
+}

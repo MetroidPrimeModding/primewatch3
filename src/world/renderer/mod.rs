@@ -68,6 +68,25 @@ const PLAYER_DIVERGENCE_EPSILON: f32 = 0.05;
 /// (e.g. the player embedded in geometry).
 const PLAYER_DIVERGENCE_FRAMES: u32 = 3;
 
+/// A cached model-space `COBBTree` collision hull group — one owner entity's
+/// `dcln` collision (`CScriptPlatform::treeGroup`,
+/// `CPuddleToadGamma::collisionTreePrim`, …). Keyed in [`WorldRenderer`] by its
+/// `CCollidableOBBTreeGroupContainer` address; the meshes are built once (the
+/// container is immutable static data) while `transform` is refreshed from the
+/// owner's live `CActor::transform` every frame.
+struct ObbHull {
+  meshes: Vec<CollisionMesh>,
+  transform: Mat4,
+}
+
+/// The GPU counterpart of [`ObbHull`]: the whole group baked to world space
+/// under `baked_transform`, in one buffer. Re-uploaded only when the owner
+/// moves, so a static platform uploads once.
+struct ObbGpuHull {
+  mesh: DynamicMesh,
+  baked_transform: Mat4,
+}
+
 pub struct WorldRenderer {
   // --- camera params ---
   pub aspect: f32,
@@ -189,6 +208,17 @@ pub struct WorldRenderer {
   player_translucent_tris: DynamicMesh,
   mesh_by_mrea: HashMap<u32, CollisionMesh>,
   gpu_mesh_by_mrea: HashMap<u32, DynamicMesh>,
+
+  /// Model-space OBB collision hulls keyed by container address (see
+  /// [`ObbHull`]). Populated lazily during [`Self::render_entities`]; an entry
+  /// is evicted once no entity referenced its container during a full pass
+  /// (tracked in `obb_hulls_seen`).
+  obb_hull_cache: HashMap<u32, ObbHull>,
+  /// World-space GPU buffers for `obb_hull_cache`, synced in [`Self::render`].
+  obb_gpu_hull_cache: HashMap<u32, ObbGpuHull>,
+  /// Container addresses touched in the current `render_entities` pass — the
+  /// live set for evicting `obb_hull_cache`.
+  obb_hulls_seen: HashSet<u32>,
 }
 
 impl WorldRenderer {
@@ -255,6 +285,9 @@ impl WorldRenderer {
       player_translucent_tris: DynamicMesh::new(device, "world-player-translucent-tris"),
       mesh_by_mrea: HashMap::new(),
       gpu_mesh_by_mrea: HashMap::new(),
+      obb_hull_cache: HashMap::new(),
+      obb_gpu_hull_cache: HashMap::new(),
+      obb_hulls_seen: HashSet::new(),
     }
   }
 
