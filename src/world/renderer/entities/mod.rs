@@ -11,6 +11,7 @@ mod bomb;
 mod chozo_ghost;
 mod collision_actor;
 mod dock;
+mod door;
 mod physics_actor;
 mod pickup;
 mod platform;
@@ -140,6 +141,8 @@ impl WorldRenderer {
         if self.actor_render_config.render_physics_actors {
           self.draw_physics_actor(ctx, entity, is_highlighted);
         }
+      } else if entity.extends_class(ctx, "CScriptDoor") {
+        self.draw_door(ctx, entity, is_highlighted);
       } else if entity.extends_class(ctx, "CPhysicsActor") {
         if self.actor_render_config.render_physics_collision {
           self.draw_physics_actor_collision(ctx, entity, is_highlighted);

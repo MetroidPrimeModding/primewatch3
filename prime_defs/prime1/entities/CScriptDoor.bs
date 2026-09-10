@@ -1,3 +1,27 @@
 struct CScriptDoor: CPhysicsActor {
     vtable 0x803daa78
+
+  f32 animLength 0x258
+  f32 animTime 0x25C
+  EDoorAnimType doorAnimState 0x260
+  CAABB touchBounds 0x264
+  u16 partner1 0x27C
+  u16 partner2 0x27E
+  u16 prevDoor 0x280
+  u16 dockId 0x282
+  CAABB modelBounds 0x284
+  CVector3f orbitPos 0x29C
+
+  //u8 flags 0x2A8
+  bool closing 0x2A8:7:1
+  bool wasOpen 0x2A8:6:1
+  bool isOpen 0x2A8:5:1
+  bool conditionsMet 0x2A8:4:1
+  bool projectilesCollide 0x2A8:3:1
+  bool ballDoor 0x2A8:2:1
+  bool doClose 0x2A8:1:1
+}
+
+enum EDoorAnimType {
+    Open = 0, Close, Ready
 }

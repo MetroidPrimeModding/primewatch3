@@ -106,6 +106,7 @@ mod tests {
       extends: vec![],
       members_by_offset: Default::default(),
       members_by_name: Default::default(),
+      members_by_order: Default::default(),
     };
     for m in members {
       s.insert_member(m);

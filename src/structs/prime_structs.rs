@@ -119,6 +119,9 @@ pub struct GameStruct {
   pub extends: Vec<TypeName>,
   pub members_by_offset: BTreeMap<i64, GameMember>,
   pub members_by_name: BTreeMap<MemberName, GameMember>,
+  /// Declaration order, preserved so bitfields sharing one offset all survive
+  /// (`members_by_offset` keeps only the last member at a given offset).
+  pub members_by_order: Vec<GameMember>,
 }
 
 impl GameStruct {
@@ -134,6 +137,7 @@ impl GameStruct {
         .collect(),
       members_by_offset: BTreeMap::new(),
       members_by_name: BTreeMap::new(),
+      members_by_order: Vec::new(),
     };
 
     for member in bstruct.members.iter() {
@@ -148,6 +152,7 @@ impl GameStruct {
     self
       .members_by_name
       .insert(member.name.clone(), member.clone());
+    self.members_by_order.push(member.clone());
   }
 
   pub fn get_member_by_name(&self, game_structs: &GameStructs, name: &str) -> Option<GameMember> {
@@ -209,13 +214,12 @@ impl GameMember {
   }
 }
 
-/// u64/i64 currently ignored.
 pub fn primitive_size(type_name: &str) -> u32 {
   match type_name {
     "u8" | "i8" | "bool" => 1,
     "u16" | "i16" => 2,
     "u32" | "i32" | "f32" => 4,
-    "f64" => 8,
+    "u64" | "i64" | "f64" => 8,
     _ => 4,
   }
 }
@@ -427,6 +431,7 @@ mod tests {
       extends: extends.iter().map(|it| (*it).into()).collect(),
       members_by_offset: BTreeMap::new(),
       members_by_name: BTreeMap::new(),
+      members_by_order: Vec::new(),
     };
     for m in members {
       s.insert_member(m);
@@ -443,6 +448,26 @@ mod tests {
     structs.insert_struct(&game_struct("D", &["A"], &[]));
     structs.insert_struct(&game_struct("X", &[], &[]));
     structs
+  }
+
+  #[test]
+  fn bitfields_sharing_an_offset_all_survive_in_declaration_order() {
+    let bit = |name: &str, b: i64| {
+      let mut m = member(name, "bool", 0x2A8);
+      m.bit = Some(b);
+      m.bit_length = Some(1);
+      m
+    };
+    let s = game_struct(
+      "S",
+      &[],
+      &[bit("closing", 7), bit("wasOpen", 6), bit("isOpen", 5)],
+    );
+
+    // `members_by_offset` collapses them to one; `members_by_order` keeps all.
+    assert_eq!(s.members_by_offset.len(), 1);
+    let names: Vec<_> = s.members_by_order.iter().map(|m| m.name.as_ref()).collect();
+    assert_eq!(names, ["closing", "wasOpen", "isOpen"]);
   }
 
   #[test]
@@ -620,8 +645,8 @@ mod tests {
     assert_eq!(primitive_size("i32"), 4);
     assert_eq!(primitive_size("f32"), 4);
     assert_eq!(primitive_size("f64"), 8);
-    assert_eq!(primitive_size("u64"), 4);
-    assert_eq!(primitive_size("i64"), 4);
+    assert_eq!(primitive_size("u64"), 8);
+    assert_eq!(primitive_size("i64"), 8);
     // unknown type name -> default 4.
     assert_eq!(primitive_size("CVector3f"), 4);
   }

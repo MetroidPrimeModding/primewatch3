@@ -315,6 +315,7 @@ mod tests {
       extends: vec![],
       members_by_offset: std::collections::BTreeMap::new(),
       members_by_name: std::collections::BTreeMap::new(),
+      members_by_order: Vec::new(),
     };
     tag.insert_member(&member("u32", "fourCC", 0));
     tag.insert_member(&member("u32", "id", 4));

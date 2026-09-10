@@ -315,12 +315,9 @@ impl Inspector {
   }
 
   /// The body of a struct subtree: "null" for a zero address, otherwise each
-  /// `extends` base as its own subtree followed by every member in offset order.
-  ///
-  /// Deviation: C++ iterates `members_by_order` (declaration order); the Rust
-  /// `GameStruct` only keeps `members_by_offset`. Offset order matches
-  /// declaration order for every well-formed `.bs`.
-  /// TODO: determine if this is acceptable
+  /// `extends` base as its own subtree followed by every member in declaration
+  /// order (`members_by_order`), matching C++ and keeping every bitfield that
+  /// shares an offset.
   fn render_struct_body(
     &self,
     ui: &mut egui::Ui,
@@ -338,7 +335,7 @@ impl Inspector {
       self.render(ui, ctx, parent, &base, true);
     }
 
-    for member in game_struct.members_by_offset.values() {
+    for member in &game_struct.members_by_order {
       let Some(child) = inst.get_member(ctx, &member.name) else {
         continue;
       };
@@ -461,6 +458,7 @@ mod tests {
       extends: vec![],
       members_by_offset: BTreeMap::new(),
       members_by_name: BTreeMap::new(),
+      members_by_order: Vec::new(),
     }
   }
 

@@ -49,6 +49,19 @@ impl WorldRenderer {
     entity: &GameInstance,
     is_highlighted: bool,
   ) {
+    // Only draw a primitive the game treats as solid collision — matches
+    // `CCollisionPrimitive::GetMaterial().HasMaterial(kMT_Solid)`. `material`
+    // is the `CMaterialList` u64 mask; `kMT_Solid` is bit 19.
+    const MT_SOLID: u32 = 19;
+    let has_solid = entity
+      .get_member(ctx, "collisionPrimitive")
+      .and_then(|p| p.get_member(ctx, "material"))
+      .and_then(|m| m.read_u64(ctx))
+      .is_some_and(|mask| mask & (1u64 << MT_SOLID) != 0);
+    if !has_solid {
+      return;
+    }
+
     let Some(transform) = entity
       .get_member(ctx, "transform")
       .and_then(|m| read_as_transform(ctx, &m))
