@@ -1,3 +1,6 @@
 struct CWarWasp: CPatterned {
-
+  // `GetCollisionPrimitive` override — returns `&x570_cSphere` instead of the
+  // base `CPhysicsActor` box. Centre is updated each frame from the touch
+  // bounds (`CWarWasp::UpdateTouchBounds`).
+  CSpherePrimitive collisionSphere 0x570
 }

@@ -435,6 +435,18 @@ pub fn collision_box_verts(min: Vec3, max: Vec3) -> Vec<Vert> {
   verts
 }
 
+/// [`collision_box_verts`] for a sphere primitive — a `CPhysicsActor` subclass
+/// whose `GetCollisionPrimitive` override returns a `CCollidableSphere`
+/// (`CWarWasp`, `CWallWalker`, …). Recoloured per-vertex by surface normal, so
+/// the cap reads as floor, the underside as ceiling, and the equator as wall.
+pub fn collision_sphere_verts(center: Vec3, radius: f32) -> Vec<Vert> {
+  let mut verts = shapes::generate_sphere(center, radius, Vec4::ONE);
+  for v in &mut verts {
+    v.color = box_face_color(Vec3::from_array(v.normal));
+  }
+  verts
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
@@ -505,6 +517,22 @@ mod tests {
       verts.iter().filter(|v| v.normal[2].abs() <= 0.85).count(),
       24
     );
+  }
+
+  #[test]
+  fn collision_sphere_verts_tints_by_normal_and_has_no_black_default() {
+    let verts = collision_sphere_verts(Vec3::ZERO, 2.0);
+    assert!(!verts.is_empty());
+    for v in &verts {
+      let want = if v.normal[2] > 0.85 {
+        [0.4, 0.6, 0.4, 1.0] // cap -> floor
+      } else if v.normal[2] < -0.85 {
+        [0.8, 0.5, 0.5, 1.0] // underside -> ceiling
+      } else {
+        [0.6, 0.6, 0.6, 1.0] // equator -> wall
+      };
+      assert_eq!(v.color, want);
+    }
   }
 
   #[test]

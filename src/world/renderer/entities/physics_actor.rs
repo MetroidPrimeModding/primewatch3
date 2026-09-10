@@ -4,10 +4,39 @@ use crate::ctx::Ctx;
 use crate::gl::shapes;
 use crate::mem::math_utils::read_as_transform;
 use crate::structs::prime_structs::GameInstance;
-use crate::world::collision_mesh::collision_box_verts;
+use crate::world::collision_mesh::{CollisionMesh, collision_box_verts, collision_sphere_verts};
+use crate::world::platform_collision::load_obb_group_meshes;
 
 use super::super::WorldRenderer;
-use super::{is_degenerate_bbox, read_vec3_at};
+use super::{is_degenerate_bbox, read_vec3_at, walk_member};
+
+/// A handful of `CPhysicsActor` subclasses override `GetCollisionPrimitive` to
+/// return a member primitive rather than the base `x1c0` `CAABBPrimitive`. Each
+/// entry is `(class name, member name, shape)`; the AI collision pass walks this
+/// most-derived class first.
+const OVERRIDDEN_COLLISION_PRIMITIVES: &[(&str, &str, PrimShape)] = &[
+  ("CWarWasp", "collisionSphere", PrimShape::Sphere),
+  ("CBabygoth", "collisionAABox", PrimShape::AABox),
+  ("CIceSheegoth", "collisionAABox", PrimShape::AABox),
+  ("CPuddleSpore", "collisionAABox", PrimShape::AABox),
+  ("CMetroid", "collisionSphere", PrimShape::Sphere),
+  // `CElitePirate` also covers `COmegaPirate` (inherits `x738_collisionAabb`).
+  ("CElitePirate", "collisionAABox", PrimShape::AABox),
+  // `CDrone` also has an `x834_28` fall-back-to-base flag, but the decomp never
+  // sets it, so the sphere is always effective.
+  ("CDrone", "collisionSphere", PrimShape::Sphere),
+  // `dcln`-backed OBB tree group (same walk as `CScriptPlatform::treeGroup`).
+  ("CPuddleToadGamma", "collisionTreePrim", PrimShape::Obb),
+  // Base class — keep last; `CParasite` / `CSeedling` inherit it unchanged.
+  ("CWallWalker", "collisionSphere", PrimShape::Sphere),
+];
+
+#[derive(Clone, Copy, PartialEq)]
+enum PrimShape {
+  AABox,
+  Sphere,
+  Obb,
+}
 
 /// The `drawPhysicsActor` bounding-box fallback chain: `collisionPrimitive`
 /// aabb (`pos`-offset) -> `baseBoundingBox` (`pos`-offset) -> `renderBounds`
@@ -77,17 +106,141 @@ impl WorldRenderer {
     let Some(cp_max) = read_vec3_at(ctx, entity, &["collisionPrimitive", "aabb", "max"]) else {
       return;
     };
-    let (min, max) = (pos + offset + cp_min, pos + offset + cp_max);
+    self.draw_collision_aabox(pos + offset + cp_min, pos + offset + cp_max, is_highlighted);
+  }
+
+  /// The overridden `GetCollisionPrimitive` primitive for the
+  /// [`OVERRIDDEN_COLLISION_PRIMITIVES`] classes (`CWarWasp`, `CBabygoth`,
+  /// `CPuddleToadGamma`, …), drawn in the same solid, standability-tinted style
+  /// as [`Self::draw_physics_actor_collision`].
+  ///
+  /// The primitive rides `GetPrimitiveTransform` = `translation +
+  /// primitiveOffset` (translation only — `CPhysicsActor::GetPrimitiveTransform`
+  /// drops rotation), so it is placed at that point without the actor's
+  /// orientation, matching the game's own collision transform.
+  pub(super) fn draw_ai_collision(
+    &mut self,
+    ctx: &Ctx,
+    entity: &GameInstance,
+    is_highlighted: bool,
+  ) {
+    let Some(&(_, member, shape)) = OVERRIDDEN_COLLISION_PRIMITIVES
+      .iter()
+      .find(|(class, ..)| entity.extends_class(ctx, class))
+    else {
+      return;
+    };
+
+    // Same `kMT_Solid` gate as `draw_physics_actor_collision` — a patterned
+    // enemy drops the flag when dead / frozen and then isn't solid collision.
+    // The OBB group carries its material one pointer deeper; skip the gate for
+    // it, as `draw_platform_collision` does for the identical `treeGroup`.
+    if shape != PrimShape::Obb {
+      const MT_SOLID: u32 = 19;
+      let has_solid = walk_member(ctx, entity, &[member, "material"])
+        .and_then(|m| m.read_u64(ctx))
+        .is_some_and(|mask| mask & (1u64 << MT_SOLID) != 0);
+      if !has_solid {
+        return;
+      }
+    }
+
+    let Some(transform) = entity
+      .get_member(ctx, "transform")
+      .and_then(|m| read_as_transform(ctx, &m))
+    else {
+      return;
+    };
+    let base = transform.w_axis.truncate()
+      + read_vec3_at(ctx, entity, &["primitiveOffset"]).unwrap_or(Vec3::ZERO);
+
+    match shape {
+      PrimShape::AABox => {
+        let Some(min) = read_vec3_at(ctx, entity, &[member, "aabb", "min"]) else {
+          return;
+        };
+        let Some(max) = read_vec3_at(ctx, entity, &[member, "aabb", "max"]) else {
+          return;
+        };
+        self.draw_collision_aabox(base + min, base + max, is_highlighted);
+      }
+      PrimShape::Sphere => {
+        let Some(center) = read_vec3_at(ctx, entity, &[member, "sphere", "origin"]) else {
+          return;
+        };
+        let Some(radius) =
+          walk_member(ctx, entity, &[member, "sphere", "radius"]).and_then(|m| m.read_f32(ctx))
+        else {
+          return;
+        };
+        self.draw_collision_sphere(base + center, radius, is_highlighted);
+      }
+      PrimShape::Obb => {
+        let Some(meshes) = load_obb_group_meshes(ctx, entity, member) else {
+          return;
+        };
+        // Model-space hull placed by translation only (see method docs); the
+        // `dcln` is authored in the actor's rest orientation.
+        self.draw_collision_obb_meshes(&meshes, Mat4::from_translation(base), is_highlighted);
+      }
+    }
+  }
+
+  /// Draw a set of model-space [`CollisionMesh`] hulls under `transform` — the
+  /// shared body of [`Self::draw_platform_collision`] and the OBB arm of
+  /// [`Self::draw_ai_collision`].
+  pub(super) fn draw_collision_obb_meshes(
+    &mut self,
+    meshes: &[CollisionMesh],
+    transform: Mat4,
+    is_highlighted: bool,
+  ) {
+    self.render_buff.set_transform(transform);
+    for mesh in meshes {
+      self.render_buff.add_tris(&mesh.verts);
+      if is_highlighted {
+        self.render_buff.add_lines(&shapes::generate_cube_lines(
+          mesh.min,
+          mesh.max,
+          Vec4::new(1.0, 0.0, 0.0, 1.0),
+        ));
+      }
+    }
+  }
+
+  /// Solid, standability-tinted AABox (the shared tail of
+  /// [`Self::draw_physics_actor_collision`] and the box arm of
+  /// [`Self::draw_ai_collision`]). No-ops on a degenerate box.
+  fn draw_collision_aabox(&mut self, min: Vec3, max: Vec3, is_highlighted: bool) {
     if is_degenerate_bbox(min, max) {
       return;
     }
-
     self.render_buff.set_transform(Mat4::IDENTITY);
     self.render_buff.add_tris(&collision_box_verts(min, max));
     if is_highlighted {
       self.render_buff.add_lines(&shapes::generate_cube_lines(
         min,
         max,
+        Vec4::new(1.0, 0.0, 0.0, 1.0),
+      ));
+    }
+  }
+
+  /// [`Self::draw_collision_aabox`] for a sphere primitive. The highlight is a
+  /// red wireframe cube on the sphere's bounds (there is no sphere-line shape),
+  /// matching the OBB highlight in `draw_collision_actor`.
+  fn draw_collision_sphere(&mut self, center: Vec3, radius: f32, is_highlighted: bool) {
+    if radius < 0.05 {
+      return;
+    }
+    self.render_buff.set_transform(Mat4::IDENTITY);
+    self
+      .render_buff
+      .add_tris(&collision_sphere_verts(center, radius));
+    if is_highlighted {
+      self.render_buff.add_lines(&shapes::generate_cube_lines(
+        center - Vec3::splat(radius),
+        center + Vec3::splat(radius),
         Vec4::new(1.0, 0.0, 0.0, 1.0),
       ));
     }

@@ -128,6 +128,9 @@ impl WorldRenderer {
           self.draw_collision_actor(ctx, entity, is_highlighted);
         }
       } else if entity.extends_class(ctx, "CAi") {
+        if self.actor_render_config.render_physics_collision {
+          self.draw_ai_collision(ctx, entity, is_highlighted);
+        }
         if self.actor_render_config.render_ai {
           self.draw_ai(ctx, entity, is_highlighted);
         }

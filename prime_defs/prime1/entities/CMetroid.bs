@@ -1,3 +1,6 @@
 struct CMetroid: CPatterned {
-
+  // `GetCollisionPrimitive` override — returns `&mCollisionPrimitive` at 0x6a0
+  // (per decomp asm `GetCollisionPrimitive__8CMetroidCFv`). Radius scales with
+  // the model; centre is updated each frame via `SetSphereCenter`.
+  CSpherePrimitive collisionSphere 0x6A0
 }

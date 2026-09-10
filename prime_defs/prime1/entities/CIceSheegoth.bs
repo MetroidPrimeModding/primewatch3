@@ -1,3 +1,5 @@
 struct CIceSheegoth: CPatterned {
-
+  // `GetCollisionPrimitive` override — returns `&xa30_` (a `CCollidableAABox`
+  // built from the bounding box) instead of the base `CPhysicsActor` box.
+  CAABBPrimitive collisionAABox 0xA30
 }

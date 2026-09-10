@@ -1,3 +1,7 @@
 struct CElitePirate: CPatterned {
   CDamageVulnerability vulnerability 0x56c
+  // `GetCollisionPrimitive` override — returns `&x738_collisionAabb` instead of
+  // the base `CPhysicsActor` box; `Box()` is refreshed from the bounding box.
+  // Inherited unchanged by `COmegaPirate`.
+  CAABBPrimitive collisionAABox 0x738
 }

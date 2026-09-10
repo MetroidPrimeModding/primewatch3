@@ -1,7 +1,4 @@
-use glam::Vec4;
-
 use crate::ctx::Ctx;
-use crate::gl::shapes;
 use crate::structs::prime_structs::GameInstance;
 use crate::world::platform_collision::load_platform_collision;
 
@@ -35,17 +32,7 @@ impl WorldRenderer {
       return false;
     }
 
-    self.render_buff.set_transform(pc.transform);
-    for mesh in &pc.meshes {
-      self.render_buff.add_tris(&mesh.verts);
-      if is_highlighted {
-        self.render_buff.add_lines(&shapes::generate_cube_lines(
-          mesh.min,
-          mesh.max,
-          Vec4::new(1.0, 0.0, 0.0, 1.0),
-        ));
-      }
-    }
+    self.draw_collision_obb_meshes(&pc.meshes, pc.transform, is_highlighted);
     true
   }
 }

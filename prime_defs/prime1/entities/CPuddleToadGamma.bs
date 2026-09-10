@@ -1,3 +1,8 @@
 struct CPuddleToadGamma: CPatterned {
-
+  vtable 0x803e24e0
+  // `GetCollisionPrimitive` override — returns `x5e4_collisionTreePrim` (a
+  // `dcln`-backed OBB tree group, same type as `CScriptPlatform::treeGroup`)
+  // unless the pointer is null, in which case it falls back to the base
+  // `CPhysicsActor` box.
+  rstl::single_ptr<CCollidableOBBTreeGroup> collisionTreePrim 0x5E4
 }

@@ -2,3 +2,11 @@ struct CSphere {
     CVector3f origin 0x0
     f32 radius 0xC
 }
+
+// Inlined `CCollidableSphere`: `CCollisionPrimitive` base (vtable 0x0,
+// `x8_material` at 0x8) plus the local `CSphere` at 0x10. Mirror of
+// `CAABBPrimitive` for the sphere subclasses of `CPhysicsActor`.
+struct CSpherePrimitive {
+    u64 material 0x8
+    CSphere sphere 0x10
+}

@@ -1,3 +1,8 @@
 struct CDrone: CPatterned {
-
+  // `GetCollisionPrimitive` override — returns `&x690_colSphere` unless the
+  // `x834_28` flag is set, in which case it falls back to the base
+  // `CPhysicsActor` box. `x834_28` is never assigned in the decomp, so the
+  // sphere is always the effective primitive.
+  CSpherePrimitive collisionSphere 0x690
+  bool x834_28 0x834:3:1
 }

@@ -1,3 +1,5 @@
 struct CPuddleSpore: CPatterned {
-
+  // `GetCollisionPrimitive` override — returns `&x5a0_collisionPrimitive`,
+  // rebuilt from `CalculateBoundingBox` as the spore rises/falls.
+  CAABBPrimitive collisionAABox 0x5A0
 }

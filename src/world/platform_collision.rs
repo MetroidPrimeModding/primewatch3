@@ -1,7 +1,11 @@
-//! `CScriptPlatform` complex collision: the walk from a platform entity to the
-//! `COBBTree`(s) hanging off its `x314_treeGroup`, and the triangle-soup build.
+//! `CCollidableOBBTreeGroup` collision: the walk from an owner entity to the
+//! `COBBTree`(s) hanging off a `rstl::single_ptr<CCollidableOBBTreeGroup>`
+//! member, and the triangle-soup build. Used for `CScriptPlatform`'s
+//! `x314_treeGroup` and for the `CPhysicsActor` subclasses whose
+//! `GetCollisionPrimitive` override returns an OBB group
+//! (`CPuddleToadGamma::x5e4_collisionTreePrim`).
 //!
-//! Only platforms constructed with a `dcln` argument have this — `treeGroup` is
+//! Only entities constructed with a `dcln` argument have this — the pointer is
 //! null otherwise (`CScriptPlatform::HasComplexCollision`). The triangles are
 //! reconstructed exactly as `COBBTree::GetSurface` does; the edge/vertex walk is
 //! the same one [`CollisionMesh::build_vertices`] already runs for the area
@@ -52,11 +56,24 @@ pub fn load_platform_collision(ctx: &Ctx, platform: &GameInstance) -> Option<Pla
 /// model-space [`CollisionMesh`] per tree. `None` when `treeGroup` is null or a
 /// structural link is unreadable.
 pub fn load_platform_meshes(ctx: &Ctx, platform: &GameInstance) -> Option<Vec<CollisionMesh>> {
-  // `treeGroup` is an inline `rstl::single_ptr<CCollidableOBBTreeGroup>`;
-  // `["value"]` auto-derefs the pointer. Null => no complex collision.
-  let group = platform
-    .get_member(ctx, "treeGroup")?
-    .get_member(ctx, "value")?;
+  load_obb_group_meshes(ctx, platform, "treeGroup")
+}
+
+/// `owner -> <member>.value -> container -> trees[] -> COBBTree`, one
+/// model-space [`CollisionMesh`] per tree. `<member>` is an inline
+/// `rstl::single_ptr<CCollidableOBBTreeGroup>` — `CScriptPlatform::treeGroup`
+/// or a `CPhysicsActor` subclass whose `GetCollisionPrimitive` override returns
+/// an OBB tree group (`CPuddleToadGamma::collisionTreePrim`).
+///
+/// `None` when the pointer is null (no complex collision) or a structural link
+/// is unreadable; an empty `Vec` is possible if every tree fails validation.
+pub fn load_obb_group_meshes(
+  ctx: &Ctx,
+  owner: &GameInstance,
+  member: &str,
+) -> Option<Vec<CollisionMesh>> {
+  // `["value"]` auto-derefs the owned pointer. Null => no complex collision.
+  let group = owner.get_member(ctx, member)?.get_member(ctx, "value")?;
   if group.address == 0 {
     return None;
   }

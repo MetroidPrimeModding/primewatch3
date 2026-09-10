@@ -1,3 +1,6 @@
 struct CWallWalker: CPatterned {
-
+  // `GetCollisionPrimitive` override — returns `&x590_colSphere` (radius =
+  // `CPatternedInfo::GetHalfExtent()`, centre at the local origin). Inherited
+  // unchanged by `CParasite` / `CSeedling`.
+  CSpherePrimitive collisionSphere 0x590
 }

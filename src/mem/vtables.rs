@@ -154,6 +154,7 @@ pub static MP1_VTABLES: LazyLock<HashMap<u32, &'static str>> = LazyLock::new(|| 
     (0x803ebc70, "CPhazonHealingNodule"),
     (0x803ec030, "CScriptShadowProjector"),
     (0x803ec0a0, "CEnergyBall"),
+    (0x803e24e0, "CPuddleToadGamma"),
     // also possibly CParticleSwoosh or CParticleElectric
     (0x803edd08, "CElementGen"),
   ])
