@@ -114,10 +114,10 @@ impl WorldRenderer {
   /// `CPuddleToadGamma`, …), drawn in the same solid, standability-tinted style
   /// as [`Self::draw_physics_actor_collision`].
   ///
-  /// The primitive rides `GetPrimitiveTransform` = `translation +
-  /// primitiveOffset` (translation only — `CPhysicsActor::GetPrimitiveTransform`
-  /// drops rotation), so it is placed at that point without the actor's
-  /// orientation, matching the game's own collision transform.
+  /// Placement follows each class's `GetPrimitiveTransform`: the box / sphere
+  /// classes inherit `CPhysicsActor`'s (translation + `primitiveOffset`, no
+  /// rotation), but `CPuddleToadGamma` overrides it to the full actor transform
+  /// (like `CScriptPlatform`), so its OBB hull rotates with the actor.
   pub(super) fn draw_ai_collision(
     &mut self,
     ctx: &Ctx,
@@ -179,9 +179,11 @@ impl WorldRenderer {
         let Some(meshes) = load_obb_group_meshes(ctx, entity, member) else {
           return;
         };
-        // Model-space hull placed by translation only (see method docs); the
-        // `dcln` is authored in the actor's rest orientation.
-        self.draw_collision_obb_meshes(&meshes, Mat4::from_translation(base), is_highlighted);
+        // `CPuddleToadGamma::GetPrimitiveTransform` is the full actor transform
+        // plus `primitiveOffset` — the model-space hull rotates with the actor.
+        let mut xf = transform;
+        xf.w_axis = base.extend(1.0);
+        self.draw_collision_obb_meshes(&meshes, xf, is_highlighted);
       }
     }
   }

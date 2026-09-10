@@ -13,7 +13,9 @@
 //! that.
 //!
 //! The mesh is **model-space** (the OBB tree stores local coordinates); the
-//! caller applies the platform's `transform`.
+//! caller applies the owner's `transform` (both `CScriptPlatform` and
+//! `CPuddleToadGamma` override `GetPrimitiveTransform` to the full actor
+//! transform, so the hull rotates with the actor).
 
 use glam::{Mat4, Vec3};
 
@@ -255,6 +257,20 @@ mod tests {
     Some(mem)
   }
 
+  /// `mem1_stone_toad.raw`: Samus standing on a `CPuddleToadGamma`, whose
+  /// `GetCollisionPrimitive` override returns a `dcln` OBB group.
+  fn load_stone_toad_dump() -> Option<GameMemory> {
+    let path = std::env::var("PRIMEWATCH_STONE_TOAD_RAW")
+      .unwrap_or_else(|_| format!("{}/mem1_stone_toad.raw", env!("CARGO_MANIFEST_DIR")));
+    if !std::path::Path::new(&path).exists() {
+      eprintln!("skipping stone_toad dump test: {path} not found");
+      return None;
+    }
+    let mut mem = GameMemory::new();
+    mem.load_from_file(&path).expect("read stone toad dump");
+    Some(mem)
+  }
+
   #[test]
   fn bounds_of_empty_is_zero() {
     assert_eq!(bounds(&[]), (Vec3::ZERO, Vec3::ZERO));
@@ -332,6 +348,62 @@ mod tests {
       assert!(
         in_an_area,
         "platform collision center {center:?} not in any area AABB"
+      );
+    }
+  }
+
+  #[test]
+  fn stone_toad_obb_group_walks_via_the_shared_helper() {
+    let Some(mem) = load_stone_toad_dump() else {
+      return;
+    };
+    let structs = load_defs();
+    let ctx = Ctx::new(&structs, &mem);
+
+    let toad = get_all_objects(&ctx)
+      .into_values()
+      .find(|e| e.extends_class(&ctx, "CPuddleToadGamma"))
+      .expect("a CPuddleToadGamma in the dump (needs its MP1_VTABLES entry to retype)");
+
+    let meshes = load_obb_group_meshes(&ctx, &toad, "collisionTreePrim")
+      .expect("stone toad has a dcln OBB group");
+    assert!(!meshes.is_empty(), "expected at least one COBBTree");
+    for m in &meshes {
+      assert_eq!(m.verts.len() % 3, 0);
+      assert!(!m.verts.is_empty(), "reconstructed a non-empty tri soup");
+      assert!(m.raw_verts.len() > 3);
+    }
+
+    // The hull must ride the actor's full transform, not translation only:
+    // this toad is visibly rotated, so the rotation basis is far from identity.
+    let xf = read_as_transform(&ctx, &toad.get_member(&ctx, "transform").unwrap()).unwrap();
+    let rot = glam::Mat3::from_cols(
+      xf.x_axis.truncate(),
+      xf.y_axis.truncate(),
+      xf.z_axis.truncate(),
+    );
+    assert!(
+      (rot - glam::Mat3::IDENTITY)
+        .to_cols_array()
+        .iter()
+        .any(|c| c.abs() > 0.1),
+      "expected a rotated toad; got {rot:?}"
+    );
+
+    let areas = get_areas(&ctx);
+    for mesh in &meshes {
+      let center = xf.transform_point3((mesh.min + mesh.max) * 0.5);
+      let in_an_area = areas.iter().any(|a| {
+        let mn = read_as_vec3(&ctx, &a.member(&ctx, "aabb").member(&ctx, "min"));
+        let mx = read_as_vec3(&ctx, &a.member(&ctx, "aabb").member(&ctx, "max"));
+        match (mn, mx) {
+          (Some(mn), Some(mx)) => center.cmpge(mn).all() && center.cmple(mx).all(),
+          _ => false,
+        }
+      });
+      assert!(
+        in_an_area,
+        "toad collision center {center:?} not in any area AABB"
       );
     }
   }

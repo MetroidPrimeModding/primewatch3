@@ -155,6 +155,7 @@ pub static MP1_VTABLES: LazyLock<HashMap<u32, &'static str>> = LazyLock::new(|| 
     (0x803ec030, "CScriptShadowProjector"),
     (0x803ec0a0, "CEnergyBall"),
     (0x803e24e0, "CPuddleToadGamma"),
+    (0x803e20c4, "CPuddleSpore"),
     // also possibly CParticleSwoosh or CParticleElectric
     (0x803edd08, "CElementGen"),
   ])
@@ -185,11 +186,12 @@ mod tests {
     assert_eq!(vtable_class_name(0x803d96e9), None);
   }
 
-  /// The original table has 142 distinct entries. Guard the count so a bad
-  /// transcription (dropped or duplicated line) is caught — a duplicate key
-  /// would silently shrink the `HashMap`.
+  /// The original table has 142 distinct entries, plus `CPuddleToadGamma` and
+  /// `CPuddleSpore` added for their `GetCollisionPrimitive` overrides. Guard the
+  /// count so a bad transcription (dropped or duplicated line) is caught — a
+  /// duplicate key would silently shrink the `HashMap`.
   #[test]
   fn table_size_matches_cpp() {
-    assert_eq!(MP1_VTABLES.len(), 142);
+    assert_eq!(MP1_VTABLES.len(), 144);
   }
 }
