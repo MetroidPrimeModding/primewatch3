@@ -78,6 +78,10 @@ Start Dolphin, load Metroid Prime, and Prime Watch will attach on its own.
 
 ## Version History
 
+### 1.3.3
+Perf improvements to platform rendering
+Fix missing Ripper platform (i.e. MQA platform)
+
 ### 1.3.2
 Add physics actor/platform rendering (including doors!)
 Fix bitfield issues
