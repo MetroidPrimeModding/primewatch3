@@ -78,25 +78,29 @@ Start Dolphin, load Metroid Prime, and Prime Watch will attach on its own.
 
 ## Version History
 
+### 1.3.4
+- Fix enums (they were broken)
+- Add surfaceRestraint to CPlayer
+
 ### 1.3.3
-Perf improvements to platform rendering
-Fix missing Ripper platform (i.e. MQA platform)
+- Perf improvements to platform rendering
+- Fix missing Ripper platform (i.e. MQA platform)
 
 ### 1.3.2
-Add physics actor/platform rendering (including doors!)
-Fix bitfield issues
+- Add physics actor/platform rendering (including doors!)
+- Fix bitfield issues
 
 ### 1.3.1
-Improved instant unmorph detection
+- Improved instant unmorph detection
 
 ### 1.3.0
-Add reposition failsafe detection
+- Add reposition failsafe detection
 
 ### 1.2.0
-Add instant unmorph detection and collision triangle picker
+- Add instant unmorph detection and collision triangle picker
 
 ### 1.1.0
-Add scripting engine
+- Add scripting engine
 
 ### 1.0.0
-Initial release of the Rust rewrite.
+- Initial release of the Rust rewrite

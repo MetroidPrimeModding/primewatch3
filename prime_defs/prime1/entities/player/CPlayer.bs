@@ -5,6 +5,7 @@ struct CPlayer: CPhysicsActor {
     f32 startingJumpTimeout 0x288
     f32 minJumpTimeout 0x290
     f32 jumpPresses 0x298
+    ESurfaceRestraints surfaceRestraint 0x2AC
     CAABB fpBounds 0x2d8
     EPlayerCameraState cameraState 0x2F4
     EPlayerMorphBallState morphState 0x2F8
@@ -104,3 +105,5 @@ enum EPlayerZoneType: u32 { Always = -1, Box = 0, Ellipse }
 enum EPlayerScanState: u32 { NotScanning, Scanning, ScanComplete }
 
 enum EGrappleState: u32 { None, Firing, Pull, Swinging, JumpOff }
+
+enum ESurfaceRestraints: u32 { Normal, Air, Ice, Organic, Water, Lava, Phazon, Shrubbery }
