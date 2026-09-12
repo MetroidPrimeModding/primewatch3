@@ -4,10 +4,10 @@ use crate::ctx::Ctx;
 use crate::gl::shapes;
 use crate::mem::math_utils::read_as_transform;
 use crate::structs::prime_structs::GameInstance;
-use crate::world::collision_mesh::{collision_box_verts, collision_sphere_verts};
+use crate::world::collision_mesh::{CMaterialList, collision_box_verts, collision_sphere_verts};
 use crate::world::platform_collision::{load_obb_group_meshes, obb_group_container_addr};
 
-use super::super::{ObbHull, WorldRenderer};
+use super::super::{ObbHullInstance, WorldRenderer};
 use super::{is_degenerate_bbox, read_vec3_at, walk_member};
 
 /// A handful of `CPhysicsActor` subclasses override `GetCollisionPrimitive` to
@@ -78,16 +78,18 @@ impl WorldRenderer {
     entity: &GameInstance,
     is_highlighted: bool,
   ) {
-    // Only draw a primitive the game treats as solid collision — matches
-    // `CCollisionPrimitive::GetMaterial().HasMaterial(kMT_Solid)`. `material`
-    // is the `CMaterialList` u64 mask; `kMT_Solid` is bit 19.
-    const MT_SOLID: u32 = 19;
-    let has_solid = entity
-      .get_member(ctx, "collisionPrimitive")
-      .and_then(|p| p.get_member(ctx, "material"))
+    // let has_solid = entity
+    //   .get_member(ctx, "collisionPrimitive")
+    //   .and_then(|p| p.get_member(ctx, "material"))
+    //   .and_then(|m| m.read_u64(ctx))
+    //   .is_some_and(|mask| CMaterialList(mask).contains(CMaterialList::SOLID));
+
+    let actor_is_solid = entity
+      .get_member(ctx, "material")
       .and_then(|m| m.read_u64(ctx))
-      .is_some_and(|mask| mask & (1u64 << MT_SOLID) != 0);
-    if !has_solid {
+      .is_some_and(|mask| CMaterialList(mask).contains(CMaterialList::SOLID));
+
+    if !actor_is_solid {
       return;
     }
 
@@ -185,10 +187,12 @@ impl WorldRenderer {
     }
   }
 
-  /// Ensure the OBB hull group behind `owner.<member>` is cached
-  /// (`obb_hull_cache`, keyed by container address — built once, the container
-  /// is immutable static data), refresh its `transform` from the owner's live
-  /// pose, and mark it live for this frame's eviction pass.
+  /// Ensure the OBB hull geometry behind `owner.<member>` is cached
+  /// (`obb_mesh_cache`, keyed by container address — built once, the container
+  /// is immutable static data and may be shared by other owners), record/refresh
+  /// this owner's pose in `obb_instances` (keyed by `(owner address, member)` —
+  /// see [`ObbHullInstance`] for why the container address alone can't identify
+  /// an instance), and mark the instance live for this frame's eviction pass.
   ///
   /// The hull tris are drawn from the world-space GPU cache in
   /// [`WorldRenderer::render`]; the red bounds box for a highlighted entity is
@@ -199,29 +203,29 @@ impl WorldRenderer {
     &mut self,
     ctx: &Ctx,
     owner: &GameInstance,
-    member: &str,
+    member: &'static str,
     transform: Mat4,
     is_highlighted: bool,
   ) -> bool {
-    let Some(key) = obb_group_container_addr(ctx, owner, member) else {
+    let Some(container) = obb_group_container_addr(ctx, owner, member) else {
       return false;
     };
-    self.obb_hulls_seen.insert(key);
+    let instance_key = (owner.address, member);
+    self.obb_hulls_seen.insert(instance_key);
 
-    let hull = match self.obb_hull_cache.entry(key) {
+    let meshes = match self.obb_mesh_cache.entry(container) {
       std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
       std::collections::hash_map::Entry::Vacant(e) => {
         let meshes = load_obb_group_meshes(ctx, owner, member).unwrap_or_default();
         if meshes.is_empty() {
           return false;
         }
-        e.insert(ObbHull { meshes, transform })
+        e.insert(meshes)
       }
     };
-    hull.transform = transform;
 
     if is_highlighted {
-      let bounds: Vec<(Vec3, Vec3)> = hull.meshes.iter().map(|m| (m.min, m.max)).collect();
+      let bounds: Vec<(Vec3, Vec3)> = meshes.iter().map(|m| (m.min, m.max)).collect();
       self.render_buff.set_transform(transform);
       for (min, max) in bounds {
         self.render_buff.add_lines(&shapes::generate_cube_lines(
@@ -231,6 +235,14 @@ impl WorldRenderer {
         ));
       }
     }
+
+    self.obb_instances.insert(
+      instance_key,
+      ObbHullInstance {
+        container,
+        transform,
+      },
+    );
     true
   }
 

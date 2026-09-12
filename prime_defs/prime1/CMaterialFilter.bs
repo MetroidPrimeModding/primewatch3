@@ -1,0 +1,7 @@
+struct CMaterialFilter {
+  u64 include
+  u64 exclude
+  EFilterType type
+}
+
+enum EFilterType: u32 { Always, Include, Exclude, IncludeExclude }

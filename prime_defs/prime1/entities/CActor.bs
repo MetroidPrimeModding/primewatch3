@@ -2,4 +2,5 @@ struct CActor: CEntity {
     CTransform transform 0x34
     *CModelData modelData 0x64
     CAABB renderBounds 0x9C
+    u64 material 0x68
 }

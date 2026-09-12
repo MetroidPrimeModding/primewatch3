@@ -48,7 +48,7 @@ use crate::mem::game_object_utils::get_object_by_entity_id;
 use crate::mem::globals::{get_state_manager, get_tweak_player};
 use crate::mem::math_utils::{read_as_transform, read_as_vec3};
 use crate::structs::prime_structs::GameInstance;
-use crate::world::collision_mesh::{CollisionMesh, ECollisionMaterial};
+use crate::world::collision_mesh::{CMaterialList, CollisionMesh};
 use crate::world::ray_trace::{MaterialFilter, Ray, raycast_world};
 
 fn read_vec3_member(ctx: &Ctx, parent: &GameInstance, name: &str) -> Option<Vec3> {
@@ -61,10 +61,10 @@ fn read_vec3_member(ctx: &Ctx, parent: &GameInstance, name: &str) -> Option<Vec3
 /// `EMaterialTypes` that only tag dynamic collision actors — they have no
 /// `CAreaOctTree` surface bit, and this sweep hits only the static mesh (empty
 /// `nearList`), so the two remaining exclusions are the whole filter here.
-pub fn ball_camera_filter(m: ECollisionMaterial) -> bool {
-  m.contains(ECollisionMaterial::SOLID)
-    && !m.contains(ECollisionMaterial::SHOOT_THRU) // EMaterialTypes::ProjectilePassthrough
-    && !m.contains(ECollisionMaterial::CAMERA_THRU) // EMaterialTypes::CameraPassthrough
+pub fn ball_camera_filter(m: CMaterialList) -> bool {
+  m.contains(CMaterialList::SOLID)
+    && !m.contains(CMaterialList::PROJECTILE_PASSTHROUGH) // EMaterialTypes::ProjectilePassthrough
+    && !m.contains(CMaterialList::CAMERA_PASSTHROUGH) // EMaterialTypes::CameraPassthrough
 }
 
 fn bezier_point(a: Vec3, b: Vec3, c: Vec3, d: Vec3, t: f32) -> Vec3 {
@@ -530,7 +530,7 @@ mod tests {
     }
   }
 
-  fn tri_at(z: f32, span: f32, mat: ECollisionMaterial) -> CollisionMesh {
+  fn tri_at(z: f32, span: f32, mat: CMaterialList) -> CollisionMesh {
     CollisionMesh {
       raw_verts: vec![
         Vec3::new(-span, -span, z),
@@ -561,13 +561,13 @@ mod tests {
 
   #[test]
   fn ball_camera_filter_matches_the_include_exclude() {
-    assert!(ball_camera_filter(ECollisionMaterial::SOLID));
-    assert!(!ball_camera_filter(ECollisionMaterial(0))); // not Solid
-    assert!(!ball_camera_filter(ECollisionMaterial(
-      ECollisionMaterial::SOLID.0 | ECollisionMaterial::CAMERA_THRU.0
+    assert!(ball_camera_filter(CMaterialList::SOLID));
+    assert!(!ball_camera_filter(CMaterialList(0))); // not Solid
+    assert!(!ball_camera_filter(CMaterialList(
+      CMaterialList::SOLID.0 | CMaterialList::CAMERA_PASSTHROUGH.0
     )));
-    assert!(!ball_camera_filter(ECollisionMaterial(
-      ECollisionMaterial::SOLID.0 | ECollisionMaterial::SHOOT_THRU.0
+    assert!(!ball_camera_filter(CMaterialList(
+      CMaterialList::SOLID.0 | CMaterialList::PROJECTILE_PASSTHROUGH.0
     )));
   }
 
@@ -580,7 +580,7 @@ mod tests {
       player_forward: Vec3::new(0.0, 1.0, 0.0),
       eye_pos: Vec3::new(0.0, 0.0, 0.0),
     };
-    let meshes: Vec<CollisionMesh> = vec![tri_at(-50.0, 1.0, ECollisionMaterial::SOLID)];
+    let meshes: Vec<CollisionMesh> = vec![tri_at(-50.0, 1.0, CMaterialList::SOLID)];
     let p = predict_failsafe(&inp, meshes.iter());
     assert!(!p.would_trigger);
   }
@@ -604,7 +604,7 @@ mod tests {
       raw_edges: vec![[0, 1], [1, 2], [2, 0]],
       raw_polys: vec![[0, 1, 2]],
       raw_poly_materials: vec![0],
-      materials: vec![ECollisionMaterial::SOLID],
+      materials: vec![CMaterialList::SOLID],
       ..Default::default()
     };
     let meshes = [wall];
@@ -630,8 +630,8 @@ mod tests {
       raw_polys: vec![[0, 1, 2]],
       raw_poly_materials: vec![0],
       // Solid but camera-through -> BallCameraFilter rejects it.
-      materials: vec![ECollisionMaterial(
-        ECollisionMaterial::SOLID.0 | ECollisionMaterial::CAMERA_THRU.0,
+      materials: vec![CMaterialList(
+        CMaterialList::SOLID.0 | CMaterialList::CAMERA_PASSTHROUGH.0,
       )],
       ..Default::default()
     };

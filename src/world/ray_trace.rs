@@ -18,7 +18,7 @@
 
 use glam::Vec3;
 
-use crate::world::collision_mesh::{CollisionMesh, ECollisionMaterial};
+use crate::world::collision_mesh::{CMaterialList, CollisionMesh};
 
 /// A world-space ray. `dir` is expected to be unit length, so `t` values are in
 /// world units.
@@ -41,7 +41,7 @@ pub struct RayHit {
   /// Index into the master triangle list (`0..polyCount`).
   pub tri_index: usize,
   /// The triangle's 32-bit surface material word.
-  pub material: ECollisionMaterial,
+  pub material: CMaterialList,
 }
 
 /// Two-sided Möller–Trumbore, inlined exactly as the octree leaf test does it
@@ -116,9 +116,9 @@ impl TriCull {
   }
 }
 
-pub type MaterialFilter<'a> = &'a dyn Fn(ECollisionMaterial) -> bool;
+pub type MaterialFilter<'a> = &'a dyn Fn(CMaterialList) -> bool;
 
-pub fn pass_everything(_: ECollisionMaterial) -> bool {
+pub fn pass_everything(_: CMaterialList) -> bool {
   true
 }
 
@@ -223,7 +223,7 @@ mod tests {
 
   /// verts (0,0,0)/(1,0,0)/(0,1,0), edges [0,1]/[1,2]/[2,0], one poly, one
   /// material — same shape as `collision_mesh`'s test helper.
-  fn single_triangle(mat: ECollisionMaterial) -> CollisionMesh {
+  fn single_triangle(mat: CMaterialList) -> CollisionMesh {
     CollisionMesh {
       raw_verts: vec![
         Vec3::new(0.0, 0.0, 0.0),
@@ -308,7 +308,7 @@ mod tests {
 
   #[test]
   fn raycast_mesh_hits_the_single_triangle() {
-    let mesh = single_triangle(ECollisionMaterial(0));
+    let mesh = single_triangle(CMaterialList(0));
     let hit = raycast_mesh(
       &mesh,
       Ray {
@@ -341,7 +341,7 @@ mod tests {
       raw_edges: vec![[0, 1], [1, 2], [2, 0], [3, 4], [4, 5], [5, 3]],
       raw_polys: vec![[0, 1, 2], [3, 4, 5]],
       raw_poly_materials: vec![0, 0],
-      materials: vec![ECollisionMaterial(0)],
+      materials: vec![CMaterialList(0)],
       ..Default::default()
     };
     let hit = raycast_mesh(
@@ -361,7 +361,7 @@ mod tests {
 
   #[test]
   fn raycast_mesh_respects_max_t() {
-    let mesh = single_triangle(ECollisionMaterial(0));
+    let mesh = single_triangle(CMaterialList(0));
     let ray = Ray {
       origin: Vec3::new(0.2, 0.2, 5.0),
       dir: Vec3::new(0.0, 0.0, -1.0),
@@ -372,7 +372,7 @@ mod tests {
 
   #[test]
   fn raycast_mesh_skips_filtered_out_triangles() {
-    let mesh = single_triangle(ECollisionMaterial::SOLID);
+    let mesh = single_triangle(CMaterialList::SOLID);
     let ray = Ray {
       origin: Vec3::new(0.2, 0.2, 5.0),
       dir: Vec3::new(0.0, 0.0, -1.0),
@@ -384,7 +384,7 @@ mod tests {
         &mesh,
         ray,
         0.0,
-        &|m: ECollisionMaterial| m.contains(ECollisionMaterial::SOLID),
+        &|m: CMaterialList| m.contains(CMaterialList::SOLID),
         TriCull::None,
       )
       .is_some()
@@ -395,7 +395,7 @@ mod tests {
   fn raycast_mesh_honours_tri_cull() {
     // A single triangle in the z = 0 plane. `build_vertices` gives it an
     // outward normal; a ray straight down (dir -Z) hits its front face.
-    let mut mesh = single_triangle(ECollisionMaterial(0));
+    let mut mesh = single_triangle(CMaterialList(0));
     mesh.build_vertices();
     let n = mesh.render_tri_normal(0).unwrap();
     let ray = Ray {
@@ -415,8 +415,8 @@ mod tests {
 
   #[test]
   fn raycast_world_keeps_the_nearest_across_meshes() {
-    let far = single_triangle(ECollisionMaterial(0)); // z = 0
-    let mut near = single_triangle(ECollisionMaterial(0));
+    let far = single_triangle(CMaterialList(0)); // z = 0
+    let mut near = single_triangle(CMaterialList(0));
     for v in &mut near.raw_verts {
       v.z += 2.0; // z = 2
     }
@@ -451,7 +451,7 @@ mod tests {
         mesh.raw_poly_materials.push(0);
       }
     }
-    mesh.materials.push(ECollisionMaterial(0));
+    mesh.materials.push(CMaterialList(0));
     mesh.build_vertices();
 
     let brute = mesh.clone(); // bvh still None

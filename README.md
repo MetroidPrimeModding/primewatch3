@@ -78,6 +78,10 @@ Start Dolphin, load Metroid Prime, and Prime Watch will attach on its own.
 
 ## Version History
 
+### 1.3.5
+- Objects that share the same collision mesh will now be rendered properly
+- Doors will properly hide when they are no longer collidable
+
 ### 1.3.4
 - Fix enums (they were broken)
 - Add surfaceRestraint to CPlayer

@@ -10,7 +10,7 @@ struct CCollisionActor: CPhysicsActor {
 struct CCollisionPrimitive {
   vtable 0x803d97e4
 
-  *u8 info 0x4
+  u64 material 0x8
 }
 
 struct CCollidableSphere: CCollisionPrimitive {

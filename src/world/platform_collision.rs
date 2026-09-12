@@ -22,7 +22,7 @@ use glam::Vec3;
 use crate::ctx::Ctx;
 use crate::mem::math_utils::read_as_vec3;
 use crate::structs::prime_structs::GameInstance;
-use crate::world::collision_mesh::{CollisionMesh, ECollisionMaterial};
+use crate::world::collision_mesh::{CMaterialList, CollisionMesh};
 
 /// `COBBTree::x0_magic` — `verify_deaf_babe` rejects anything else. Doubles as a
 /// cheap validation that the whole pointer walk landed on a real tree.
@@ -126,7 +126,10 @@ fn load_obb_tree(ctx: &Ctx, tree: &GameInstance) -> Option<CollisionMesh> {
   let mut mesh = CollisionMesh {
     raw_verts: verts,
     raw_edges: edges,
-    materials: materials.into_iter().map(ECollisionMaterial).collect(),
+    materials: materials
+      .into_iter()
+      .map(|m| CMaterialList(m as u64))
+      .collect(),
     raw_polys: Vec::with_capacity(surf_count),
     raw_poly_materials: Vec::with_capacity(surf_count),
     ..Default::default()

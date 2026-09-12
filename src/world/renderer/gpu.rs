@@ -124,28 +124,32 @@ impl WorldRenderer {
       .retain(|k, _| self.mesh_by_mrea.contains_key(k));
 
     // OBB collision hulls (`draw_platform_collision` / `draw_ai_collision`):
-    // bake each cached model-space hull group to world space under its owner's
-    // current transform, into one buffer per group. A hull re-uploads only when
-    // the owner actually moved (`baked_transform`), so a static platform
-    // uploads once — same as an area mesh.
+    // bake each live owner instance's shared model-space hull geometry to world
+    // space under that owner's current transform, into one buffer per instance
+    // (two owners sharing a `dcln` container still get independent poses — see
+    // `ObbHullInstance`). A hull re-uploads only when its owner actually moved
+    // (`baked_transform`), so a static platform uploads once — same as an area
+    // mesh.
     self
       .obb_gpu_hull_cache
-      .retain(|k, _| self.obb_hull_cache.contains_key(k));
-    for (&key, hull) in &self.obb_hull_cache {
+      .retain(|k, _| self.obb_instances.contains_key(k));
+    for (&key, instance) in &self.obb_instances {
       let up_to_date = self
         .obb_gpu_hull_cache
         .get(&key)
-        .is_some_and(|g| g.baked_transform == hull.transform);
+        .is_some_and(|g| g.baked_transform == instance.transform);
       if up_to_date {
         continue;
       }
-      let normal_mat = Mat3::from_mat4(hull.transform).inverse().transpose();
-      let world: Vec<Vert> = hull
-        .meshes
+      let Some(meshes) = self.obb_mesh_cache.get(&instance.container) else {
+        continue;
+      };
+      let normal_mat = Mat3::from_mat4(instance.transform).inverse().transpose();
+      let world: Vec<Vert> = meshes
         .iter()
         .flat_map(|m| &m.verts)
         .map(|v| Vert {
-          pos: hull
+          pos: instance
             .transform
             .transform_point3(Vec3::from_array(v.pos))
             .to_array(),
@@ -164,7 +168,7 @@ impl WorldRenderer {
           baked_transform: Mat4::IDENTITY,
         });
       entry.mesh.upload(device, queue, &world);
-      entry.baked_transform = hull.transform;
+      entry.baked_transform = instance.transform;
     }
 
     // Per-mesh AABB wireframe boxes — done here so

@@ -484,9 +484,9 @@ Passes(listWord):
 ```
 
 * Triangle surface words only ever set bits 0..31; the bit layout **matches**
-  `prime_defs` `enum CollisionMaterial` (bit 31 = FLOOR, 30 = WALL, 29 = CEILING,
-  19 = SOLID, 25 = REDUNDANT_EDGE/FLIPPED_TRI, 18 = SHOOT_THRU, 27 = SCAN_THRU,
-  26 = SEE_THRU, …). `EMaterialTypes` bits ≥ 32 (Player, Character, Trigger…) are
+  decomp's `EMaterialTypes` (bit 31 = FLOOR, 30 = WALL, 29 = CEILING, 19 = SOLID,
+  25 = REDUNDANT_EDGE/FLIPPED_TRI, 18 = PROJECTILE_PASSTHROUGH, 27 = SCAN_PASSTHROUGH,
+  26 = SEE_THROUGH, …). `EMaterialTypes` bits ≥ 32 (Player, Character, Trigger…) are
   only relevant on actors, not static tris.
 * `skPassEverything` / a default-constructed filter → `Always` → every triangle
   passes. That is the right default for a generic "what would a ray hit" overlay.

@@ -162,8 +162,15 @@ impl WorldRenderer {
     }
 
     self
-      .obb_hull_cache
-      .retain(|addr, _| self.obb_hulls_seen.contains(addr));
+      .obb_instances
+      .retain(|key, _| self.obb_hulls_seen.contains(key));
+    // A container can outlive the instance that first cached it (evicted above)
+    // while another instance still shares it — only drop geometry no live
+    // instance references any more.
+    let live_containers: HashSet<u32> = self.obb_instances.values().map(|i| i.container).collect();
+    self
+      .obb_mesh_cache
+      .retain(|container, _| live_containers.contains(container));
   }
 
   /// `WorldRenderer::getScreenspacePosForActor`: project the entity's transform

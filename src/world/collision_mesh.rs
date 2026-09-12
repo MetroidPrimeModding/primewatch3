@@ -9,61 +9,107 @@ use crate::gl::shapes;
 use crate::structs::prime_structs::GameInstance;
 use crate::world::bvh::{Aabb, Bvh};
 
-/// Collision-surface material bitflags (mirrored by `enum CollisionMaterial` in
-/// `prime_defs/prime1/CAreaOctTree.bs`).
+/// The game's `CMaterialList` bitset (decomp's `Collision/CMaterialList.hpp`,
+/// metaforce's `Runtime/Collision/CMaterialList.hpp` — same `EMaterialTypes`
+/// enum and `1 << material` packing both places). Bits 0-31 are mesh-surface
+/// materials (set on `CAreaOctTree` / `COBBTree` verts, edges, and polys — see
+/// [`load_mesh`], which zero-extends the `u32` material words it reads out of
+/// game memory into this type); bits 32-63 are actor-side tags (`Player`,
+/// `Character`, `Trigger`, …) set on a `CPhysicsActor`'s or
+/// `CCollisionPrimitive`'s `material` member. One type either way — the game
+/// has only the one class.
 ///
 /// A native bitflag newtype rather than a `GameEnum`: the game ORs these
 /// together and tests them with `!!(a & b)`. [`contains`] is that idiom.
 ///
-/// [`contains`]: ECollisionMaterial::contains
+/// [`contains`]: CMaterialList::contains
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct ECollisionMaterial(pub u32);
+pub struct CMaterialList(pub u64);
 
-impl std::fmt::Debug for ECollisionMaterial {
+impl std::fmt::Debug for CMaterialList {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    write!(f, "ECollisionMaterial({:#010x})", self.0)
+    write!(f, "CMaterialList({:#018x})", self.0)
   }
 }
 
 #[allow(unused)]
-impl ECollisionMaterial {
-  pub const UNKNOWN_1: ECollisionMaterial = ECollisionMaterial(0x1);
-  pub const STONE: ECollisionMaterial = ECollisionMaterial(0x2);
-  pub const METAL: ECollisionMaterial = ECollisionMaterial(0x4);
-  pub const GRASS: ECollisionMaterial = ECollisionMaterial(0x8);
-  pub const ICE: ECollisionMaterial = ECollisionMaterial(0x10);
-  pub const PILLAR: ECollisionMaterial = ECollisionMaterial(0x20);
-  pub const METAL_GRATING: ECollisionMaterial = ECollisionMaterial(0x40);
-  pub const PHAZON: ECollisionMaterial = ECollisionMaterial(0x80);
-  pub const DIRT: ECollisionMaterial = ECollisionMaterial(0x100);
-  pub const LAVA: ECollisionMaterial = ECollisionMaterial(0x200);
-  pub const UNKNOWN_2: ECollisionMaterial = ECollisionMaterial(0x400);
-  pub const SNOW: ECollisionMaterial = ECollisionMaterial(0x800);
-  pub const SLOW_MUD: ECollisionMaterial = ECollisionMaterial(0x1000);
-  pub const HALFPIPE: ECollisionMaterial = ECollisionMaterial(0x2000);
-  pub const MUD: ECollisionMaterial = ECollisionMaterial(0x4000);
-  pub const GLASS: ECollisionMaterial = ECollisionMaterial(0x8000);
-  pub const SHIELD: ECollisionMaterial = ECollisionMaterial(0x10000);
-  pub const SAND: ECollisionMaterial = ECollisionMaterial(0x20000);
-  pub const SHOOT_THRU: ECollisionMaterial = ECollisionMaterial(0x40000);
-  pub const SOLID: ECollisionMaterial = ECollisionMaterial(0x80000);
-  pub const UNKNOWN_3: ECollisionMaterial = ECollisionMaterial(0x100000);
-  pub const CAMERA_THRU: ECollisionMaterial = ECollisionMaterial(0x200000);
-  pub const WOOD: ECollisionMaterial = ECollisionMaterial(0x400000);
-  pub const ORGANIC: ECollisionMaterial = ECollisionMaterial(0x800000);
-  pub const UNKNOWN_4: ECollisionMaterial = ECollisionMaterial(0x1000000);
-  pub const REDUNDANT_EDGE: ECollisionMaterial = ECollisionMaterial(0x2000000);
-  pub const FLIPPED_TRI: ECollisionMaterial = ECollisionMaterial(0x2000000);
-  pub const SEE_THRU: ECollisionMaterial = ECollisionMaterial(0x4000000);
-  pub const SCAN_THRU: ECollisionMaterial = ECollisionMaterial(0x8000000);
-  pub const AI_WALK_THRU: ECollisionMaterial = ECollisionMaterial(0x10000000);
-  pub const CEILING: ECollisionMaterial = ECollisionMaterial(0x20000000);
-  pub const WALL: ECollisionMaterial = ECollisionMaterial(0x40000000);
-  pub const FLOOR: ECollisionMaterial = ECollisionMaterial(0x80000000);
+impl CMaterialList {
+  pub const NO_STEP_LOGIC: CMaterialList = CMaterialList(0x1);
+  pub const STONE: CMaterialList = CMaterialList(0x2);
+  pub const METAL: CMaterialList = CMaterialList(0x4);
+  pub const GRASS: CMaterialList = CMaterialList(0x8);
+  pub const ICE: CMaterialList = CMaterialList(0x10);
+  pub const PILLAR: CMaterialList = CMaterialList(0x20);
+  pub const METAL_GRATING: CMaterialList = CMaterialList(0x40);
+  pub const PHAZON: CMaterialList = CMaterialList(0x80);
+  pub const DIRT: CMaterialList = CMaterialList(0x100);
+  pub const LAVA: CMaterialList = CMaterialList(0x200);
+  pub const LAVA_STONE: CMaterialList = CMaterialList(0x400);
+  pub const SNOW: CMaterialList = CMaterialList(0x800);
+  pub const MUD_SLOW: CMaterialList = CMaterialList(0x1000);
+  pub const HALF_PIPE: CMaterialList = CMaterialList(0x2000);
+  pub const MUD: CMaterialList = CMaterialList(0x4000);
+  pub const GLASS: CMaterialList = CMaterialList(0x8000);
+  pub const SHIELD: CMaterialList = CMaterialList(0x10000);
+  pub const SAND: CMaterialList = CMaterialList(0x20000);
+  pub const PROJECTILE_PASSTHROUGH: CMaterialList = CMaterialList(0x40000);
+  pub const SOLID: CMaterialList = CMaterialList(0x80000);
+  pub const NO_PLATFORM_COLLISION: CMaterialList = CMaterialList(0x100000);
+  pub const CAMERA_PASSTHROUGH: CMaterialList = CMaterialList(0x200000);
+  pub const WOOD: CMaterialList = CMaterialList(0x400000);
+  pub const ORGANIC: CMaterialList = CMaterialList(0x800000);
+  pub const NO_EDGE_COLLISION: CMaterialList = CMaterialList(0x1000000);
+  /// `EMaterialTypes::RedundantEdgeOrFlippedTri` — one bit, two meanings
+  /// depending on whether it's set on an edge or a poly. [`FLIPPED_TRI`] is
+  /// the same value, named for the poly-side reading used by
+  /// [`CollisionMesh::master_list_triangle`].
+  ///
+  /// [`FLIPPED_TRI`]: CMaterialList::FLIPPED_TRI
+  /// [`CollisionMesh::master_list_triangle`]: CollisionMesh::master_list_triangle
+  pub const REDUNDANT_EDGE: CMaterialList = CMaterialList(0x2000000);
+  pub const FLIPPED_TRI: CMaterialList = CMaterialList(0x2000000);
+  pub const SEE_THROUGH: CMaterialList = CMaterialList(0x4000000);
+  pub const SCAN_PASSTHROUGH: CMaterialList = CMaterialList(0x8000000);
+  pub const AI_PASSTHROUGH: CMaterialList = CMaterialList(0x10000000);
+  pub const CEILING: CMaterialList = CMaterialList(0x20000000);
+  pub const WALL: CMaterialList = CMaterialList(0x40000000);
+  pub const FLOOR: CMaterialList = CMaterialList(0x80000000);
+
+  // Bits 32-63: actor-side `EMaterialTypes` tags, not set on mesh surfaces.
+  // Named `1u64 << n` rather than hex — the hex form is unwieldy this far up
+  // and the shift is exactly what `CMaterialList::Add` does in the game.
+  pub const PLAYER: CMaterialList = CMaterialList(1u64 << 32);
+  pub const CHARACTER: CMaterialList = CMaterialList(1u64 << 33);
+  pub const TRIGGER: CMaterialList = CMaterialList(1u64 << 34);
+  pub const PROJECTILE: CMaterialList = CMaterialList(1u64 << 35);
+  pub const BOMB: CMaterialList = CMaterialList(1u64 << 36);
+  pub const GROUND_COLLIDER: CMaterialList = CMaterialList(1u64 << 37);
+  pub const NO_STATIC_COLLISION: CMaterialList = CMaterialList(1u64 << 38);
+  pub const SCANNABLE: CMaterialList = CMaterialList(1u64 << 39);
+  pub const TARGET: CMaterialList = CMaterialList(1u64 << 40);
+  pub const ORBIT: CMaterialList = CMaterialList(1u64 << 41);
+  pub const OCCLUDER: CMaterialList = CMaterialList(1u64 << 42);
+  pub const IMMOVABLE: CMaterialList = CMaterialList(1u64 << 43);
+  pub const DEBRIS: CMaterialList = CMaterialList(1u64 << 44);
+  pub const POWER_BOMB: CMaterialList = CMaterialList(1u64 << 45);
+  pub const UNKNOWN_46: CMaterialList = CMaterialList(1u64 << 46);
+  pub const COLLISION_ACTOR: CMaterialList = CMaterialList(1u64 << 47);
+  pub const AI_BLOCK: CMaterialList = CMaterialList(1u64 << 48);
+  pub const PLATFORM: CMaterialList = CMaterialList(1u64 << 49);
+  pub const NON_SOLID_DAMAGEABLE: CMaterialList = CMaterialList(1u64 << 50);
+  pub const RADAR_OBJECT: CMaterialList = CMaterialList(1u64 << 51);
+  pub const PLATFORM_SLAVE: CMaterialList = CMaterialList(1u64 << 52);
+  pub const AI_JOINT: CMaterialList = CMaterialList(1u64 << 53);
+  pub const UNKNOWN_54: CMaterialList = CMaterialList(1u64 << 54);
+  pub const SOLID_CHARACTER: CMaterialList = CMaterialList(1u64 << 55);
+  pub const EXCLUDE_FROM_LINE_OF_SIGHT_TEST: CMaterialList = CMaterialList(1u64 << 56);
+  pub const EXCLUDE_FROM_RADAR: CMaterialList = CMaterialList(1u64 << 57);
+  pub const NO_PLAYER_COLLISION: CMaterialList = CMaterialList(1u64 << 58);
+  pub const SIXTY_THREE: CMaterialList = CMaterialList(1u64 << 63);
 
   /// Ports the C++ `!!(a & b)` idiom — is any bit of `flag` set in `self`?
-  pub fn contains(self, flag: ECollisionMaterial) -> bool {
+  pub fn contains(self, flag: CMaterialList) -> bool {
     (self.0 & flag.0) != 0
   }
 }
@@ -86,7 +132,7 @@ pub struct CollisionMesh {
   pub raw_poly_materials: Vec<u16>,
   pub min: Vec3,
   pub max: Vec3,
-  pub materials: Vec<ECollisionMaterial>,
+  pub materials: Vec<CMaterialList>,
   /// Filled by [`CollisionMesh::build_vertices`] — the tri soup the renderer uploads.
   pub verts: Vec<Vert>,
   /// Spatial index over the master triangle list, built by
@@ -166,7 +212,7 @@ pub fn load_mesh(ctx: &Ctx, area: &GameInstance) -> Option<CollisionMesh> {
     let a = material_start.wrapping_add(i.wrapping_mul(4));
     res
       .materials
-      .push(ECollisionMaterial(mem.read_u32(a).unwrap_or(0)));
+      .push(CMaterialList(mem.read_u32(a).unwrap_or(0) as u64));
   }
 
   for i in 0..vert_count {
@@ -233,7 +279,7 @@ pub fn load_mesh(ctx: &Ctx, area: &GameInstance) -> Option<CollisionMesh> {
 #[derive(Clone, Copy, Debug)]
 pub struct MasterTri {
   pub verts: [Vec3; 3],
-  pub material: ECollisionMaterial,
+  pub material: CMaterialList,
 }
 
 impl CollisionMesh {
@@ -270,10 +316,10 @@ impl CollisionMesh {
       .get(idx)
       .and_then(|&m| self.materials.get(m as usize))
       .copied()
-      .unwrap_or(ECollisionMaterial(0));
+      .unwrap_or(CMaterialList(0));
 
     let vert = |i: u16| self.raw_verts.get(i as usize).copied();
-    let (a, b) = if material.contains(ECollisionMaterial::FLIPPED_TRI) {
+    let (a, b) = if material.contains(CMaterialList::FLIPPED_TRI) {
       (vert(e0[1])?, vert(e0[0])?)
     } else {
       (vert(e0[0])?, vert(e0[1])?)
@@ -311,7 +357,7 @@ impl CollisionMesh {
         .materials
         .get(poly_mat_idx)
         .copied()
-        .unwrap_or(ECollisionMaterial(0));
+        .unwrap_or(CMaterialList(0));
 
       let line1 = self
         .raw_edges
@@ -351,7 +397,7 @@ impl CollisionMesh {
       };
 
       // swap if needed
-      if poly_flags.contains(ECollisionMaterial::FLIPPED_TRI) {
+      if poly_flags.contains(CMaterialList::FLIPPED_TRI) {
         std::mem::swap(&mut i1, &mut i3);
       }
 
@@ -394,12 +440,12 @@ impl CollisionMesh {
 /// quirk: in practice only a `FLOOR` flag (or a steeply upward normal, which
 /// takes the first arm) ever leaves the default grey, so walls/ceilings show
 /// grey unless their flag is set.
-pub fn surface_color(flags: ECollisionMaterial, normal: Vec3) -> [f32; 4] {
-  if flags.contains(ECollisionMaterial::FLOOR) || normal.z > 0.85 {
+pub fn surface_color(flags: CMaterialList, normal: Vec3) -> [f32; 4] {
+  if flags.contains(CMaterialList::FLOOR) || normal.z > 0.85 {
     [0.4, 0.6, 0.4, 1.0]
-  } else if flags.contains(ECollisionMaterial::WALL) || normal.z > 0.85 {
+  } else if flags.contains(CMaterialList::WALL) || normal.z > 0.85 {
     [0.6, 0.6, 0.6, 1.0]
-  } else if flags.contains(ECollisionMaterial::CEILING) || normal.z > 0.85 {
+  } else if flags.contains(CMaterialList::CEILING) || normal.z > 0.85 {
     [0.8, 0.5, 0.5, 1.0]
   } else {
     [0.2, 0.2, 0.2, 1.0]
@@ -454,7 +500,7 @@ mod tests {
   use crate::mem::game_memory::GameMemory;
   use crate::structs::prime_structs::GameStructs;
 
-  fn single_triangle(mat: ECollisionMaterial) -> CollisionMesh {
+  fn single_triangle(mat: CMaterialList) -> CollisionMesh {
     CollisionMesh {
       raw_verts: vec![
         Vec3::new(0.0, 0.0, 0.0),
@@ -477,21 +523,21 @@ mod tests {
   fn surface_color_arms() {
     // Steep upward normal -> floor tint via the first arm, no flag needed.
     assert_eq!(
-      surface_color(ECollisionMaterial(0), Vec3::Z),
+      surface_color(CMaterialList(0), Vec3::Z),
       [0.4, 0.6, 0.4, 1.0]
     );
     // Flat normal, no flags -> default grey. The verbatim `|| n.z > 0.85` quirk
     // makes the WALL / CEILING arms unreachable without their flag.
     assert_eq!(
-      surface_color(ECollisionMaterial(0), Vec3::X),
+      surface_color(CMaterialList(0), Vec3::X),
       [0.2, 0.2, 0.2, 1.0]
     );
     assert_eq!(
-      surface_color(ECollisionMaterial::WALL, Vec3::X),
+      surface_color(CMaterialList::WALL, Vec3::X),
       [0.6, 0.6, 0.6, 1.0]
     );
     assert_eq!(
-      surface_color(ECollisionMaterial::CEILING, Vec3::NEG_Z),
+      surface_color(CMaterialList::CEILING, Vec3::NEG_Z),
       [0.8, 0.5, 0.5, 1.0]
     );
   }
@@ -537,7 +583,7 @@ mod tests {
 
   #[test]
   fn build_vertices_single_triangle() {
-    let mut mesh = single_triangle(ECollisionMaterial(0));
+    let mut mesh = single_triangle(CMaterialList(0));
     mesh.build_vertices();
 
     assert_eq!(mesh.verts.len(), 3);
@@ -561,9 +607,9 @@ mod tests {
 
   #[test]
   fn build_vertices_flipped_tri_swaps_v1_v3() {
-    let mut plain = single_triangle(ECollisionMaterial(0));
+    let mut plain = single_triangle(CMaterialList(0));
     plain.build_vertices();
-    let mut flipped = single_triangle(ECollisionMaterial::FLIPPED_TRI);
+    let mut flipped = single_triangle(CMaterialList::FLIPPED_TRI);
     flipped.build_vertices();
 
     assert_eq!(flipped.verts.len(), 3);
@@ -575,7 +621,7 @@ mod tests {
 
   #[test]
   fn master_list_triangle_uses_first_two_edges() {
-    let mesh = single_triangle(ECollisionMaterial(0));
+    let mesh = single_triangle(CMaterialList(0));
     let tri = mesh.master_list_triangle(0).unwrap();
     // e0 = [0,1] -> verts[0], verts[1]; e1 = [1,2] -> unshared endpoint is 2.
     assert_eq!(tri.verts[0], Vec3::new(0.0, 0.0, 0.0));
@@ -585,10 +631,10 @@ mod tests {
 
   #[test]
   fn master_list_triangle_flipped_swaps_first_two() {
-    let plain = single_triangle(ECollisionMaterial(0))
+    let plain = single_triangle(CMaterialList(0))
       .master_list_triangle(0)
       .unwrap();
-    let flipped = single_triangle(ECollisionMaterial::FLIPPED_TRI)
+    let flipped = single_triangle(CMaterialList::FLIPPED_TRI)
       .master_list_triangle(0)
       .unwrap();
     assert_eq!(flipped.verts[0], plain.verts[1]);
@@ -598,20 +644,20 @@ mod tests {
 
   #[test]
   fn master_list_triangle_out_of_range_is_none() {
-    let mesh = single_triangle(ECollisionMaterial(0));
+    let mesh = single_triangle(CMaterialList(0));
     assert!(mesh.master_list_triangle(1).is_none());
   }
 
   #[test]
   fn collision_material_contains_matches_cpp_idiom() {
-    let m = ECollisionMaterial(ECollisionMaterial::FLOOR.0 | ECollisionMaterial::WALL.0);
-    assert!(m.contains(ECollisionMaterial::FLOOR));
-    assert!(m.contains(ECollisionMaterial::WALL));
-    assert!(!m.contains(ECollisionMaterial::CEILING));
+    let m = CMaterialList(CMaterialList::FLOOR.0 | CMaterialList::WALL.0);
+    assert!(m.contains(CMaterialList::FLOOR));
+    assert!(m.contains(CMaterialList::WALL));
+    assert!(!m.contains(CMaterialList::CEILING));
     // REDUNDANT_EDGE and FLIPPED_TRI alias 0x2000000, verbatim from C++.
     assert_eq!(
-      ECollisionMaterial::REDUNDANT_EDGE.0,
-      ECollisionMaterial::FLIPPED_TRI.0
+      CMaterialList::REDUNDANT_EDGE.0,
+      CMaterialList::FLIPPED_TRI.0
     );
   }
 

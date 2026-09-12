@@ -7,14 +7,7 @@ impl WorldRenderer {
   /// opaque buffer, then the aabb / sphere / obbTreeGroup primitive ladder
   /// (first non-null wins).
   pub(super) fn draw_door(&mut self, ctx: &Ctx, entity: &GameInstance, is_highlighted: bool) {
-    let Some(is_open) = entity
-      .get_member(ctx, "isOpen")
-      .and_then(|m| m.read_bool(ctx))
-    else {
-      return;
-    };
-
-    if self.actor_render_config.render_physics_collision && !is_open {
+    if self.actor_render_config.render_physics_collision {
       self.draw_physics_actor_collision(ctx, entity, is_highlighted);
     }
     if self.actor_render_config.render_physics_actors {

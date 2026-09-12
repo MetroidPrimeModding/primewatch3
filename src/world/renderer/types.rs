@@ -4,7 +4,7 @@
 
 use glam::{Vec2, Vec3};
 
-use crate::world::collision_mesh::ECollisionMaterial;
+use crate::world::collision_mesh::CMaterialList;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CullType {
@@ -62,7 +62,7 @@ pub struct HoveredTri {
   pub verts: [Vec3; 3],
   pub point: Vec3,
   pub normal: Vec3,
-  pub material: ECollisionMaterial,
+  pub material: CMaterialList,
   /// Ray distance to the hit (world units from the camera).
   pub t: f32,
 }

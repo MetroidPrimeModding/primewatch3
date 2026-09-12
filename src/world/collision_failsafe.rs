@@ -77,14 +77,14 @@ use crate::mem::globals::get_state_manager;
 use crate::mem::math_utils::{read_as_transform, read_as_vec3};
 use crate::structs::prime_structs::GameInstance;
 use crate::world::bvh::Aabb;
-use crate::world::collision_mesh::{CollisionMesh, ECollisionMaterial};
+use crate::world::collision_mesh::{CMaterialList, CollisionMesh};
 use crate::world::ray_trace::{MaterialFilter, Ray, raycast_world};
 
 /// `CActor`'s default material filter is `MakeIncludeExclude({Solid}, {0})`
 /// (`Runtime/World/CActor.cpp:37`) and the player never overrides it, so a
 /// triangle "collides" iff it carries the `Solid` bit.
-pub fn player_collision_filter(m: ECollisionMaterial) -> bool {
-  m.contains(ECollisionMaterial::SOLID)
+pub fn player_collision_filter(m: CMaterialList) -> bool {
+  m.contains(CMaterialList::SOLID)
 }
 
 // --- primitive-vs-triangle tests -------------------------------------------------
@@ -703,7 +703,7 @@ mod tests {
       raw_edges: vec![[0, 1], [1, 2], [2, 0], [2, 3], [3, 0]],
       raw_polys: vec![[0, 1, 2], [3, 4, 2]],
       raw_poly_materials: vec![0, 0],
-      materials: vec![ECollisionMaterial::SOLID],
+      materials: vec![CMaterialList::SOLID],
       ..Default::default()
     }
   }
@@ -720,7 +720,7 @@ mod tests {
       raw_edges: vec![[0, 1], [1, 2], [2, 0], [2, 3], [3, 0]],
       raw_polys: vec![[0, 1, 2], [3, 4, 2]],
       raw_poly_materials: vec![0, 0],
-      materials: vec![ECollisionMaterial::SOLID],
+      materials: vec![CMaterialList::SOLID],
       ..Default::default()
     }
   }
@@ -779,10 +779,10 @@ mod tests {
 
   #[test]
   fn player_collision_filter_wants_solid() {
-    assert!(player_collision_filter(ECollisionMaterial::SOLID));
-    assert!(!player_collision_filter(ECollisionMaterial::FLOOR));
-    assert!(player_collision_filter(ECollisionMaterial(
-      ECollisionMaterial::SOLID.0 | ECollisionMaterial::FLOOR.0
+    assert!(player_collision_filter(CMaterialList::SOLID));
+    assert!(!player_collision_filter(CMaterialList::FLOOR));
+    assert!(player_collision_filter(CMaterialList(
+      CMaterialList::SOLID.0 | CMaterialList::FLOOR.0
     )));
   }
 
