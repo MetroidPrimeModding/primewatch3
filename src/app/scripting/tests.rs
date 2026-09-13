@@ -111,6 +111,47 @@ fn missing_member_is_unit_not_a_panic() {
 }
 
 #[test]
+fn array_member_indexes_by_integer() {
+  let structs = load_defs();
+  let mem = GameMemory::new();
+  let ctx = Ctx::new(&structs, &mem);
+  let objects = BTreeMap::new();
+
+  // CTweakPlayer::maxTranslationalAcceleration is `f32[8]` at offset 0x4.
+  let tweak = GameInstance::new(0x8000_0000, "CTweakPlayer".to_string());
+  let mut scope = rhai::Scope::new();
+  scope.push("tweak", tweak);
+
+  let engine = build_engine();
+  let ast = engine
+    .compile(
+      r#"
+        let arr = tweak["maxTranslationalAcceleration"];
+        let w = inspector_window("t");
+        w.add("bracket", arr[3].to_string());
+        w.add("elem", arr.elem(3).to_string());
+        show(w);
+      "#,
+    )
+    .expect("compile");
+
+  let frame = ScriptFrame::enter(&ctx, &objects);
+  engine.run_ast_with_scope(&mut scope, &ast).expect("run");
+  let windows = frame.take_windows();
+
+  assert_eq!(windows.len(), 1);
+  let expected = format!("f32 @ {:#010x}", 0x8000_0000u32 + 0x4 + 3 * 4);
+  match &windows[0].rows[0] {
+    CustomInspectorRow::Text(t) => assert_eq!(t, &format!("bracket: {expected}")),
+    other => panic!("row 0 kind: {}", row_kind(other)),
+  }
+  match &windows[0].rows[1] {
+    CustomInspectorRow::Text(t) => assert_eq!(t, &format!("elem: {expected}")),
+    other => panic!("row 1 kind: {}", row_kind(other)),
+  }
+}
+
+#[test]
 fn reads_player_sj_timer_from_live_dump() {
   let Some(mem) = load_mem1() else { return };
   let structs = load_defs();

@@ -177,7 +177,14 @@ fn register_instance_api(engine: &mut Engine) {
     },
   );
 
-  // gi.elem(i) — array element handle (bit/array metadata cleared, per `element`).
+  // gi[i] and gi.elem(i) — array element handle (bit/array metadata cleared,
+  // per `element`). A separate overload from the `&str` indexer above; rhai
+  // dispatches `[]` on the index argument's type.
+  engine.register_indexer_get(
+    |inst: &mut GameInstance, index: i64| -> Result<Dynamic, Box<EvalAltResult>> {
+      with_env(|ctx, _| Dynamic::from(inst.element(ctx, index.max(0) as u32)))
+    },
+  );
   engine.register_fn(
     "elem",
     |inst: &mut GameInstance, index: i64| -> Result<Dynamic, Box<EvalAltResult>> {

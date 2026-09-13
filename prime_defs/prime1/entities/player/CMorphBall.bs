@@ -7,6 +7,7 @@ struct CMorphBall {
     f32 ballTiltAngle 0x30
     bool tireMode 0x28
     f32 tireLeanAngle 0x2C
+    CTransform surfaceToWorld 0x1924
     f32 tireFactor 0x1C20
     f32 maxTireFactor 0x1C24
     f32 tireInterpSpeed 0x1C28
@@ -36,6 +37,12 @@ struct CMorphBall {
 
     EBombJumpState bombJumpState 0x1E40
 
+    // decomp: TReservedAverage<CVector3f, 15> — inline rstl::reserved_vector storage
+    // (count word followed by 15 CVector3f slots), not a pointer-based container.
+    u32 liftControlForceAvgCount 0x1D10
+    CVector3f[15] liftControlForceAvg 0x1D14
+    u32 liftSpeedAvgCount 0x1CD0
+    f32 liftSpeedAvg 0x1CD4
 }
 
 enum EBallBoostState: u32 { BoostAvailable, BoostDisabled }

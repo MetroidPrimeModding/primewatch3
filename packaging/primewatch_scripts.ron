@@ -1,4 +1,5 @@
 {
     "example.rhai": false,
+    "morph_lift.rhai": false,
     "player_status.rhai": true,
 }
