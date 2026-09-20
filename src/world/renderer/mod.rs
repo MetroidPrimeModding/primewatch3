@@ -34,7 +34,7 @@ use crate::gl::shader::WorldPipelines;
 use crate::gl::{WORLD_COLOR_FORMAT, WORLD_DEPTH_FORMAT, shapes};
 use crate::mem::game_object_utils::{TUniqueID, get_object_by_entity_id};
 use crate::mem::globals::get_state_manager;
-use crate::mem::math_utils::{read_as_matrix4f, read_as_quat, read_as_transform, read_as_vec3};
+use crate::mem::math_utils::{read_as_quat, read_as_transform, read_as_vec3};
 use crate::structs::prime_structs::GameInstance;
 use crate::world::ball_camera_failsafe::{FailsafePrediction, predict_failsafe_from_live};
 use crate::world::bvh::Aabb;
@@ -484,12 +484,6 @@ impl WorldRenderer {
       // TODO: add a view to debug this?
       camera.type_name = "CGameCamera".into();
       if let Some(m) = camera
-        .get_member(ctx, "perspectiveMatrix")
-        .and_then(|m| read_as_matrix4f(ctx, &m))
-      {
-        self.game_cam.perspective = m;
-      }
-      if let Some(m) = camera
         .get_member(ctx, "transform")
         .and_then(|m| read_as_transform(ctx, &m))
       {
@@ -513,6 +507,15 @@ impl WorldRenderer {
       {
         self.game_cam.aspect = v;
       }
+      // `perspectiveMatrix` (CGameCamera::xec_perspectiveMatrix) is a lazily
+      // refreshed cache, so the live field can sit at its constructor default
+      // (identity) indefinitely.
+      self.game_cam.perspective = camera::perspective(
+        self.game_cam.fov.to_radians(),
+        self.game_cam.aspect,
+        self.game_cam.znear,
+        self.game_cam.zfar,
+      );
     }
 
     // --- camera setup ---
@@ -578,11 +581,16 @@ impl WorldRenderer {
     // the screen edge and flicker in and out. Skip them in that mode.
     if self.camera_mode != CameraMode::GameCam {
       self.render_buff.set_transform(Mat4::IDENTITY);
+      // `generate_camera_line_segments` unprojects NDC frustum corners through
+      // `perspective.inverse()` and places them in world space by multiplying
+      // by `transform` directly, so `transform` must be a standard-basis
+      // camera-to-world matrix matching that projection -- not the raw,
+      // native-basis `CTransform4f` (see `camera::game_cam_view`'s doc comment).
       self
         .render_buff
         .add_lines(&shapes::generate_camera_line_segments(
           self.game_cam.perspective,
-          self.game_cam.transform,
+          camera::game_cam_view(self.game_cam.transform).inverse(),
           self.cam_line_length,
         ));
     }

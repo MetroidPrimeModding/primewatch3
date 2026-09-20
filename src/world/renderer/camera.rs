@@ -1,13 +1,7 @@
-//! Pure camera math: the `glm::quat(euler)` / `glm::perspective` /
-//! `glm::project` ports, and [`compute_camera`] — the camera-setup block of
-//! `WorldRenderer::render`, factored out so it's unit-testable without a GPU
-//! device.
-
 use glam::{Mat4, Quat, Vec2, Vec3, Vec4};
 
 use super::types::{CameraMode, GameCamera, OrbitPlayerCameraOrigin};
 
-/// The `lookPos.z += …` nudge from the C++ camera setup.
 pub(crate) fn orbit_z_nudge(origin: OrbitPlayerCameraOrigin, morphed: bool) -> f32 {
   match origin {
     OrbitPlayerCameraOrigin::Top => {
@@ -28,16 +22,6 @@ pub(crate) fn orbit_z_nudge(origin: OrbitPlayerCameraOrigin, morphed: bool) -> f
   }
 }
 
-/// glm's half-angle quaternion constructor `glm::quat(glm::vec3 eulerAngle)`:
-/// ```text
-/// c = cos(euler * 0.5); s = sin(euler * 0.5);
-/// w = c.x*c.y*c.z + s.x*s.y*s.z
-/// x = s.x*c.y*c.z - c.x*s.y*s.z
-/// y = c.x*s.y*c.z + s.x*c.y*s.z
-/// z = c.x*c.y*s.z - s.x*s.y*c.z
-/// ```
-/// The C++ calls it as `glm::quat(glm::vec3(0, pitch, yaw))`, i.e.
-/// `euler.x = 0`, `euler.y = pitch`, `euler.z = yaw`.
 pub fn quat_from_euler(euler: Vec3) -> Quat {
   let h = euler * 0.5;
   let (sx, cx) = h.x.sin_cos();
@@ -51,22 +35,21 @@ pub fn quat_from_euler(euler: Vec3) -> Quat {
   )
 }
 
-/// Wraps `glm::perspective(fov, aspect, zNear, zFar)`.
-///
-/// TODO: we need to find out where we are using degrees vs radians and fix this
-/// NOTE: the C++ passes `fov` (default `45`) straight into `glm::perspective`,
-/// whose first parameter is the vertical FOV in **radians** — `45` rad is
-/// almost certainly a latent bug in the original. This is ported verbatim: no
-/// degrees→radians conversion here.
-///
 /// Uses glam's DirectX-convention RH projection ([0, 1] clip depth) — the wgpu
 /// convention.
-fn perspective(fov: f32, aspect: f32, z_near: f32, z_far: f32) -> Mat4 {
+pub(super) fn perspective(fov: f32, aspect: f32, z_near: f32, z_far: f32) -> Mat4 {
   glam::camera::rh::proj::directx::perspective(fov, aspect.max(1e-3), z_near, z_far)
 }
 
-/// Pure inputs for [`compute_camera`] — the camera-relevant `WorldRenderer`
-/// fields, copied so the math is unit-testable without a GPU device.
+/// Builds a standard RH Y-up/-Z-forward view matrix from a live `CGameCamera`
+/// transform.
+pub(super) fn game_cam_view(transform: Mat4) -> Mat4 {
+  let eye = transform.w_axis.truncate();
+  let forward = transform.y_axis.truncate();
+  let up = transform.z_axis.truncate();
+  glam::camera::rh::view::look_at_mat4(eye, eye + forward, up)
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CameraParams {
   pub camera_mode: CameraMode,
@@ -92,7 +75,6 @@ pub(crate) struct CameraResult {
   pub manual_camera_pos: Vec3,
 }
 
-/// The camera-setup block of `WorldRenderer::render`.
 pub(crate) fn compute_camera(p: &CameraParams) -> CameraResult {
   let mut manual_camera_pos = p.manual_camera_pos;
   let (projection, view) = match p.camera_mode {
@@ -109,7 +91,7 @@ pub(crate) fn compute_camera(p: &CameraParams) -> CameraResult {
         glam::camera::rh::view::look_at_mat4(eye, look_pos, p.up),
       )
     }
-    CameraMode::GameCam => (p.game_cam.perspective, p.game_cam.transform.inverse()),
+    CameraMode::GameCam => (p.game_cam.perspective, game_cam_view(p.game_cam.transform)),
     CameraMode::Detached => {
       // First-person fly-cam: `manual_camera_pos` *is* the eye (moved by
       // WASDQE / middle-drag pan / wheel-dolly), and pitch/yaw is the look
@@ -184,13 +166,6 @@ pub(crate) fn preserve_eye_on_mode_switch(
   }
 }
 
-/// `glm::project(obj, view, projection, viewport)` as used by
-/// `getScreenspacePosFor*`.
-///
-/// `clip = projection * view * vec4(pos, 1)`, perspective-divide to NDC, then map
-/// to the pixel viewport: `screen.xy = viewport.xy + (ndc.xy + 1) * 0.5 *
-/// viewport.zw`. `viewport` is `[x, y, width, height]` in pixels.
-///
 /// The renderer's projection matrix is glam's DirectX-convention RH perspective
 /// ([0, 1] clip depth) rather than GL's [-1, 1] — the x/y screen mapping is
 /// identical either way, and callers only consume `.x` / `.y` (the returned `.z`
@@ -334,16 +309,40 @@ mod tests {
   }
 
   #[test]
-  fn game_cam_uses_the_read_matrices() {
+  fn game_cam_uses_the_read_projection_and_the_eye_from_the_transform() {
     let mut p = base_params();
     p.camera_mode = CameraMode::GameCam;
     p.game_cam.perspective = Mat4::from_scale(Vec3::new(2.0, 3.0, 4.0));
     p.game_cam.transform = Mat4::from_translation(Vec3::new(5.0, 6.0, 7.0));
     let r = compute_camera(&p);
     assert_eq!(r.projection, p.game_cam.perspective);
-    assert_eq!(r.view, p.game_cam.transform.inverse());
-    // eye = view.inverse().w_axis = transform translation.
+    // eye = view.inverse().w_axis = transform translation, regardless of the
+    // native -> standard basis remap below.
     approx(r.eye, Vec3::new(5.0, 6.0, 7.0));
+  }
+
+  #[test]
+  fn game_cam_view_remaps_native_forward_up_into_the_standard_basis() {
+    // `game_cam.transform`'s columns are the game's *native* local axes: X =
+    // right/left, Y = forward, Z = up (see the comment on the `GameCam` match
+    // arm). Build a transform rotated 90 degrees about world Z so native
+    // forward (+Y) points along world +X and native up stays world +Z, then
+    // check the resulting view puts a point one unit ahead of the eye (along
+    // world +X) on view space's -Z axis, and a point one unit above the eye
+    // (world +Z) on view space's +Y axis -- the standard RH Y-up/-Z-forward
+    // convention `perspective()` and every other mode's `look_at_mat4` assume.
+    let mut p = base_params();
+    p.camera_mode = CameraMode::GameCam;
+    let eye = Vec3::new(1.0, 2.0, 3.0);
+    let rot = Quat::from_rotation_z(-std::f32::consts::FRAC_PI_2);
+    p.game_cam.transform = Mat4::from_rotation_translation(rot, eye);
+    let r = compute_camera(&p);
+
+    approx(r.eye, eye);
+    let ahead_in_view = r.view * (eye + Vec3::new(1.0, 0.0, 0.0)).extend(1.0);
+    approx(ahead_in_view.truncate(), Vec3::new(0.0, 0.0, -1.0));
+    let above_in_view = r.view * (eye + Vec3::new(0.0, 0.0, 1.0)).extend(1.0);
+    approx(above_in_view.truncate(), Vec3::new(0.0, 1.0, 0.0));
   }
 
   #[test]

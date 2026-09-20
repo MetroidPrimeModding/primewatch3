@@ -78,6 +78,10 @@ Start Dolphin, load Metroid Prime, and Prime Watch will attach on its own.
 
 ## Version History
 
+### 1.3.7
+- Ignore dolphin memory engine in process search
+- Fix situations where the camera shows an invalid projection frustrum
+
 ### 1.3.6
 - Fix for scripting to support array indexing
 - Script (disabled by default) to get morph ball lift force and speed averages

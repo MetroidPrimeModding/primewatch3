@@ -87,7 +87,10 @@ impl DolphinMemoryAccess {
         let exe = process.exe()?;
         let stem = exe.file_stem()?.to_str()?.to_ascii_lowercase();
 
-        if stem.starts_with(DOLPHIN_STEM_PREFIX) {
+        // we want to exclude dolphin memory engine
+        if stem.contains("memory") {
+          None
+        } else if stem.starts_with(DOLPHIN_STEM_PREFIX) {
           Some(pid)
         } else {
           None
