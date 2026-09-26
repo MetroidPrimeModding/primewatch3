@@ -123,20 +123,28 @@ struct App {
   scripts: ScriptManager,
 }
 
+/// Replaces `structs` with `prime_defs/` resolved for `version` (a fresh registry, so
+/// removed `.bs` entries don't linger), returning a status line.
+pub(super) fn load_defs(structs: &mut GameStructs, version: GameVersion) -> Result<String, String> {
+  let mut fresh = GameStructs::new_empty();
+  fresh.load_from_dir("prime_defs", version)?;
+  *structs = fresh;
+  Ok(format!(
+    "Loaded {} structs and {} enums ({} layouts)",
+    structs.structs.len(),
+    structs.enums.len(),
+    structs.layout_version.id()
+  ))
+}
+
 impl App {
   fn new() -> Self {
     let mut mem = GameMemory::new();
     let mut dolphin = DolphinMemoryAccess::new();
 
     let mut structs = GameStructs::new_empty();
-    let load_result = structs.load_from_dir("prime_defs");
-    let (defs_loaded, status_text) = match load_result {
-      Ok(()) => {
-        let text = format!(
-          "Loaded {} structs and {} enums",
-          structs.structs.len(),
-          structs.enums.len()
-        );
+    let (defs_loaded, status_text) = match load_defs(&mut structs, GameVersion::default()) {
+      Ok(text) => {
         println!("{text}");
         (true, text)
       }
@@ -300,14 +308,28 @@ impl App {
         println!("Detected {v}");
         if !v.is_supported() && version_override.is_none() {
           toasts.error(format!(
-            "Detected {v}: struct offsets are only verified for {}, so some values may be wrong",
-            GameVersion::default().id()
+            "Detected {v}: no decomp layouts for it yet, so struct offsets are {}'s and some values may be wrong",
+            v.layout_version().id()
           ));
         }
       }
     }
     // Until a disc is detected, fall back to the revision every offset was written against.
     let version = version_override.or(detected).unwrap_or_default();
+    if *defs_loaded && version.layout_version() != structs.layout_version {
+      match load_defs(structs, version) {
+        Ok(text) => {
+          println!("{text}");
+          *status_text = text;
+        }
+        Err(err) => {
+          eprintln!("Error loading structs: {err}");
+          toasts.error(format!("Failed to load definitions for {version}: {err}"));
+          *defs_loaded = false;
+          *status_text = err;
+        }
+      }
+    }
 
     if *defs_loaded {
       let wants_kb = window.egui_ctx.egui_wants_keyboard_input();

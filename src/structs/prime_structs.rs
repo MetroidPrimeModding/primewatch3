@@ -1,7 +1,8 @@
 use crate::ctx::Ctx;
+use crate::mem::game_version::GameVersion;
 use bimap::BiBTreeMap;
-use bstruct::bstruct_link::{BEnum, BStruct, BStructMember};
-use bstruct::{CompileError, build_directory};
+use bstruct::bstruct_link::{BEnum, BStruct, BStructMember, LinkError};
+use bstruct::{CompileError, link, parse_directory};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -18,6 +19,19 @@ type EnumName = Rc<str>;
 pub struct GameStructs {
   pub structs: BTreeMap<TypeName, Rc<GameStruct>>,
   pub enums: BTreeMap<EnumName, Rc<GameEnum>>,
+  /// The revision whose layouts `= field` members were resolved against.
+  pub layout_version: GameVersion,
+}
+
+fn describe_compile_error(err: CompileError) -> String {
+  match err {
+    CompileError::ReadError(it) => format!("Read error: {it}"),
+    CompileError::ParseError(it) => format!("Parse error: {it:?}"),
+    CompileError::LinkError(LinkError::UnresolvedField { s, member, why }) => {
+      format!("Link error: {}.{}: {why}", s.value, member.value)
+    }
+    CompileError::LinkError(it) => format!("Link error: {it:?}"),
+  }
 }
 
 impl GameStructs {
@@ -25,6 +39,7 @@ impl GameStructs {
     Self {
       structs: BTreeMap::new(),
       enums: BTreeMap::new(),
+      layout_version: GameVersion::default(),
     }
   }
 
@@ -40,20 +55,14 @@ impl GameStructs {
       .insert(enum_.name.clone(), Rc::new(enum_.clone()));
   }
 
-  pub fn load_from_dir(&mut self, dir: &str) -> Result<(), String> {
-    // walk the directory tree and find all .bs files
-    // for each file, parse it and link it
-    // add the structs and enums to the resource
-    let compile = build_directory(dir);
-
-    let compile_result = match compile {
-      Ok(it) => it,
-      Err(err) => match err {
-        CompileError::ReadError(it) => return Err(format!("Read error: {}", it)),
-        CompileError::ParseError(it) => return Err(format!("Parse error: {:?}", it)),
-        CompileError::LinkError(it) => return Err(format!("Link error: {:?}", it)),
-      },
-    };
+  /// Loads every `.bs` file under `dir`, resolving `= field` members against `version`'s
+  /// layouts ([`GameVersion::layout_version`]).
+  pub fn load_from_dir(&mut self, dir: &str, version: GameVersion) -> Result<(), String> {
+    let layout_version = version.layout_version();
+    let statements = parse_directory(dir).map_err(describe_compile_error)?;
+    let compile_result =
+      link(&statements, Some(layout_version.layouts())).map_err(describe_compile_error)?;
+    self.layout_version = layout_version;
 
     for bstruct in compile_result.structs.iter() {
       self.insert_struct(&GameStruct::new(bstruct));
@@ -114,8 +123,8 @@ impl GameEnum {
 pub struct GameStruct {
   pub name: TypeName,
   pub size: i64,
-  #[allow(unused)]
-  pub vtable_address: Option<i64>,
+  /// The decomp's name for this struct (`decomp` in the `.bs` file, else `name`).
+  pub decomp_name: TypeName,
   pub extends: Vec<TypeName>,
   pub members_by_offset: BTreeMap<i64, GameMember>,
   pub members_by_name: BTreeMap<MemberName, GameMember>,
@@ -129,7 +138,14 @@ impl GameStruct {
     let mut res = Self {
       name: bstruct.name.value.as_str().into(),
       size: bstruct.size.unwrap().value(), // TODO: fix this to not be optional in bstruct... bstruct needs a new api
-      vtable_address: bstruct.vtable.map(|it| it.value()),
+      decomp_name: bstruct
+        .original
+        .decomp
+        .as_ref()
+        .unwrap_or(&bstruct.name)
+        .value
+        .as_str()
+        .into(),
       extends: bstruct
         .ext
         .iter()
@@ -428,7 +444,7 @@ mod tests {
     let mut s = GameStruct {
       name: name.into(),
       size,
-      vtable_address: None,
+      decomp_name: name.into(),
       extends: extends.iter().map(|it| (*it).into()).collect(),
       members_by_offset: BTreeMap::new(),
       members_by_name: BTreeMap::new(),

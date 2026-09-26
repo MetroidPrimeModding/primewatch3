@@ -1,5 +1,5 @@
 struct CGameGlobalObjects {
-    CResFactory gameResFactory 0x4
-    CSimplePool mainPool 0xCC
-    *CGameState gameState 0x134
+    CResFactory gameResFactory = mResFactory
+    CSimplePool mainPool = mSimplePool
+    *CGameState gameState = mGameState
 }

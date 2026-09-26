@@ -1,25 +1,24 @@
 struct CScriptTrigger: CActor {
-    vtable 0x803da4d8
-    ETriggerFlags triggerFlags 0x12c
-    bool detectPlayer 0x12F:0:1
-    bool detectAI 0x12F:1:1
-    bool detectProjectiles1 0x12F:2:1
-    bool detectProjectiles2 0x12F:3:1
-    bool detectProjectiles3 0x12F:4:1
-    bool detectProjectiles4 0x12F:5:1
-    bool detectBombs 0x12F:6:1
-    bool detectPowerBombs 0x12F:7:1
-    bool detectProjectiles5 0x12E:0:1
-    bool detectProjectiles6 0x12E:1:1
-    bool detectProjectiles7 0x12E:2:1
-    bool killOnEnter 0x12E:3:1
-    bool detectMorphedPlayer 0x12E:4:1
-    bool useCollisionImpulses 0x12E:5:1
-    bool detectCamera 0x12E:6:1
-    bool useBooleanIntersection 0x12E:7:1
-    bool detectUnmorphedPlayer 0x12D:0:1
-    bool blockEnvironmentalEffects 0x12D:1:1
-    CAABB bounds 0x130
+    ETriggerFlags triggerFlags = mFlags
+    bool detectPlayer = mFlags:0:1
+    bool detectAI = mFlags:1:1
+    bool detectProjectiles1 = mFlags:2:1
+    bool detectProjectiles2 = mFlags:3:1
+    bool detectProjectiles3 = mFlags:4:1
+    bool detectProjectiles4 = mFlags:5:1
+    bool detectBombs = mFlags:6:1
+    bool detectPowerBombs = mFlags:7:1
+    bool detectProjectiles5 = mFlags:8:1
+    bool detectProjectiles6 = mFlags:9:1
+    bool detectProjectiles7 = mFlags:10:1
+    bool killOnEnter = mFlags:11:1
+    bool detectMorphedPlayer = mFlags:12:1
+    bool useCollisionImpulses = mFlags:13:1
+    bool detectCamera = mFlags:14:1
+    bool useBooleanIntersection = mFlags:15:1
+    bool detectUnmorphedPlayer = mFlags:16:1
+    bool blockEnvironmentalEffects = mFlags:17:1
+    CAABB bounds = mBounds
 }
 
 enum ETriggerFlags: u32 {

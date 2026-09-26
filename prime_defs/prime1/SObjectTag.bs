@@ -1,4 +1,4 @@
 struct SObjectTag {
-    u32 fourCC
-    u32 id
+    u32 fourCC = mType
+    u32 id = mId
 }

@@ -282,7 +282,7 @@ impl AppWindow {
                   let label = if v.is_supported() {
                     v.to_string()
                   } else {
-                    format!("{v} - unsupported")
+                    format!("{v} - no layouts")
                   };
                   ui.radio_value(fs.version_override, Some(v), label);
                 }

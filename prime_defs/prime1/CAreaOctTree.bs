@@ -1,26 +1,26 @@
 struct CAreaOctTree {
-    CAABB aabb 0x0
-    CAreaOctTree::Node::ETreeType treeType 0x18
-    *u8 buf 0x1C
-    *u8 treebuff 0x20
-    u32 matCount 0x24
-    *u32 materials 0x28
-    *u8 vertMats 0x2C
-    *u8 edgeMats 0x30
-    *u8 polyMats 0x34
-    u32 edgeCount 0x38
-    *CCollisionEdge edges 0x3C
-    u32 polyCount 0x40
-    *u16 polyEdges 0x44
-    u32 vertCount 0x48
-    *f32 verts 0x4C
+    CAABB aabb = mAabb
+    CAreaOctTree::Node::ETreeType treeType = mTreeType
+    *u8 buf = mBuf
+    *u8 treebuff = mTreeBuf
+    u32 matCount = mMatCount
+    *u32 materials = mMaterials
+    *u8 vertMats = mVertMats
+    *u8 edgeMats = mEdgeMats
+    *u8 polyMats = mPolyMats
+    u32 edgeCount = mEdgeCount
+    *CCollisionEdge edges = mEdges
+    u32 polyCount = mPolyCount
+    *u16 polyEdges = mPolyEdges
+    u32 vertCount = mVertCount
+    *f32 verts = mVerts
 }
 
 struct CAreaOctTree::Node {
-    CAABB aabb 0x0
-    *u8 ptr 0x18 // not sure what this is
-    *CAreaOctTree owner 0x1C
-    CAreaOctTree::Node::ETreeType nodeType 0x20
+    CAABB aabb = mAabb
+    *u8 ptr = mPtr // not sure what this is
+    *CAreaOctTree owner = mOwner
+    CAreaOctTree::Node::ETreeType nodeType = mNodeType
 }
 
 enum CAreaOctTree::Node::ETreeType { 
@@ -30,8 +30,8 @@ enum CAreaOctTree::Node::ETreeType {
 }
 
 struct CCollisionEdge {
-    u16 edge1 0x0
-    u16 edge2 0x2
+    u16 edge1 = mIndex1
+    u16 edge2 = mIndex2
 }
 
 enum CollisionMaterial: u32 {

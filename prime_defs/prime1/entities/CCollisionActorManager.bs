@@ -1,24 +1,24 @@
 struct CCollisionActorManager {
-  rstl::vector<CJointCollisionDescription> jointDescriptions 0x4
-  u16 ownerId 0x10
-  bool active 0x12
-  bool destroyed 0x13
-  bool movable 0x14
+  rstl::vector<CJointCollisionDescription> jointDescriptions = mJointDescriptions.mCount
+  u16 ownerId = mOwnerId
+  bool active = mActive
+  bool destroyed = mDestroyed
+  bool movable = mMovable
 }
 
 struct CJointCollisionDescription {
   size 0x44
-  ECollisionType colType 0x0
-  EOrientationType orientType 0x4
-  CSegId pivotId 0x8
-  CSegId nextId 0x9
-  CVector3f bounds 0xc
-  CVector3f _pivotPoint 0x18
-  f32 radius 0x24
-  f32 maxSeparation 0x28
-  *u8 _name 0x2c
-  u16 actorId 0x3C
-  f32 mass 0x40
+  ECollisionType colType = mColType
+  EOrientationType orientType = mOrientType
+  CSegId pivotId = mPivotId
+  CSegId nextId = mNextId
+  CVector3f bounds = mBounds
+  CVector3f _pivotPoint = mPivotPoint
+  f32 radius = mRadius
+  f32 maxSeparation = mMaxSeparation
+  *u8 _name = mName.mPtr
+  u16 actorId = mActorId
+  f32 mass = mMass
 }
 
 enum ECollisionType {
@@ -32,5 +32,5 @@ enum ECollisionType {
 enum EOrientationType { Zero=0, One }
 
 struct CSegId {
-  u8 segId 0x0
+  u8 segId = mId
 }

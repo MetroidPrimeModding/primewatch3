@@ -455,7 +455,7 @@ mod tests {
     GameStruct {
       name: name.into(),
       size: 0,
-      vtable_address: None,
+      decomp_name: name.into(),
       extends: vec![],
       members_by_offset: BTreeMap::new(),
       members_by_name: BTreeMap::new(),

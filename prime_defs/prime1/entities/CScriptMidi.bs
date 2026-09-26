@@ -1,3 +1,2 @@
 struct CScriptMidi: CEntity {
-    vtable 0x803e7048
 }

@@ -1,16 +1,15 @@
 struct CModelData {
-    CVector3f scale 0x0
-    bool ownsAnimData 0xc
-    *CAnimData animData 0x10
+    CVector3f scale = mScale
+    bool ownsAnimData = mAnimData.mHas
+    *CAnimData animData = mAnimData.mItem
     //TODO: bitstruct
     //x14_24 renderSorted
     //x14_25 sortThermal
     u32 flags 0x14
-    CColor ambientColor 0x18
-    TLockedToken<CModel> normalModel 0x1C
-    TLockedToken<CModel> xrayModel 0x2C
-    TLockedToken<CModel> infraModel 0x3C
-    TLockedToken<CModel> normalModel2 0x24
+    CColor ambientColor = mAmbientColor
+    TLockedToken<CModel> normalModel = mNormalModel
+    TLockedToken<CModel> xrayModel = mXrayModel
+    TLockedToken<CModel> infraModel = mInfraModel
     // TLockedToken<CModel> xrayModel 0x34
     // TLockedToken<CModel> infraModel 0x44
 }

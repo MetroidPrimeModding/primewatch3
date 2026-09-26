@@ -1,48 +1,48 @@
 struct CMorphBall {
-    CCollidableSphere collisionSphere 0x38
+    CCollidableSphere collisionSphere = mCollisionSphere
     // TODO: this may be handy later   CCollisionInfoList x74_collisionInfos;\
 
-    ESpiderBallState spiderBallState 0x187C
+    ESpiderBallState spiderBallState = mSpiderBallState
 
-    f32 ballTiltAngle 0x30
-    bool tireMode 0x28
-    f32 tireLeanAngle 0x2C
-    CTransform surfaceToWorld 0x1924
-    f32 tireFactor 0x1C20
-    f32 maxTireFactor 0x1C24
-    f32 tireInterpSpeed 0x1C28
-    bool tireInterpolating 0x1C2C
-    f32 boostOverLightFactor 0x1C30
-    f32 boostLightFactor 0x1C34
-    f32 spiderLightFactor 0x1C38
+    f32 ballTiltAngle = mBallTiltAngle
+    bool tireMode = mTireMode
+    f32 tireLeanAngle = mTireLeanAngle
+    CTransform surfaceToWorld = mSurfaceToWorld
+    f32 tireFactor = mTireFactor
+    f32 maxTireFactor = mMaxTireFactor
+    f32 tireInterpSpeed = mTireInterpSpeed
+    bool tireInterpolating = mTireInterpolating
+    f32 boostOverLightFactor = mBoostOverLightFactor
+    f32 boostLightFactor = mBoostLightFactor
+    f32 spiderLightFactor = mSpiderLightFactor
 
-    EBallBoostState boostState 0x1E3C
-    CVector3f boostControlForce 0x10
-    CVector3f controlForce 0x1C
-    bool inBoost 0x1DE4:7:1
-    bool boostEnabled 0x1DE4:6:1
-    f32 boostChargeTime 0x1DE8
-    f32 timeNotInBoost 0x1DEC
-    f32 boostDrainTime 0x1DF4
+    EBallBoostState boostState = mBoostState
+    CVector3f boostControlForce = mBoostControlForce
+    CVector3f controlForce = mControlForce
+    bool inBoost = mInBoost
+    bool boostEnabled = mBoostEnabled
+    f32 boostChargeTime = mBoostChargeTime
+    f32 timeNotInBoost = mTimeNotInBoost
+    f32 boostDrainTime = mBoostDrainTime
 
-    bool inHalfPipeMode 0x1DF8:7:1
-    bool inHalfPipeModeInAir 0x1DF8:6:1
-    bool touchedHalfPipeRecently 0x1DF8:5:1
-    bool ballCloseToCollision 0x1DF8:4:1
-    f32 touchHalfPipeCooldown 0x1DFc
-    f32 disableControlCooldown 0x1E00
-    f32 touchHalfPipeRecentCooldown 0x1E04
-    CVector3f prevHalfPipeNormal 0x1E08
-    CVector3f halfPipeNormal 0x1E14
+    bool inHalfPipeMode = mInHalfPipeMode
+    bool inHalfPipeModeInAir = mInHalfPipeModeInAir
+    bool touchedHalfPipeRecently = mTouchedHalfPipeRecently
+    bool ballCloseToCollision = mBallCloseToCollision
+    f32 touchHalfPipeCooldown = mTouchHalfPipeCooldown
+    f32 disableControlCooldown = mDisableControlCooldown
+    f32 touchHalfPipeRecentCooldown = mTouchHalfPipeRecentCooldown
+    CVector3f prevHalfPipeNormal = mPrevHalfPipeNormal
+    CVector3f halfPipeNormal = mHalfPipeNormal
 
-    EBombJumpState bombJumpState 0x1E40
+    EBombJumpState bombJumpState = mBombJumpState
 
     // decomp: TReservedAverage<CVector3f, 15> — inline rstl::reserved_vector storage
     // (count word followed by 15 CVector3f slots), not a pointer-based container.
-    u32 liftControlForceAvgCount 0x1D10
-    CVector3f[15] liftControlForceAvg 0x1D14
-    u32 liftSpeedAvgCount 0x1CD0
-    f32 liftSpeedAvg 0x1CD4
+    u32 liftControlForceAvgCount = mLiftControlForceAvg.mCount
+    CVector3f[15] liftControlForceAvg = mLiftControlForceAvg.mData
+    u32 liftSpeedAvgCount = mLiftSpeedAvg.mCount
+    f32 liftSpeedAvg = mLiftSpeedAvg.mData
 }
 
 enum EBallBoostState: u32 { BoostAvailable, BoostDisabled }

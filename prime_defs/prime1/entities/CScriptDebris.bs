@@ -1,3 +1,2 @@
 struct CScriptDebris: CPhysicsActor {
-    vtable 0x803dfd78
 }

@@ -1,3 +1,2 @@
 struct CScriptActorRotate: CEntity {
-    vtable 0x803e2d08
 }

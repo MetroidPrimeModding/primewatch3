@@ -1,3 +1,2 @@
 struct CScriptCameraWaypoint: CActor {
-    vtable 0x803df348
 }

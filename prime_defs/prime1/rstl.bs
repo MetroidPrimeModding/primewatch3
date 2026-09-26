@@ -11,6 +11,7 @@ struct rstl::vector<T> {
 }
 
 struct rstl::vector2<T> {
+    decomp rstl::vector
     u32 allocator 0x0
     u32 count 0x4
     u32 capacity 0x8
@@ -28,6 +29,7 @@ struct rstl::reserved_vector<T> {
 // decomp `rstl::auto_ptr`: `mutable bool x0_has; T* x4_item`.
 struct rstl::autoptr<T> {
     size 0x8
+    decomp rstl::auto_ptr
     u8 owned 0x0
     *T value 0x4
 }
@@ -58,6 +60,7 @@ struct rstl::CRefData<T> {
 // `{ node* mLeftmost; node* mRightmost; node* mRootNode }`. Member offset
 // points at `count`.
 struct rstl::rbtree<T> {
+    decomp rstl::red_black_tree
     u32 count 0x0
     *rstl::rbtree_node<T> leftmost 0x4
     *rstl::rbtree_node<T> rightmost 0x8

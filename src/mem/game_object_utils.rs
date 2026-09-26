@@ -170,7 +170,10 @@ mod tests {
   fn load_defs() -> GameStructs {
     let mut structs = GameStructs::new_empty();
     structs
-      .load_from_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/prime_defs"))
+      .load_from_dir(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/prime_defs"),
+        GameVersion::default(),
+      )
       .expect("load prime_defs");
     structs
   }
@@ -288,7 +291,7 @@ mod tests {
     let mut tag = GameStruct {
       name: "SObjectTag".into(),
       size: 8,
-      vtable_address: None,
+      decomp_name: "SObjectTag".into(),
       extends: vec![],
       members_by_offset: BTreeMap::new(),
       members_by_name: BTreeMap::new(),

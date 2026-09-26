@@ -1,5 +1,5 @@
 struct CVector3f {
-    f32 x
-    f32 y
-    f32 z
+    f32 x = mX
+    f32 y = mY
+    f32 z = mZ
 }

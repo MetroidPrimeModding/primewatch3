@@ -1,8 +1,9 @@
 // Inlined `CCollidableAABox`: `CCollisionPrimitive` base (vtable 0x0,
 // `x8_material` at 0x8) plus the local `CAABB` at 0x10.
 struct CAABBPrimitive {
-    u64 material 0x8
-    CAABB aabb 0x10
+    decomp CCollidableAABox
+    u64 material = mMaterial
+    CAABB aabb = mAabb
 }
 
 // `EMaterialTypes` — bit index into the `CMaterialList` u64 mask

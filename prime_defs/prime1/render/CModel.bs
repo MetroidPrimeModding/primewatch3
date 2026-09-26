@@ -1,4 +1,4 @@
 struct CModel {
-    *u8 data 0x0
-    u32 dataLen 0x4
+    *u8 data = mData
+    u32 dataLen = mDataLen
 }

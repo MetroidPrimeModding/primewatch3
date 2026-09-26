@@ -1,15 +1,15 @@
 struct CPlayerState {
-    u32 currentBeam 0x8
-    CHealthInfo healthInfo 0xC
-    u32 currentVisor 0x14
-    u32 currentSuit 0x20
-    CPowerUp[41] items 0x14
-    rstl::vector2<ScanState> scanStates 0x170
+    u32 currentBeam = mCurrentBeam
+    CHealthInfo healthInfo = mHealth
+    u32 currentVisor = mCurrentVisor
+    u32 currentSuit = mCurrentSuit
+    CPowerUp[41] items = mPowerups.mData
+    rstl::vector2<ScanState> scanStates = mScanTimes
 }
 
 struct CPowerUp {
-    i32 amount 0x0
-    i32 capacity 0x4
+    i32 amount = mAmount
+    i32 capacity = mCapacity
 }
 
 struct ScanState {

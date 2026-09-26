@@ -65,5 +65,8 @@ Memory-access code that needs a live process must be manually verified by the us
   auto-derefs pointer members and resolves inherited members. Its read/index contract (bitfield
   offset/length masking, auto-deref on pointer members) is assumed by every `.bs` file and call site
   downstream — change it carefully.
-- Add or edit a `.bs` file rather than hardcoding struct offsets in Rust.
+- Add or edit a `.bs` file rather than hardcoding struct offsets in Rust. Give members the decomp
+  field they read (`f32 speed = mSpeed`, `bool flag = mFlags:3:1`) rather than a literal offset, so
+  they resolve per game revision; literal offsets are only right for GM8E01_00 (see
+  `doc/multi-version.md`). `cargo test layout` checks both kinds against the decomp.
 - Prefer `Rc<str>` / `Rc<GameStruct>` over cloning `String` / struct maps on hot paths.

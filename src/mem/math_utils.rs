@@ -103,7 +103,7 @@ mod tests {
     let mut s = GameStruct {
       name: name.into(),
       size: 0,
-      vtable_address: None,
+      decomp_name: name.into(),
       extends: vec![],
       members_by_offset: Default::default(),
       members_by_name: Default::default(),

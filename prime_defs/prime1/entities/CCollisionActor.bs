@@ -1,59 +1,54 @@
 struct CCollisionActor: CPhysicsActor {
-  vtable 0x803e4b18
 
-  *CCollidableOBBTreeGroupContainer obbContainer 0x278
-  *CCollidableOBBTreeGroup obbTreeGroupPrimitive 0x27c
-  *CCollidableAABox aabbPrimitive 0x280
-  *CCollidableSphere spherePrimitive 0x284
+  *CCollidableOBBTreeGroupContainer obbContainer = mObbContainer
+  *CCollidableOBBTreeGroup obbTreeGroupPrimitive = mObbTreeGroupPrimitive
+  *CCollidableAABox aabbPrimitive = mAaboxPrimitive
+  *CCollidableSphere spherePrimitive = mSpherePrimitive
   }
 
 struct CCollisionPrimitive {
-  vtable 0x803d97e4
 
-  u64 material 0x8
+  u64 material = mMaterial
 }
 
 struct CCollidableSphere: CCollisionPrimitive {
-  vtable 0x803ecaf8
 
-  CSphere sphere 0x10
+  CSphere sphere = mSphere
 }
 
 struct CCollidableAABox: CCollisionPrimitive {
-  vtable 0x803ecad0
 
-  CAABB aabb 0x10
+  CAABB aabb = mAabb
 }
 
 struct CCollidableOBBTreeGroup: CCollisionPrimitive {
-  vtable 0x803ec470
 
-  *CCollidableOBBTreeGroupContainer container 0x10
+  *CCollidableOBBTreeGroupContainer container = mContainer
 }
 
 struct CCollidableOBBTreeGroupContainer {
-    rstl::vector<rstl::autoptr<COBBTree>> trees 0x4
-    rstl::vector<CAABB> aabbs 0x14
-    CAABB aabb 0x20
+    rstl::vector<rstl::autoptr<COBBTree>> trees = mTrees.mCount
+    rstl::vector<CAABB> aabbs = mAabbs.mCount
+    CAABB aabb = mAabox
 }
 
 struct COBBTree {
-  u32 magic 0x0
-  u32 version 0x4
-  u32 memsize 0x8
-  SIndexData indexData 0x18
-  *CNode root 0x88
+  u32 magic = mMagic
+  u32 version = mVersion
+  u32 memsize = mMemsize
+  SIndexData indexData = mIndexData
+  *CNode root = mRoot
 }
 
 // decomp `COBBTree::SIndexData` (0x70): seven `rstl::vector`s at 0x0, 0x10 …
 // 0x60. `rstl::vector` here points its member offset at `count` (allocator + 4),
 // so each offset below is the decomp field offset + 4.
 struct SIndexData {
-  rstl::vector<u32> materials 0x4
-  rstl::vector<u8> vertMaterials 0x14
-  rstl::vector<u8> edgeMaterials 0x24
-  rstl::vector<u8> surfaceMaterials 0x34
-  rstl::vector<CCollisionEdge> edges 0x44
-  rstl::vector<u16> surfaceIndices 0x54
-  rstl::vector<CVector3f> vertices 0x64
+  rstl::vector<u32> materials = mMaterials.mCount
+  rstl::vector<u8> vertMaterials = mVertMaterials.mCount
+  rstl::vector<u8> edgeMaterials = mEdgeMaterials.mCount
+  rstl::vector<u8> surfaceMaterials = mSurfaceMaterials.mCount
+  rstl::vector<CCollisionEdge> edges = mEdges.mCount
+  rstl::vector<u16> surfaceIndices = mSurfaceIndices.mCount
+  rstl::vector<CVector3f> vertices = mVertices.mCount
 }

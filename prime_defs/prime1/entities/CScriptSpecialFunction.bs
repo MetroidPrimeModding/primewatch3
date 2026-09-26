@@ -1,5 +1,4 @@
 struct CScriptSpecialFunction: CActor {
-    vtable 0x803e2b68
     ESpecialFunction specialFunction 0xE8
     f32 float1 0xFC
     f32 float2 0x100

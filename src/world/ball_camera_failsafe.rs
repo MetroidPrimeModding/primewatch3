@@ -421,7 +421,10 @@ mod tests {
     mem.load_from_file(&path).expect("read mem1.raw");
     let mut structs = GameStructs::new_empty();
     structs
-      .load_from_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/prime_defs"))
+      .load_from_dir(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/prime_defs"),
+        GameVersion::default(),
+      )
       .expect("load prime_defs");
     let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 

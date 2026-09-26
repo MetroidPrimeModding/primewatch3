@@ -1,82 +1,81 @@
 struct CPlayer: CPhysicsActor {
-    vtable 0x803d96e8
-    EPlayerMovementState jumpstate 0x258
-    f32 sjTimer 0x28C
-    f32 startingJumpTimeout 0x288
-    f32 minJumpTimeout 0x290
-    i32 jumpPresses 0x298
-    ESurfaceRestraints surfaceRestraint 0x2AC
-    CAABB fpBounds 0x2d8
-    EPlayerCameraState cameraState 0x2F4
-    EPlayerMorphBallState morphState 0x2F8
-    EPlayerMorphBallState spawnedMorphBallState 0x2FC
-    f32 fallingTime 0x300
-    EPlayerOrbitState orbitState 0x304
-    EPlayerOrbitType orbitType 0x308
-    EPlayerOrbitRequest orbitRequest 0x30C
-    CVector3f orbitPoint 0x314
-    CVector3f orbitVector 0x320
-    EPlayerZoneInfo orbitZoneMode 0x330
-    EPlayerZoneType orbitType 0x334
-    bool orbitLockEstablished 0x374
-    bool sidewaysDashing 0x37c
-    f32 strafeInputAtDash 0x380
-    f32 dashTimer 0x384
-    f32 dashButtonHoldTime 0x388
-    bool doneSidewaysDashing 0x38C
-    f32 dashSpeedMultiplier 0x398
-    EPlayerScanState scanState 0x3A8
-    f32 scanningTime 0x3AC
-    f32 curScanTime 0x3B0
-    EGrappleState grappleState 0x3B8
-    f32 grappleSwingTimer 0x3BC
-    CVector3f grappleSwingAxis 0x3C0
+    EPlayerMovementState jumpstate = mMovementState
+    f32 sjTimer = mSjTimer
+    f32 startingJumpTimeout = mStartingJumpTimeout
+    f32 minJumpTimeout = mMinJumpTimeout
+    i32 jumpPresses = mJumpPresses
+    ESurfaceRestraints surfaceRestraint = mSurfaceRestraint
+    CAABB fpBounds = mFpBounds
+    EPlayerCameraState cameraState = mCameraState
+    EPlayerMorphBallState morphState = mMorphBallState
+    EPlayerMorphBallState spawnedMorphBallState = mSpawnedMorphBallState
+    f32 fallingTime = mFallingTime
+    EPlayerOrbitState orbitState = mOrbitState
+    EPlayerOrbitType orbitType = mOrbitType
+    EPlayerOrbitRequest orbitRequest = mOrbitBrokenType
+    CVector3f orbitPoint = mOrbitPoint
+    CVector3f orbitVector = mOrbitVector
+    EPlayerZoneInfo orbitZoneMode = mOrbitZoneMode
+    EPlayerZoneType orbitType = mOrbitZoneType
+    bool orbitLockEstablished = mOrbitLockEstablished
+    bool sidewaysDashing = mSidewaysDashing
+    f32 strafeInputAtDash = mStrafeInputAtDash
+    f32 dashTimer = mDashTimer
+    f32 dashButtonHoldTime = mDashButtonHoldTime
+    bool doneSidewaysDashing = mDoneSidewaysDashing
+    f32 dashSpeedMultiplier = mDashSpeedMultiplier
+    EPlayerScanState scanState = mScanState
+    f32 scanningTime = mScanningTime
+    f32 curScanTime = mCurScanTime
+    EGrappleState grappleState = mGrappleState
+    f32 grappleSwingTimer = mGrappleSwingTimer
+    CVector3f grappleSwingAxis = mGrappleSwingAxis
     // TODO: std::unique_ptr<CFailsafeTest> x4a0_failsafeTest;
     // TODO: TReservedAverage<float, 20> x4a4_moveSpeedAvg
-    f32 moveSpeed 0x4f8
-    f32 flatMoveSpeed 0x4fc
-    CVector3f lookDir 0x500
-    CVector3f moveDir 0x50c
-    CVector3f leaveMorphDir 0x518
-    CVector3f lastPosForDirCalc 0x524
-    CVector3f gunDir 0x530
-    f32 frozenTimeout 0x750
-    i32 iceBreakJumps 0x754
-    i32 additionalIceBreakJumps 0x75c
-    bool controlsFrozen 0x760
-    f32 controlsFrozenTimeout 0x764
-    f32 eyeZBias 0x9c8
-    u32 bombJumpCount 0x9d0
-    i32 bombJumpCheckDelayFrames 0x9d4
+    f32 moveSpeed = mMoveSpeed
+    f32 flatMoveSpeed = mFlatMoveSpeed
+    CVector3f lookDir = mLookDir
+    CVector3f moveDir = mMoveDir
+    CVector3f leaveMorphDir = mLeaveMorphDir
+    CVector3f lastPosForDirCalc = mLastPosForDirCalc
+    CVector3f gunDir = mGunDir
+    f32 frozenTimeout = mFrozenTimeout
+    i32 iceBreakJumps = mIceBreakJumps
+    i32 additionalIceBreakJumps = mAdditionalIceBreakJumps
+    bool controlsFrozen = mControlsFrozen
+    f32 controlsFrozenTimeout = mControlsFrozenTimeout
+    f32 eyeZBias = mEyeZBias
+    u32 bombJumpCount = mBombJumpCount
+    i32 bombJumpCheckDelayFrames = mBombJumpCheckDelayFrames
 
 
-    *CPlayerGun gun 0x490
-    *CMorphBall morphBall 0x768
-    *CPlayerCameraBob cameraBob 0x76C
+    *CPlayerGun gun = mGun
+    *CMorphBall morphBall = mMorphball
+    *CPlayerCameraBob cameraBob = mCameraBob
 
-    bool visorChangeRequested 0x9C4:7:1
-    bool showCrosshairs 0x9C4:6:1
-    bool canEnterMorphBall 0x9C4:4:1
-    bool canLeaveMorphBall 0x9C4:3:1
-    bool spiderBallControlXY 0x9C4:2:1
-    bool controlDirOverride 0x9C4:1:1
-    bool inWaterMovement 0x9C4:0:1
-    bool splashUpdated 0x9C5:6:1
-    bool camSubmerged 0x9C5:4:1
-    bool slidingOnWall 0x9C5:3:1
-    bool hitWall 0x9C5:2:1
-    bool selectFluidBallSound 0x9C5:1:1
-    bool stepCameraZBiasDirty 0x9C5:0:1
-    bool extendTargetDistance 0x9C6:7:1
-    bool interpolatingControlDir 0x9C6:6:1
-    bool outOfBallLookAtHint 0x9C6:5:1
-    bool aimingAtProjectile 0x9C6:4:1
-    bool aligningGrappleSwingTurn 0x9C6:3:1
-    bool disableInput 0x9C6:2:1
-    bool newScanScanning 0x9C6:1:1
-    bool overrideRadarRadius 0x9C6:0:1
-    bool noDamageLoopSfx 0x9C7:7:1
-    bool outOfBallLookAtHintActor 0x9C7:6:1
+    bool visorChangeRequested = mVisorChangeRequested
+    bool showCrosshairs = mShowCrosshairs
+    bool canEnterMorphBall = mCanEnterMorphBall
+    bool canLeaveMorphBall = mCanLeaveMorphBall
+    bool spiderBallControlXY = mSpiderBallControlXY
+    bool controlDirOverride = mControlDirOverride
+    bool inWaterMovement = mInWaterMovement
+    bool splashUpdated = mSplashUpdated
+    bool camSubmerged = mCamSubmerged
+    bool slidingOnWall = mSlidingOnWall
+    bool hitWall = mHitWall
+    bool selectFluidBallSound = mSelectFluidBallSound
+    bool stepCameraZBiasDirty = mStepCameraZBiasDirty
+    bool extendTargetDistance = mExtendTargetDistance
+    bool interpolatingControlDir = mInterpolatingControlDir
+    bool outOfBallLookAtHint = mOutOfBallLookAtHint
+    bool aimingAtProjectile = mAimingAtProjectile
+    bool aligningGrappleSwingTurn = mAligningGrappleSwingTurn
+    bool disableInput = mDisableInput
+    bool newScanScanning = mNewScanScanning
+    bool overrideRadarRadius = mOverrideRadarRadius
+    bool noDamageLoopSfx = mNoDamageLoopSfx
+    bool outOfBallLookAtHintActor = mOutOfBallLookAtHintActor
 }
 
 enum EPlayerMovementState: u32 {

@@ -8,7 +8,7 @@ use crate::mem::game_memory::GameMemory;
 /// Every revision `prime-decomp` knows about, in its `VERSIONS` order.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum GameVersion {
-  /// The revision the `.bs` offsets and hardcoded addresses were written against.
+  /// The revision the `.bs` literal offsets were written against.
   #[default]
   NtscU0_00,
   NtscU0_01,
@@ -66,10 +66,10 @@ impl GameVersion {
     }
   }
 
-  /// Whether the `.bs` member offsets are verified for this revision. Only the default so
-  /// far (step 5 of the plan). Addresses are per revision already (`Ctx::symbol`).
+  /// Whether this revision's own decomp layouts are compiled in, so `.bs` `= field`
+  /// members resolve for it. Members with literal offsets are GM8E01_00's regardless.
   pub fn is_supported(self) -> bool {
-    self == GameVersion::NtscU0_00
+    self.layout_version() == self
   }
 
   /// The Korean release shares the NTSC-U game ID and is told apart only by its

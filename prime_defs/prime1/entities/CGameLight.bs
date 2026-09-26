@@ -1,3 +1,2 @@
 struct CGameLight: CActor {
-    vtable 0x803df3b8
 }

@@ -1,3 +1,2 @@
 struct CScriptCameraShaker: CEntity {
-    vtable 0x803dfe00
 }

@@ -1,3 +1,2 @@
 struct CScriptSound: CActor {
-    vtable 0x803df128
 }

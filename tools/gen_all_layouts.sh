@@ -63,7 +63,7 @@ for v in "${versions[@]}"; do
     continue
   fi
   echo "== $v"
-  if python3 configure.py --version "$v" --debug --build-dir build_debug &&
+  if python3 configure.py --version "$v" --debug --build-dir build_debug --non-matching &&
     ninja "build_debug/$v/main.elf" &&
     "$here/gen_layouts.sh" "$dtk" "build_debug/$v/main.elf" "$v"; then
     done_versions+=("$v")

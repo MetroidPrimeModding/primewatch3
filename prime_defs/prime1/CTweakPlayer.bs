@@ -1,91 +1,91 @@
 struct CTweakPlayer {
-    u32 vtable 0x0
-    f32[8] maxTranslationalAcceleration 0x4
-    f32[8] maxRotationalAcceleration 0x24
-    f32[8] translationFriction 0x44
-    f32[8] rotationFriction 0x64
-    f32[8] rotationMaxSpeed 0x84
-    f32[8] translationMaxSpeed 0xa4
-    f32 normalGravAccel 0xc4
-    f32 fluidGravAccel 0xc8
-    f32 verticalJumpAccel 0xcc
-    f32 horizontalJumpAccel 0xd0
-    f32 verticalDoubleJumpAccel 0xd4
-    f32 horizontalDoubleJumpAccel 0xd8
-    f32 waterJumpFactor 0xdc
-    f32 waterBallJumpFactor 0xe0
-    f32 lavaJumpFactor 0xe4
-    f32 lavaBallJumpFactor 0xe8
-    f32 phazonJumpFactor 0xec
-    f32 phazonBallJumpFactor 0xf0
-    f32 allowedJumpTime 0xf4
-    f32 allowedDoubleJumpTime 0xf8
-    f32 minDoubleJumpWindow 0xfc
-    f32 maxDoubleJumpWindow 0x100
+    u32 vtable = __vptr$
+    f32[8] maxTranslationalAcceleration = mMaxTranslationalAcceleration
+    f32[8] maxRotationalAcceleration = mMaxRotationalAcceleration
+    f32[8] translationFriction = mTranslationFriction
+    f32[8] rotationFriction = mRotationFriction
+    f32[8] rotationMaxSpeed = mRotationMaxSpeed
+    f32[8] translationMaxSpeed = mTranslationMaxSpeed
+    f32 normalGravAccel = mNormalGravAccel
+    f32 fluidGravAccel = mFluidGravAccel
+    f32 verticalJumpAccel = mVerticalJumpAccel
+    f32 horizontalJumpAccel = mHorizontalJumpAccel
+    f32 verticalDoubleJumpAccel = mVerticalDoubleJumpAccel
+    f32 horizontalDoubleJumpAccel = mHorizontalDoubleJumpAccel
+    f32 waterJumpFactor = mWaterJumpFactor
+    f32 waterBallJumpFactor = mWaterBallJumpFactor
+    f32 lavaJumpFactor = mLavaJumpFactor
+    f32 lavaBallJumpFactor = mLavaBallJumpFactor
+    f32 phazonJumpFactor = mPhazonJumpFactor
+    f32 phazonBallJumpFactor = mPhazonBallJumpFactor
+    f32 allowedJumpTime = mAllowedJumpTime
+    f32 allowedDoubleJumpTime = mAllowedDoubleJumpTime
+    f32 minDoubleJumpWindow = mMinDoubleJumpWindow
+    f32 maxDoubleJumpWindow = mMaxDoubleJumpWindow
 //    f32  0x104
-    f32 minJumpTime 0x108
-    f32 minDoubleJumpTime 0x10c
-    f32 allowedLedgeTime 0x110
-    f32 doubleJumpImpulse 0x114
-    f32 backwardsForceMultiplier 0x118
-    f32 bombJumpRadius 0x11c
-    f32 bombJumpHeight 0x120
-    f32 eyeOffset 0x124
-    f32 turnSpeedMultiplier 0x128
-    f32 freeLookTurnSpeedMultiplier 0x12c
-    f32 horizontalFreeLookAngleVel 0x130
-    f32 verticalFreeLookAngleVel 0x134
-    f32 freeLookSpeed 0x138
-    f32 freeLookSnapSpeed 0x13c
+    f32 minJumpTime = mMinJumpTime
+    f32 minDoubleJumpTime = mMinDoubleJumpTime
+    f32 allowedLedgeTime = mAllowedLedgeTime
+    f32 doubleJumpImpulse = mDoubleJumpImpulse
+    f32 backwardsForceMultiplier = mBackwardsForceMultiplier
+    f32 bombJumpRadius = mBombJumpRadius
+    f32 bombJumpHeight = mBombJumpHeight
+    f32 eyeOffset = mEyeOffset
+    f32 turnSpeedMultiplier = mTurnSpeedMultiplier
+    f32 freeLookTurnSpeedMultiplier = mFreeLookTurnSpeedMultiplier
+    f32 horizontalFreeLookAngleVel = mHorizontalFreeLookAngleVel
+    f32 verticalFreeLookAngleVel = mVerticalFreeLookAngleVel
+    f32 freeLookSpeed = mFreeLookSpeed
+    f32 freeLookSnapSpeed = mFreeLookSnapSpeed
 //    f32  0x140
-    f32 freeLookCenteredThresholdAngle 0x144
-    f32 freeLookCenteredTime 0x148
-    f32 freeLookDampenFactor 0x14c
-    f32 leftDiv 0x150
-    f32 rightDiv 0x154
-    f32[3] orbitMinDistance 0x158
-    f32[3] orbitNormalDistance 0x164
-    f32[3] orbitMaxDistance 0x170
+    f32 freeLookCenteredThresholdAngle = mFreeLookCenteredThresholdAngle
+    f32 freeLookCenteredTime = mFreeLookCenteredTime
+    f32 freeLookDampenFactor = mFreeLookDampenFactor
+    f32 leftDiv = mLeftDiv
+    f32 rightDiv = mRightDiv
+    f32[3] orbitMinDistance = mOrbitMinDistance
+    f32[3] orbitNormalDistance = mOrbitNormalDistance
+    f32[3] orbitMaxDistance = mOrbitMaxDistance
 //    f32  0x17c
-    f32 orbitModeTimer 0x180
-    f32 orbitCameraSpeed 0x184
-    f32 orbitUpperAngle 0x188
-    f32 orbitLowerAngle 0x18c
-    f32 orbitHorizAngle 0x190
+    f32 orbitModeTimer = mOrbitModeTimer
+    f32 orbitCameraSpeed = mOrbitCameraSpeed
+    f32 orbitUpperAngle = mOrbitUpperAngle
+    f32 orbitLowerAngle = mOrbitLowerAngle
+    f32 orbitHorizAngle = mOrbitHorizAngle
 //    f32  0x194
 //    f32  0x198
-    f32 orbitMaxTargetDistance 0x19c
-    f32 orbitMaxLockDistance 0x1a0
-    f32 orbitDistanceThreshold 0x1a4
-    u32[2] orbitScreenBoxHalfExtentX 0x1a8
-    u32[2] orbitScreenBoxHalfExtentY 0x1b0
-    u32[2] orbitScreenBoxCenterX 0x1b8
-    u32[2] orbitScreenBoxCenterY 0x1c0
-    u32[2] orbitZoneIdealX 0x1c8
-    u32[2] orbitZoneIdealY 0x1d0
-    f32 orbitNearX 0x1d8
-    f32 orbitNearZ 0x1dc
+    f32 orbitMaxTargetDistance = mOrbitMaxTargetDistance
+    f32 orbitMaxLockDistance = mOrbitMaxLockDistance
+    f32 orbitDistanceThreshold = mOrbitDistanceThreshold
+    u32[2] orbitScreenBoxHalfExtentX = mOrbitScreenBoxHalfExtentX
+    u32[2] orbitScreenBoxHalfExtentY = mOrbitScreenBoxHalfExtentY
+    u32[2] orbitScreenBoxCenterX = mOrbitScreenBoxCenterX
+    u32[2] orbitScreenBoxCenterY = mOrbitScreenBoxCenterY
+    u32[2] orbitZoneIdealX = mOrbitZoneIdealX
+    u32[2] orbitZoneIdealY = mOrbitZoneIdealY
+    f32 orbitNearX = mOrbitNearX
+    f32 orbitNearZ = mOrbitNearZ
 //    f32  0x1e0
 //    f32  0x1e4
-    f32 orbitFixedOffsetZDiff 0x1e8
-    f32 orbitZRange 0x1ec
+    f32 orbitFixedOffsetZDiff = mOrbitFixedOffsetZDiff
+    f32 orbitZRange = mOrbitZRange
 //    f32  0x1f0
 //    f32  0x1f4
 //    f32  0x1f8
-    f32 orbitPreventionTime 0x1fc
+    f32 orbitPreventionTime = mOrbitPreventionTime
 ////    bool x200_24_dashEnabled : 1{};
 ////    bool x200_25_dashOnButtonRelease : 1{};
-    f32 dashButtonHoldCancelTime 0x204
-    f32 dashStrafeInputThreshold 0x208
-    f32 sidewaysDoubleJumpImpulse 0x20c
-    f32 sidewaysVerticalDoubleJumpAccel 0x210
-    f32 sidewaysHorizontalDoubleJumpAccel 0x214
-    f32 scanningRange 0x218
+    f32 dashButtonHoldCancelTime = mDashButtonHoldCancelTime
+    f32 dashStrafeInputThreshold = mDashStrafeInputThreshold
+    f32 sidewaysDoubleJumpImpulse = mSidewaysDoubleJumpImpulse
+    f32 sidewaysVerticalDoubleJumpAccel = mSidewaysVerticalDoubleJumpAccel
+    f32 sidewaysHorizontalDoubleJumpAccel = mSidewaysHorizontalDoubleJumpAccel
+    f32 scanningRange = mScanningRange
 //    bool x21c_24_scanRetention : 1{};
 //    bool x21c_25_scanFreezesGame : 1{};
 //    bool x21c_26_orbitWhileScanning : 1{};
-    f32 scanMaxTargetDistance 0x220
-    f32 scanMaxLockDistance 0x224
+    f32 scanMaxTargetDistance = mScanMaxTargetDistance
+    f32 scanMaxLockDistance = mScanMaxLockDistance
 //    bool x228_24_freelookTurnsPlayer : 1{};
 //    bool x228_25_ : 1{};
 //    bool x228_26_ : 1{};
@@ -109,59 +109,59 @@ struct CTweakPlayer {
 //    bool x22a_28_assistedAimingIgnoreVertical : 1{};
 //    f32  0x22c
 //    f32  0x230
-    f32 aimMaxDistance 0x234
+    f32 aimMaxDistance = mAimMaxDistance
 //    f32  0x238
 //    f32  0x23c
 //    f32  0x240
 //    f32  0x244
 //    f32  0x248
-    f32 aimThresholdDistance 0x24c
+    f32 aimThresholdDistance = mAimThresholdDistance
 //    f32  0x250
 //    f32  0x254
-    f32 aimBoxWidth 0x258
-    f32 aimBoxHeight 0x25c
-    f32 aimTargetTimer 0x260
-    f32 aimAssistHorizontalAngle 0x264
-    f32 aimAssistVerticalAngle 0x268
-    f32 playerHeight 0x26c
-    f32 playerXYHalfExtent 0x270
-    f32 stepUpHeight 0x274
-    f32 stepDownHeight 0x278
-    f32 playerBallHalfExtent 0x27c
-    f32 firstPersonCameraSpeed 0x280
+    f32 aimBoxWidth = mAimBoxWidth
+    f32 aimBoxHeight = mAimBoxHeight
+    f32 aimTargetTimer = mAimTargetTimer
+    f32 aimAssistHorizontalAngle = mAimAssistHorizontalAngle
+    f32 aimAssistVerticalAngle = mAimAssistVerticalAngle
+    f32 playerHeight = mPlayerHeight
+    f32 playerXYHalfExtent = mPlayerXYHalfExtent
+    f32 stepUpHeight = mStepUpHeight
+    f32 stepDownHeight = mStepDownHeight
+    f32 playerBallHalfExtent = mPlayerBallHalfExtent
+    f32 firstPersonCameraSpeed = mFirstPersonCameraSpeed
 //    f32  0x284
-    f32 jumpCameraPitchDownStart 0x288
-    f32 jumpCameraPitchDownFull 0x28c
-    f32 jumpCameraPitchDownAngle 0x290
-    f32 fallCameraPitchDownStart 0x294
-    f32 fallCameraPitchDownFull 0x298
-    f32 fallCameraPitchDownAngle 0x29c
-    f32 orbitDistanceMax 0x2a0
-    f32 grappleSwingLength 0x2a4
-    f32 grappleSwingPeriod 0x2a8
-    f32 grapplePullSpeedMin 0x2ac
-    f32 grappleCameraSpeed 0x2b0
-    f32 maxGrappleLockedTurnAlignDistance 0x2b4
-    f32 grapplePullSpeedProportion 0x2b8
-    f32 grapplePullSpeedMax 0x2bc
-    f32 grappleLookCenterSpeed 0x2c0
-    f32 maxGrappleTurnSpeed 0x2c4
-    f32 grappleJumpForce 0x2c8
-    f32 grappleReleaseTime 0x2cc
-    u32 grappleJumpMode 0x2d0
+    f32 jumpCameraPitchDownStart = mJumpCameraPitchDownStart
+    f32 jumpCameraPitchDownFull = mJumpCameraPitchDownFull
+    f32 jumpCameraPitchDownAngle = mJumpCameraPitchDownAngle
+    f32 fallCameraPitchDownStart = mFallCameraPitchDownStart
+    f32 fallCameraPitchDownFull = mFallCameraPitchDownFull
+    f32 fallCameraPitchDownAngle = mFallCameraPitchDownAngle
+    f32 orbitDistanceMax = mOrbitDistanceMax
+    f32 grappleSwingLength = mGrappleSwingLength
+    f32 grappleSwingPeriod = mGrappleSwingPeriod
+    f32 grapplePullSpeedMin = mGrapplePullSpeedMin
+    f32 grappleCameraSpeed = mGrappleCameraSpeed
+    f32 maxGrappleLockedTurnAlignDistance = mMaxGrappleLockedTurnAlignDistance
+    f32 grapplePullSpeedProportion = mGrapplePullSpeedProportion
+    f32 grapplePullSpeedMax = mGrapplePullSpeedMax
+    f32 grappleLookCenterSpeed = mGrappleLookCenterSpeed
+    f32 maxGrappleTurnSpeed = mMaxGrappleTurnSpeed
+    f32 grappleJumpForce = mGrappleJumpForce
+    f32 grappleReleaseTime = mGrappleReleaseTime
+    u32 grappleJumpMode = mGrappleJumpMode
 //    bool x2d4_orbitReleaseBreaksGrapple{};
 //    bool x2d5_invertGrappleTurn{};
-    f32 grappleBeamSpeed 0x2d8
-    f32 grappleBeamXWaveAmplitude 0x2dc
-    f32 grappleBeamZWaveAmplitude 0x2e0
-    f32 grappleBeamAnglePhaseDelta 0x2e4
+    f32 grappleBeamSpeed = mGrappleBeamSpeed
+    f32 grappleBeamXWaveAmplitude = mGrappleBeamXWaveAmplitude
+    f32 grappleBeamZWaveAmplitude = mGrappleBeamZWaveAmplitude
+    f32 grappleBeamAnglePhaseDelta = mGrappleBeamAnglePhaseDelta
 //    f32  0x2e8
 //    f32  0x2ec
 //    f32  0x2f0
 //    bool x2f4_{};
-    f32 frozenTimeout 0x2f8
-    u32 iceBreakJumpCount 0x2fc
-    f32 variaDamageReduction 0x300
-    f32 gravityDamageReduction 0x304
-    f32 phazonDamageReduction 0x308
+    f32 frozenTimeout = mFrozenTimeout
+    u32 iceBreakJumpCount = mIceBreakJumpCount
+    f32 variaDamageReduction = mVariaDamageReduction
+    f32 gravityDamageReduction = mGravityDamageReduction
+    f32 phazonDamageReduction = mPhazonDamageReduction
 }

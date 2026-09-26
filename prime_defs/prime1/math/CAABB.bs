@@ -1,4 +1,5 @@
 struct CAABB {
-    CVector3f min
-    CVector3f max
+    decomp CAABox
+    CVector3f min = min
+    CVector3f max = max
 }

@@ -1,4 +1,4 @@
 struct CPlayerGun {
-    f32 bombFuseTime 0x354
-    CTransform transform 0x3e8
+    f32 bombFuseTime = mBombFuseTime
+    CTransform transform = mXf
 }

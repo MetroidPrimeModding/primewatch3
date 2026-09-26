@@ -1,7 +1,7 @@
 struct CGameAllocator {
-    u32 heapSize 0x8
-    *CMemoryBlock first 0xC
-    *CMemoryBlock last 0x10
+    u32 heapSize = mHeapSize
+    *CMemoryBlock first = mFirst
+    *CMemoryBlock last = mLast
 }
 
 struct CMemoryBlock {

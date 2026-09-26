@@ -1,3 +1,2 @@
 struct CScriptPointOfInterest: CActor {
-    vtable 0x803e3638
 }

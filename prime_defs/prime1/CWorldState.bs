@@ -1,7 +1,7 @@
 struct CWorldState {
-    u32 assetId 0x0
-    u32 areaId 0x4
-    rstl::rc_ptr<CScriptLayerState> layerManager 0x14
+    u32 assetId = mWorldId
+    u32 areaId = mAreaId
+    rstl::rc_ptr<CScriptLayerState> layerManager = mLayerState
 }
 
 struct CScriptLayerState {

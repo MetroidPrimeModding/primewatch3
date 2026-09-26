@@ -1,13 +1,12 @@
 struct CScriptDock: CPhysicsActor {
-    vtable 0x803df580
 
-    i32 dockReferenceCount 0x258
-    i32 dock 0x25c
-    u32 area 0x260
-    EDockState dockState 0x264
-    bool dockReferenced 0x268:7:1
-    bool loadConnected 0x268:6:1
-    bool areaPostConstructed 0x268:5:1
+    i32 dockReferenceCount = mDockReferenceCount
+    i32 dock = mDock
+    u32 area = mArea
+    EDockState dockState = mDockState
+    bool dockReferenced = mDockReferenced
+    bool loadConnected = mLoadConnected
+    bool areaPostConstructed = mAreaPostConstructed
 }
 
 enum EDockState: u32 {

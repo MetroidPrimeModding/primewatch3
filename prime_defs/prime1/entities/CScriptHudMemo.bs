@@ -1,3 +1,0 @@
-struct CScriptHudMemo: CEntity {
-    vtable 0x803dfbf0
-}

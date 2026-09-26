@@ -17,7 +17,10 @@ use super::window::{AnchorAlign, CustomInspectorRow, CustomInspectorWindow};
 fn load_defs() -> GameStructs {
   let mut structs = GameStructs::new_empty();
   structs
-    .load_from_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/prime_defs"))
+    .load_from_dir(
+      concat!(env!("CARGO_MANIFEST_DIR"), "/prime_defs"),
+      GameVersion::default(),
+    )
     .expect("load prime_defs");
   structs
 }

@@ -1,3 +1,2 @@
 struct CScriptMemoryRelay: CEntity {
-    vtable 0x803e86e8
 }

@@ -1,3 +1,2 @@
 struct CScriptVisorGoo: CActor {
-    vtable 0x803e58c0
 }

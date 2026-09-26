@@ -1,3 +1,3 @@
 struct CRandom16 {
-    i32 seed
+    i32 seed = mSeed
 }

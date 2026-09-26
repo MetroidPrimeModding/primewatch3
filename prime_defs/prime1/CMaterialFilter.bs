@@ -1,7 +1,7 @@
 struct CMaterialFilter {
-  u64 include
-  u64 exclude
-  EFilterType type
+  u64 include = include
+  u64 exclude = exclude
+  EFilterType type = type
 }
 
 enum EFilterType: u32 { Always, Include, Exclude, IncludeExclude }

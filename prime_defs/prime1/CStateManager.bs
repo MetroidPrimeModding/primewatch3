@@ -1,18 +1,19 @@
 struct CStateManager {
-    *CObjectList allObjects 0x810
-    *CPlayer player 0x84C
-    *CWorld world 0x850
-    *CCameraManager cameraManager 0x870
-    rstl::rc_ptr<CPlayerState> playerState 0x8b8
-    u32 nextAreaID 0x8CC
-    u32 prevAreaID 0x8D0
-    CRandom16 random 0x8FC
+    // `mObjectLists[kOL_All].mItem`: the storage is untyped bytes of 8-byte `auto_ptr`s.
+    *CObjectList allObjects = mObjectLists.mData[4]
+    *CPlayer player = mPlayer
+    *CWorld world = mWorld
+    *CCameraManager cameraManager = mCameraManager
+    rstl::rc_ptr<CPlayerState> playerState = mPlayerState
+    u32 nextAreaID = mNextAreaId
+    u32 prevAreaID = mPrevAreaId
+    CRandom16 random = mRandomValue
 
-    bool readyToRender 0xf94:7:1
-    bool quitGame 0xf94:6:1
-    bool generatingObject 0xf94:5:1
-    bool inMapScreen 0xf94:4:1
-    bool inSaveUI 0xf94:3:1
-    bool cinematicPause 0xf94:2:1
-    bool fullThreat 0xf94:1:1
+    bool readyToRender = mReadyToRender
+    bool quitGame = mQuitGame
+    bool generatingObject = mGeneratingObject
+    bool inMapScreen = mInMapScreen
+    bool inSaveUI = mInSaveUI
+    bool cinematicPause = mCinematicPause
+    bool fullThreat = mFullThreat
 }

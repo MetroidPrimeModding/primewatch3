@@ -1,3 +1,2 @@
 struct CScriptPlayerActor: CScriptActor {
-    vtable 0x803e4be0
 }

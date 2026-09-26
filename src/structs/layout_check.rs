@@ -1,8 +1,9 @@
-//! Validates every `.bs` member offset against the decomp's DWARF layouts
+//! Validates every `.bs` member against the decomp's DWARF layouts
 //! (`prime_defs/layouts/GM8E01_00.json.gz`).
 //!
-//! `.bs` members don't name the decomp field they read, so each one is checked
-//! by walking the DWARF layout down to whatever sits at its offset:
+//! `= field` members get their offset from DWARF, so this mostly checks that their
+//! `.bs` type fits the field; literal offsets are checked for position too. Either way
+//! each member is checked by walking the DWARF layout down to whatever sits at its offset:
 //! - a scalar (`u32`, `f32`, pointer, enum) must land exactly on a DWARF scalar
 //!   of the same size and a compatible kind (int / float / pointer);
 //! - a bitfield must cover exactly the same bits as a DWARF bitfield, or sit
@@ -13,36 +14,18 @@
 //! - anything inside `uchar[]` storage (`reserved_vector`, `optional_object`) is
 //!   accepted, since the storage is untyped.
 
-use super::layouts::{BitData, LayoutDb, StructDef, TypeRef};
+use super::layouts::{BitData, LayoutDb, StructDef, TypeRef, short_name};
 use super::prime_structs::{GameMember, GameStruct, GameStructs, primitive_size};
+use crate::mem::game_version::GameVersion;
 use std::fmt::Write;
+use std::rc::Rc;
 
-/// `.bs` spelling → decomp spelling, until `.bs` members reference decomp names
-/// directly (step 5 in doc/multi-version.md).
-const ALIASES: &[(&str, &str)] = &[
-  ("CAABB", "CAABox"),
-  ("CAABBPrimitive", "CCollidableAABox"),
-  ("CSpherePrimitive", "CCollidableSphere"),
-  ("CQuaternion", "CNUQuaternion"),
-  ("rbtree", "red_black_tree"),
-  ("CTransform", "CTransform4f"),
-  ("CScriptHudMemo", "CScriptHUDMemo"),
-  ("CScriptRoomAccoustics", "CScriptRoomAcoustics"),
-  ("autoptr", "auto_ptr"),
-  ("vector2", "vector"),
-];
-
-fn short_name(name: &str) -> &str {
-  let no_args = name.split('<').next().unwrap_or(name);
-  no_args.rsplit("::").next().unwrap_or(no_args)
-}
-
-fn decomp_short_name(bs_name: &str) -> &str {
-  let short = short_name(bs_name);
-  ALIASES
-    .iter()
-    .find(|(bs, _)| *bs == short)
-    .map_or(short, |(_, decomp)| decomp)
+/// The decomp's unqualified name for `.bs` type `bs_name` (its `decomp` declaration).
+fn decomp_short_name(structs: &GameStructs, bs_name: &str) -> Rc<str> {
+  let decomp = structs
+    .get_struct_by_name(bs_name)
+    .map_or_else(|| bs_name.into(), |s| s.decomp_name.clone());
+  short_name(&decomp).into()
 }
 
 #[derive(Clone)]
@@ -312,26 +295,6 @@ struct Report {
   unmatched_structs: Vec<String>,
 }
 
-fn find_def<'a>(db: &'a LayoutDb, bs_name: &str) -> Result<&'a StructDef, String> {
-  if let Some(def) = db.struct_by_name(bs_name) {
-    return Ok(def);
-  }
-  let want = decomp_short_name(bs_name);
-  // A qualified `.bs` name must match a qualified DWARF name: mwcc emits nested
-  // types unscoped, so bare `Area` could be any class's `Area` (it's
-  // `CScriptLayerManager::Area`, not `CWorldLayers::Area`).
-  let qualified = bs_name.split('<').next().unwrap_or(bs_name).contains("::");
-  let candidates: Vec<&str> = db
-    .names()
-    .filter(|n| short_name(n) == want && (!qualified || n.contains("::")))
-    .collect();
-  match candidates.as_slice() {
-    [only] if !db.is_conflicted(only) => Ok(db.struct_by_name(only).unwrap()),
-    [] => Err("not in DWARF".to_string()),
-    many => Err(format!("ambiguous: {}", many.join(", "))),
-  }
-}
-
 fn member_size(structs: &GameStructs, m: &GameMember) -> Option<u32> {
   if m.pointer {
     Some(4)
@@ -378,7 +341,7 @@ fn check_member(
     let Some(bs_struct) = &bs_struct else {
       return (check_scalar(&found, at, kind, size), describe(&found));
     };
-    let outcome = check_struct(db, &found, at, decomp_short_name(&m.type_name));
+    let outcome = check_struct(db, &found, at, &decomp_short_name(structs, &m.type_name));
     if !matches!(outcome, Outcome::Mismatch) || bs_struct.members_by_order.is_empty() {
       return (outcome, describe(&found));
     }
@@ -410,7 +373,7 @@ fn check_member(
 }
 
 fn check_struct_def(db: &LayoutDb, structs: &GameStructs, bs: &GameStruct, report: &mut Report) {
-  let def = match find_def(db, &bs.name) {
+  let def = match db.find_struct(&bs.decomp_name) {
     Ok(def) => def,
     Err(why) => {
       report
@@ -422,7 +385,7 @@ fn check_struct_def(db: &LayoutDb, structs: &GameStructs, bs: &GameStruct, repor
   report.structs_checked += 1;
 
   for parent in &bs.extends {
-    if !derives_from(db, def, decomp_short_name(parent)) {
+    if !derives_from(db, def, &decomp_short_name(structs, parent)) {
       report.mismatches.push(format!(
         "{}: extends {parent}, but DWARF {} doesn't derive from it",
         bs.name, def.name
@@ -503,15 +466,16 @@ fn format_report(r: &Report) -> String {
 
 #[test]
 fn bs_offsets_match_gm8e01_00_dwarf() {
-  let root = env!("CARGO_MANIFEST_DIR");
-  let db = LayoutDb::load_gz(&format!("{root}/prime_defs/layouts/GM8E01_00.json.gz"))
-    .expect("load layouts");
+  let db = GameVersion::NtscU0_00.layouts();
   let mut structs = GameStructs::new_empty();
   structs
-    .load_from_dir(&format!("{root}/prime_defs"))
+    .load_from_dir(
+      concat!(env!("CARGO_MANIFEST_DIR"), "/prime_defs"),
+      GameVersion::NtscU0_00,
+    )
     .expect("load prime_defs");
 
-  let report = run(&db, &structs);
+  let report = run(db, &structs);
   let text = format_report(&report);
   println!("{text}");
   assert!(report.mismatches.is_empty(), "{text}");

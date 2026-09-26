@@ -1,3 +1,0 @@
-struct CScriptRoomAccoustics: CEntity {
-    vtable 0x803e4708
-}

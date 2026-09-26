@@ -1,9 +1,7 @@
 //! Deferred menu actions, collected during the egui pass (which only holds
 //! shared borrows) and applied afterwards against the mutable game state.
 
-use crate::structs::prime_structs::GameStructs;
-
-use super::FrameState;
+use super::{FrameState, load_defs};
 
 /// Deferred menu action — collected during the egui pass (which only holds
 /// shared borrows) and applied afterwards against the mutable game state.
@@ -49,29 +47,21 @@ pub(super) fn apply_menu_action(action: MenuAction, fs: &mut FrameState) {
         }
       }
     }
-    MenuAction::ReloadDefs => {
-      // Fresh registry so removed `.bs` entries don't linger
-      *fs.structs = GameStructs::new_empty();
-      match fs.structs.load_from_dir("prime_defs") {
-        Ok(()) => {
-          *fs.status_text = format!(
-            "Loaded {} structs and {} enums",
-            fs.structs.structs.len(),
-            fs.structs.enums.len()
-          );
-          *fs.defs_loaded = true;
-          println!("{}", fs.status_text);
-          fs.toasts.info(fs.status_text.as_str());
-        }
-        Err(err) => {
-          *fs.defs_loaded = false;
-          eprintln!("Error loading structs: {err}");
-          fs.toasts
-            .error(format!("Failed to load definitions: {err}"));
-          *fs.status_text = err;
-        }
+    MenuAction::ReloadDefs => match load_defs(fs.structs, fs.version) {
+      Ok(text) => {
+        *fs.status_text = text;
+        *fs.defs_loaded = true;
+        println!("{}", fs.status_text);
+        fs.toasts.info(fs.status_text.as_str());
       }
-    }
+      Err(err) => {
+        *fs.defs_loaded = false;
+        eprintln!("Error loading structs: {err}");
+        fs.toasts
+          .error(format!("Failed to load definitions: {err}"));
+        *fs.status_text = err;
+      }
+    },
     MenuAction::ReloadScripts => {
       fs.scripts.reload();
       let compiled = fs

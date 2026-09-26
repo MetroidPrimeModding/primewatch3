@@ -1,3 +1,2 @@
 struct CScriptCameraBlurKeyframe: CEntity {
-    vtable 0x803dfca0
 }

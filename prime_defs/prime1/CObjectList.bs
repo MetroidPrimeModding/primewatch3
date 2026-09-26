@@ -1,15 +1,15 @@
 struct CObjectList {
-    SObjectListEntry[1024] list 0x4
-    EGameObjectList typeEnum 0x2004
-    u16 firstID 0x2008
-    u16 size 0x200A
+    SObjectListEntry[1024] list = mObjects
+    EGameObjectList typeEnum = mListType
+    u16 firstID = mFirstId
+    u16 size = mCount
 }
 
 struct SObjectListEntry {
     size 0x8
-    *CEntity entity 0x0
-    u16 next 0x4
-    u16 prev 0x6
+    *CEntity entity = mEnt
+    u16 next = mNext
+    u16 prev = mPrev
 }
 
 enum EGameObjectList {

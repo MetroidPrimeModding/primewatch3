@@ -1,4 +1,4 @@
 struct CHealthInfo {
-    f32 health 0x0
-    f32 knockbackResistance 0x4
+    f32 health = mHealth
+    f32 knockbackResistance = mKnockbackResistance
 }

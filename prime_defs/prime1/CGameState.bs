@@ -1,5 +1,5 @@
 struct CGameState {
-    u32 mlvlID 0x84
-    rstl::vector2<CWorldState> worldStates 0x88
-    f64 playtime 0xA0
+    u32 mlvlID = mMlvlId
+    rstl::vector2<CWorldState> worldStates = mWorldStates
+    f64 playtime = mPlayTime
 }

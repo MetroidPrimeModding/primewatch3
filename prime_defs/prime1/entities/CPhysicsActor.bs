@@ -1,24 +1,24 @@
 struct CPhysicsActor: CActor {
-    f32 mass 0xE8
-    f32 inertiaTensor 0xF0
-    bool movable 0xF8:7:1
-    bool angularEnabled 0xF8:6:1
-    bool standardCollider 0xF9
-    CVector3f constantForce 0xFC
-    CVector3f angularMomentum 0x108
-    CVector3f velocity 0x138
-    CVector3f momentum 0x150
-    CVector3f force 0x15C
-    CVector3f impulse 0x168
-    CVector3f torque 0x174
-    CVector3f angularImpulse 0x180
-    CAABB baseBoundingBox 0x1A4
-    CAABBPrimitive collisionPrimitive 0x1C0
-    CVector3f primitiveOffset 0x1E8
-    CMotionState lastNonCollidingState 0x1F4
-    CQuaternion orientation 0x200
-    CVector3f lastFloorPlaneNormal 0x228
-    f32 maxCollisionVelocity 0x238
-    f32 stepUpHeight 0x23C
-    f32 stepDownHeight 0x240
+    f32 mass = mMass
+    f32 inertiaTensor = mInertiaTensor
+    bool movable = mMovable
+    bool angularEnabled = mAngularEnabled
+    bool standardCollider = mStandardCollider
+    CVector3f constantForce = mConstantForce
+    CVector3f angularMomentum = mAngularMomentum
+    CVector3f velocity = mVelocity
+    CVector3f momentum = mMomentum
+    CVector3f force = mForce
+    CVector3f impulse = mImpulse
+    CVector3f torque = mTorque
+    CVector3f angularImpulse = mAngularImpulse
+    CAABB baseBoundingBox = mBaseBoundingBox
+    CAABBPrimitive collisionPrimitive = mCollisionPrimitive
+    CVector3f primitiveOffset = mPrimitiveOffset
+    CMotionState lastNonCollidingState = mLastNonCollidingState
+    CQuaternion orientation = mLastNonCollidingState.mOrientation
+    CVector3f lastFloorPlaneNormal = mLastFloorPlaneNormal.m_data
+    f32 maxCollisionVelocity = mMaximumCollisionVelocity
+    f32 stepUpHeight = mStepUpHeight
+    f32 stepDownHeight = mStepDownHeight
 }
