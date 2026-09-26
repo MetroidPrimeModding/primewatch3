@@ -1,5 +1,6 @@
 use crate::mem::game_memory::GameMemory;
 use crate::mem::game_version::GameVersion;
+use crate::mem::symbols::SymbolTable;
 use crate::structs::prime_structs::GameStructs;
 
 /// Explicit traversal context for the live-handle layer (`GameInstance`).
@@ -34,10 +35,19 @@ impl<'a> Ctx<'a> {
   }
 
   pub fn symbol(&self, name: &str) -> Option<u32> {
-    self.version.symbols()?.address(name)
+    self.symbols()?.address(name)
   }
 
-  pub fn vtable_class(&self, vtable: u32) -> Option<&'static str> {
-    self.version.symbols()?.vtable_class(vtable)
+  pub fn vtable_class(&self, vtable: u32) -> Option<&'a str> {
+    self.symbols()?.vtable_class(vtable)
+  }
+
+  /// `None` while `structs` is still loaded for another revision (the app relinks the
+  /// frame `version` changes), so no address is ever read with the wrong revision's table.
+  fn symbols(&self) -> Option<&'a SymbolTable> {
+    if self.structs.version != self.version {
+      return None;
+    }
+    self.structs.symbols.as_deref()
   }
 }

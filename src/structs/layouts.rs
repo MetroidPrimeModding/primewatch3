@@ -486,4 +486,52 @@ mod tests {
     println!("{report}");
     assert!(failed.is_empty(), "failed to link: {}", failed.join(", "));
   }
+
+  /// Every `.bs` `= field` reference that doesn't resolve, per revision with layouts. Unlike
+  /// [`bs_links_per_revision`] (whose link stops at the first error), this resolves each
+  /// reference on its own. Run with
+  /// `cargo test bs_unresolved_fields_per_revision -- --ignored --nocapture`.
+  #[test]
+  #[ignore]
+  fn bs_unresolved_fields_per_revision() {
+    use bstruct::bstruct_ast::ASTRootStatement;
+
+    let statements = bstruct::parse_directory(defs_dir().to_str().unwrap()).unwrap();
+    let mut failed = Vec::new();
+    for version in GameVersion::ALL {
+      if version.layout_version(defs_dir()) != version {
+        println!("{}: no layouts", version.id());
+        continue;
+      }
+      let db = LayoutDb::load(defs_dir(), version).unwrap();
+      let mut unresolved = Vec::new();
+      for statement in &statements {
+        let ASTRootStatement::Struct(s) = statement else {
+          continue;
+        };
+        let decomp = &s.decomp.as_ref().unwrap_or(&s.name).value;
+        for m in &s.members {
+          let Some(path) = &m.field else { continue };
+          if let Err(e) = db.resolve_field(decomp, &path.value) {
+            unresolved.push(format!(
+              "  {}.{}: `{}`: {e}",
+              s.name.value, m.name.value, path.value
+            ));
+          }
+        }
+      }
+      println!("{}: {} unresolved", version.id(), unresolved.len());
+      for line in &unresolved {
+        println!("{line}");
+      }
+      if !unresolved.is_empty() {
+        failed.push(version.id());
+      }
+    }
+    assert!(
+      failed.is_empty(),
+      "unresolved fields in: {}",
+      failed.join(", ")
+    );
+  }
 }

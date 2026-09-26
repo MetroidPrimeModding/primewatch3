@@ -1,5 +1,6 @@
 use crate::ctx::Ctx;
 use crate::mem::game_version::GameVersion;
+use crate::mem::symbols::SymbolTable;
 use crate::structs::layouts::LayoutDb;
 use bimap::BiBTreeMap;
 use bstruct::bstruct_link::{BEnum, BStruct, BStructMember, LinkError};
@@ -25,6 +26,8 @@ pub struct GameStructs {
   pub version: GameVersion,
   /// The revision whose layouts `= field` members were resolved against.
   pub layout_version: GameVersion,
+  /// `version`'s symbols; `None` if it has no symbol file.
+  pub symbols: Option<Rc<SymbolTable>>,
 }
 
 fn describe_compile_error(err: CompileError) -> String {
@@ -45,6 +48,7 @@ impl GameStructs {
       enums: BTreeMap::new(),
       version: GameVersion::default(),
       layout_version: GameVersion::default(),
+      symbols: None,
     }
   }
 
@@ -61,12 +65,14 @@ impl GameStructs {
   }
 
   /// Loads every `.bs` file under `dir`, resolving `= field` members against the layouts in
-  /// `dir/layouts/` for `version` ([`GameVersion::layout_version`]).
+  /// `dir/layouts/` for `version` ([`GameVersion::layout_version`]), plus `version`'s
+  /// symbols from `dir/symbols/`.
   pub fn load_from_dir(&mut self, dir: &str, version: GameVersion) -> Result<(), String> {
     let layout_version = version.layout_version(Path::new(dir));
     let layouts = LayoutDb::load(Path::new(dir), layout_version)?;
     let statements = parse_directory(dir).map_err(describe_compile_error)?;
     let compile_result = link(&statements, Some(&layouts)).map_err(describe_compile_error)?;
+    self.symbols = SymbolTable::load(Path::new(dir), version)?.map(Rc::new);
     self.version = version;
     self.layout_version = layout_version;
 
