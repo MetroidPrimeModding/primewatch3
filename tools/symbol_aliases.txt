@@ -1,5 +1,5 @@
 # Extra names for decomp symbols that are unnamed, or whose name isn't stable across
-# revisions. Applied by tools/gen_symbols.py.
+# revisions. Passed to prime-decomp's scripts/export_data_symbols.py by tools/gen_decomp_data.sh.
 #
 # <VERSION> <name PrimeWatch looks up> <decomp symbol>
 

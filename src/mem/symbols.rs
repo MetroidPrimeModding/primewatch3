@@ -1,5 +1,5 @@
 //! Per-revision symbol addresses, generated from prime-decomp's `symbols.txt` by
-//! `tools/gen_symbols.py` (see `doc/multi-version.md`) and compiled in.
+//! `tools/gen_decomp_data.sh` (see `doc/multi-version.md`) and compiled in.
 //!
 //! Only the matching decomp's addresses are used: a `-g` build moves code and data.
 

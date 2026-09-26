@@ -349,7 +349,7 @@ impl FieldResolver for LayoutDb {
   }
 }
 
-/// Add a revision here once `tools/gen_all_layouts.sh` has generated its layouts.
+/// Add a revision here once `tools/gen_decomp_data.sh` has generated its layouts.
 fn source(version: GameVersion) -> Option<&'static [u8]> {
   match version {
     GameVersion::NtscU0_00 => Some(include_bytes!("../../prime_defs/layouts/GM8E01_00.json.gz")),
