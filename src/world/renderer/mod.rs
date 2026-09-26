@@ -414,8 +414,8 @@ impl WorldRenderer {
     self.aspect = viewport_size.0 as f32 / viewport_size.1.max(1) as f32;
 
     // --- player reads (keep last good value on a `None`) ---
-    let sm = get_state_manager();
-    if let Some(player) = sm.get_member(ctx, "player") {
+    let sm = get_state_manager(ctx);
+    if let Some(player) = sm.as_ref().and_then(|sm| sm.get_member(ctx, "player")) {
       if let Some(tf) = player
         .get_member(ctx, "transform")
         .and_then(|m| read_as_transform(ctx, &m))
@@ -473,15 +473,14 @@ impl WorldRenderer {
     }
 
     // --- camera manager -> in-game camera (keep last good value on a `None`) ---
-    if let Some(cam_mgr) = sm.get_member(ctx, "cameraManager")
+    if let Some(cam_mgr) = sm
+      .as_ref()
+      .and_then(|sm| sm.get_member(ctx, "cameraManager"))
       && let Some(cam_id) = cam_mgr
         .get_member(ctx, "curCameraId")
         .and_then(|m| m.read_u16(ctx))
       && let Some(mut camera) = get_object_by_entity_id(ctx, cam_id)
     {
-      // Assume the active camera is a CGameCamera.
-      // There seems to be a bug here at least sometimes, causing morph camera data to not pull in properly
-      // TODO: add a view to debug this?
       camera.type_name = "CGameCamera".into();
       if let Some(m) = camera
         .get_member(ctx, "transform")
@@ -552,8 +551,6 @@ impl WorldRenderer {
     } else {
       None
     };
-    // Label the picked triangle's three verts in the world view, the same way
-    // entity overlays are placed (`project` then flip Y into overlay space).
     if let Some(verts) = self.hovered_tri.as_ref().map(|h| h.verts) {
       for (i, v) in verts.iter().enumerate() {
         if let Some(s) = camera::project(*v, self.cam_view, self.cam_projection, self.cam_viewport)
@@ -581,11 +578,6 @@ impl WorldRenderer {
     // the screen edge and flicker in and out. Skip them in that mode.
     if self.camera_mode != CameraMode::GameCam {
       self.render_buff.set_transform(Mat4::IDENTITY);
-      // `generate_camera_line_segments` unprojects NDC frustum corners through
-      // `perspective.inverse()` and places them in world space by multiplying
-      // by `transform` directly, so `transform` must be a standard-basis
-      // camera-to-world matrix matching that projection -- not the raw,
-      // native-basis `CTransform4f` (see `camera::game_cam_view`'s doc comment).
       self
         .render_buff
         .add_lines(&shapes::generate_camera_line_segments(
@@ -641,8 +633,7 @@ impl WorldRenderer {
 
     // The "safe" pose (`lastNonCollidingState`) is the primary player ghost;
     // the raw `transform` reads is only drawn alongside it once it's been
-    // meaningfully different for a few frames running (see
-    // `player_diverged_frames`).
+    // meaningfully different for a few frames
     let safe = self.last_non_colliding;
     self.draw_player(&safe, Vec4::ONE);
     if self.player_diverged_frames >= PLAYER_DIVERGENCE_FRAMES {

@@ -1,0 +1,25 @@
+diff --git a/configure.py b/configure.py
+index 0e233be8..97bb49d7 100755
+--- a/configure.py
++++ b/configure.py
+@@ -260,9 +260,8 @@ cflags_base = [
+ # Debug flags
+ if args.debug:
+     # Or -sym dwarf-2 for Wii compilers
+-    cflags_base.extend(["-sym on", "-DDEBUG=1"])
+-else:
+-    cflags_base.append("-DNDEBUG=1")
++    cflags_base.append("-sym on")
++cflags_base.append("-DNDEBUG=1")
+ 
+ # Warning flags
+ if args.warn == "all":
+@@ -323,6 +322,8 @@ cflags_retro = [
+     # "-sym on",
+     "-DMUSY_TARGET=MUSY_TARGET_DOLPHIN",
+ ]
++if args.debug:
++    cflags_retro.append("-sym on")
+ 
+ # Most Retro code uses this inline limit. Objects that still need the compiler
+ # default retain cflags_retro explicitly while their helper inlining is investigated.

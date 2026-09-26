@@ -10,6 +10,7 @@ use winit::event_loop::ActiveEventLoop;
 use winit::window::Window;
 
 use crate::ctx::Ctx;
+use crate::mem::game_version::GameVersion;
 use crate::mem::globals::{get_main, get_memory_card, get_state_manager, get_tweak_player};
 use crate::ui_state;
 
@@ -219,7 +220,7 @@ impl AppWindow {
     let egui_ctx = self.egui_ctx.clone();
     let mut menu_actions: Vec<MenuAction> = Vec::new();
     let ctx = if defs_loaded {
-      Some(Ctx::new(&*fs.structs, &*fs.mem))
+      Some(Ctx::new(&*fs.structs, &*fs.mem, fs.version))
     } else {
       None
     };
@@ -262,6 +263,28 @@ impl AppWindow {
                 }
                 if ui.button("Load from file").clicked() {
                   menu_actions.push(MenuAction::LoadFromFile);
+                }
+              });
+
+              let version_title = match (*fs.version_override, fs.detected_version) {
+                (Some(v), _) => format!("{} (override)", v.id()),
+                (None, Some(v)) => v.id().to_string(),
+                (None, None) => format!("{}?", fs.version.id()),
+              };
+              ui.menu_button(version_title, |ui| {
+                let auto = match fs.detected_version {
+                  Some(v) => format!("Auto: {v}"),
+                  None => format!("Auto: not detected, using {}", fs.version),
+                };
+                ui.radio_value(fs.version_override, None, auto);
+                ui.separator();
+                for v in GameVersion::ALL {
+                  let label = if v.is_supported() {
+                    v.to_string()
+                  } else {
+                    format!("{v} - unsupported")
+                  };
+                  ui.radio_value(fs.version_override, Some(v), label);
                 }
               });
 
@@ -405,10 +428,12 @@ impl AppWindow {
         egui::ScrollArea::vertical()
           .auto_shrink([false, true])
           .show(ui, |ui| {
-            let sm = get_state_manager();
-            fs.inspector.render(ui, ctx, "g_stateManager", &sm, true);
-            let main = get_main();
-            fs.inspector.render(ui, ctx, "g_main", &main, true);
+            if let Some(sm) = get_state_manager(ctx) {
+              fs.inspector.render(ui, ctx, "g_stateManager", &sm, true);
+            }
+            if let Some(main) = get_main(ctx) {
+              fs.inspector.render(ui, ctx, "g_main", &main, true);
+            }
             if let Some(mc) = get_memory_card(ctx) {
               fs.inspector.render(ui, ctx, "gp_MemoryCard", &mc, true);
             }

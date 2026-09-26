@@ -24,7 +24,6 @@ struct SDockReference {
   u32 area 0x0
   i16 dock 0x4
   bool loadOther 0x6:7:1
-  u8 loadOther2 0x6
 }
 
 struct CGameArea::Dock {

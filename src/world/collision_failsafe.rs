@@ -605,7 +605,7 @@ pub fn predict_reposition_from_live<'a>(
   area_aabbs: &[Aabb],
   prim_source: RepositionPrimSource,
 ) -> Option<RepositionPrediction> {
-  let player = get_state_manager().get_member(ctx, "player")?;
+  let player = get_state_manager(ctx)?.get_member(ctx, "player")?;
 
   let player_pos = read_as_transform(ctx, &player.get_member(ctx, "transform")?)?
     .w_axis
@@ -682,6 +682,7 @@ pub fn predict_reposition_from_live<'a>(
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::mem::game_version::GameVersion;
 
   fn tri(a: [f32; 3], b: [f32; 3], c: [f32; 3]) -> [Vec3; 3] {
     [
@@ -965,10 +966,10 @@ mod tests {
     structs
       .load_from_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/prime_defs"))
       .expect("load prime_defs");
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 
-    let player = get_state_manager()
-      .get_member(&ctx, "player")
+    let player = get_state_manager(&ctx)
+      .and_then(|sm| sm.get_member(&ctx, "player"))
       .expect("player");
     eprintln!("player @ {:#010x}", player.address);
     let tf = read_as_transform(&ctx, &player.get_member(&ctx, "transform").unwrap()).unwrap();
@@ -1024,7 +1025,7 @@ mod tests {
     structs
       .load_from_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/prime_defs"))
       .expect("load prime_defs");
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 
     let meshes: Vec<CollisionMesh> = get_areas(&ctx)
       .iter()
@@ -1038,7 +1039,9 @@ mod tests {
       })
       .collect();
 
-    let player = get_state_manager().get_member(&ctx, "player").unwrap();
+    let player = get_state_manager(&ctx)
+      .and_then(|sm| sm.get_member(&ctx, "player"))
+      .unwrap();
     let player_pos = read_as_transform(&ctx, &player.get_member(&ctx, "transform").unwrap())
       .unwrap()
       .w_axis

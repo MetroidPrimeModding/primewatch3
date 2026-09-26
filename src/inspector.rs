@@ -438,6 +438,7 @@ impl Inspector {
 mod tests {
   use super::*;
   use crate::mem::game_memory::GameMemory;
+  use crate::mem::game_version::GameVersion;
   use crate::structs::prime_structs::{GameEnum, GameMember, GameStruct, GameStructs};
   use bimap::BiBTreeMap;
   use std::collections::BTreeMap;
@@ -466,7 +467,7 @@ mod tests {
   fn format_primitive_u32() {
     let structs = GameStructs::new_empty();
     let mem = mem_with(&[(0, &0xDEAD_BEEFu32.to_be_bytes())]);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let inst = GameInstance::new(0x8000_0000, "u32".to_string());
     assert_eq!(
       format_primitive(&ctx, "field", &inst, false),
@@ -478,7 +479,7 @@ mod tests {
   fn format_primitive_f32_exact_and_not() {
     let structs = GameStructs::new_empty();
     let mem = mem_with(&[(0, &1.5f32.to_be_bytes())]);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let inst = GameInstance::new(0x8000_0000, "f32".to_string());
     assert_eq!(format_primitive(&ctx, "x", &inst, false), "x 1.500");
     assert_eq!(format_primitive(&ctx, "x", &inst, true), "x 1.50000000");
@@ -488,7 +489,7 @@ mod tests {
   fn format_primitive_bool() {
     let structs = GameStructs::new_empty();
     let mem = mem_with(&[(0, &[1]), (1, &[0])]);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let t = GameInstance::new(0x8000_0000, "bool".to_string());
     let f = GameInstance::new(0x8000_0001, "bool".to_string());
     assert_eq!(format_primitive(&ctx, "b", &t, false), "b true");
@@ -499,7 +500,7 @@ mod tests {
   fn format_primitive_i16_sign_extends() {
     let structs = GameStructs::new_empty();
     let mem = mem_with(&[(0, &0x8000u16.to_be_bytes())]);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let inst = GameInstance::new(0x8000_0000, "i16".to_string());
     // exact flag is irrelevant for integers.
     assert_eq!(
@@ -513,7 +514,7 @@ mod tests {
   fn format_primitive_u8_pointer_is_cstring() {
     let structs = GameStructs::new_empty();
     let mem = mem_with(&[(0x10, b"hi\0")]);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let mut inst = GameInstance::new(0x8000_0010, "u8".to_string());
     inst.pointer = true;
     assert_eq!(
@@ -538,7 +539,7 @@ mod tests {
     let mut structs = GameStructs::new_empty();
     structs.insert_enum(&direction_enum());
     let mem = mem_with(&[(0, &2u32.to_be_bytes()), (4, &7u32.to_be_bytes())]);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 
     let known = GameInstance::new(0x8000_0000, "EDir".to_string());
     assert_eq!(format_enum(&ctx, "dir", &known), "dir kTwo (2/0x2/0b10)");
@@ -564,7 +565,7 @@ mod tests {
       (4, &(-2.5f32).to_be_bytes()),
       (8, &3.25f32.to_be_bytes()),
     ]);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let inst = GameInstance::new(0x8000_0000, "CVector3f".to_string());
     assert_eq!(
       format_vec3(&ctx, "v", &inst, false),
@@ -585,7 +586,7 @@ mod tests {
       (8, &0.0f32.to_be_bytes()),
       (12, &0.0f32.to_be_bytes()),
     ]);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let inst = GameInstance::new(0x8000_0000, "CQuaternion".to_string());
     assert_eq!(
       format_quat(&ctx, "q", &inst, false),
@@ -606,7 +607,7 @@ mod tests {
       (36, &6.0f32.to_be_bytes()),
       (52, &7.0f32.to_be_bytes()),
     ]);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     assert_eq!(
       format_matrix_row(&ctx, 0x8000_0000, 3, 0, false),
       "1.00, 2.00, 3.00, "
@@ -646,7 +647,7 @@ mod tests {
     owner.insert_member(&arr);
     structs.insert_struct(&owner);
     let mem = mem_with(&[(0, &0x8000_1000u32.to_be_bytes())]);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let child = GameInstance::new(0x8000_0000, "Owner".to_string())
       .get_member(&ctx, "buf")
       .unwrap();

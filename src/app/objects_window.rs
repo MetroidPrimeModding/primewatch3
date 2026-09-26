@@ -6,7 +6,6 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use crate::ctx::Ctx;
 use crate::inspector::Inspector;
 use crate::mem::game_object_utils::TUniqueID;
-use crate::mem::vtables::vtable_class_name;
 use crate::object_filter::ObjectFilter;
 use crate::structs::prime_structs::GameInstance;
 
@@ -20,8 +19,6 @@ pub(super) struct WatchedEditorId {
   pub(super) type_name: String,
 }
 
-/// All state mutated here is local UI state (no memory writes), so it mutates
-/// the passed `&mut` refs directly rather than deferring like `MenuAction`.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_objects_window(
   egui_ctx: &egui::Context,
@@ -57,18 +54,16 @@ pub(super) fn render_objects_window(
   // `> 0x80000000 && < 0x80700000` window skips the "not up to date yet"
   // sub-0x80000000 garbage.
   for &vtable in vtables.keys() {
-    if vtable_class_name(vtable).is_none() && vtable > 0x8000_0000 && vtable < 0x8070_0000 {
+    if ctx.vtable_class(vtable).is_none() && vtable > 0x8000_0000 && vtable < 0x8070_0000 {
       unknown_vtables.insert(vtable);
     }
   }
 
-  // `objects` is now a `BTreeMap`, so `iter()` is already sorted by `TUniqueID`.
   let ordered: Vec<(&TUniqueID, &GameInstance)> = objects.iter().collect();
 
   egui::Window::new("Objects").show(egui_ctx, |ui| {
     ui.label(format!("Current object count: {}", objects.len()));
 
-    // "Copy unknowns (N)".
     if ui
       .button(format!("Copy unknowns ({})", unknown_vtables.len()))
       .clicked()
@@ -97,7 +92,7 @@ pub(super) fn render_objects_window(
             {
               ui.ctx().copy_text(format!("{{0x{vtable:08x}, \"\"}},"));
             }
-            ui.label(vtable_class_name(vtable).unwrap_or("unknown"));
+            ui.label(ctx.vtable_class(vtable).unwrap_or("unknown"));
             ui.label(active.to_string());
             ui.label(inactive.to_string());
             ui.end_row();
@@ -141,9 +136,6 @@ pub(super) fn render_objects_window(
                 .read_string(ctx)
                 .unwrap_or_default();
 
-              // Probe string; sigils `#`/`@`/`&` let a user filter by editor ID
-              // / class / name. First `{:08x}` is hex eid, second `{:08}` is
-              // decimal eid zero-padded.
               let probe = format!("#{eid:08x}#{eid:08}@{}&{}", entity.type_name, name);
               if !object_filter.passes(&probe) {
                 continue;

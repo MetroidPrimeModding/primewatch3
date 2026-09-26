@@ -1,0 +1,17 @@
+# Extra names for decomp symbols that are unnamed, or whose name isn't stable across
+# revisions. Applied by tools/gen_symbols.py.
+#
+# <VERSION> <name PrimeWatch looks up> <decomp symbol>
+
+# TOneStatic<CStateManager>'s storage is a function-local static whose `$NNNN`
+# suffix is compiler-generated. In every revision it's the only .bss object of
+# size 0xF98 (CHECK_SIZEOF(CStateManager, 0xf98)).
+GM8E01_00 sAllocSpace$CStateManager sAllocSpace$2467
+GM8E01_01 sAllocSpace$CStateManager sAllocSpace$2742
+GM8E01_02 sAllocSpace$CStateManager lbl_8045B208
+GM8E01_48 sAllocSpace$CStateManager lbl_80459E88
+GM8P01_00 sAllocSpace$CStateManager sAllocSpace$2707
+GM8J01_00 sAllocSpace$CStateManager lbl_80443030
+
+# Vtables the decomp hasn't named yet (from PrimeWatch's old hand-made table).
+GM8E01_00 __vt__7CBeetle lbl_803DF890

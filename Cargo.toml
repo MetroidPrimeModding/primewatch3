@@ -30,6 +30,11 @@ pollster = "1.0"
 wgpu = "30"
 winit = "0.30"
 
+[dev-dependencies]
+# Reading prime_defs/layouts/*.json.gz (DWARF layout validation test).
+flate2 = "1.1"
+serde_json = "1.0"
+
 # Windows-only: real Dolphin process attach (OpenProcess / VirtualQueryEx / ReadProcessMemory)
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = [

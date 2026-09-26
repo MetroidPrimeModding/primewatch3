@@ -1,6 +1,6 @@
 struct CModelData {
     CVector3f scale 0x0
-    u32 xc_unknown 0xc
+    bool ownsAnimData 0xc
     *CAnimData animData 0x10
     //TODO: bitstruct
     //x14_24 renderSorted

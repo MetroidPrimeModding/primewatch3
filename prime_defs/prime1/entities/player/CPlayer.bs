@@ -4,7 +4,7 @@ struct CPlayer: CPhysicsActor {
     f32 sjTimer 0x28C
     f32 startingJumpTimeout 0x288
     f32 minJumpTimeout 0x290
-    f32 jumpPresses 0x298
+    i32 jumpPresses 0x298
     ESurfaceRestraints surfaceRestraint 0x2AC
     CAABB fpBounds 0x2d8
     EPlayerCameraState cameraState 0x2F4

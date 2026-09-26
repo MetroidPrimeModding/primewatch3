@@ -401,6 +401,7 @@ impl GameInstance {
 mod tests {
   use super::*;
   use crate::mem::game_memory::GameMemory;
+  use crate::mem::game_version::GameVersion;
 
   fn member(name: &str, type_name: &str, offset: i64) -> GameMember {
     GameMember {
@@ -534,7 +535,7 @@ mod tests {
   fn game_instance_reads_match_raw_memory() {
     let Some(mem) = load_mem1() else { return };
     let structs = GameStructs::new_empty();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 
     // A plain (non-bitfield) instance at the disc header.
     let inst = GameInstance::new(0x8000_0000, "uint".to_string());
@@ -554,7 +555,7 @@ mod tests {
   fn game_instance_bitfield_masking() {
     let Some(mem) = load_mem1() else { return };
     let structs = GameStructs::new_empty();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 
     // u32 @ 0x8000_001C == 0xC233_9F3D; (v >> 4) & 0xF == 0x3, (v >> 0) & 0xFF == 0x3D.
     let bf = GameInstance::with_bitfield(0x8000_001C, "uint".to_string(), Some(4), Some(4));
@@ -577,7 +578,7 @@ mod tests {
   fn game_instance_oob_reads_are_none() {
     let Some(mem) = load_mem1() else { return };
     let structs = GameStructs::new_empty();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let oob = GameInstance::new(0x8190_0000, "uint".to_string());
     assert_eq!(oob.read_u8(&ctx), None);
     assert_eq!(oob.read_u32(&ctx), None);
@@ -596,7 +597,7 @@ mod tests {
     structs.insert_struct(&game_struct("S", &[], &[m]));
 
     let mem = GameMemory::new();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let root = GameInstance::new(0x8000_0000, "S".to_string());
     let field = root.get_member(&ctx, "flags").unwrap();
     assert_eq!(field.bit, Some(2));
@@ -618,7 +619,7 @@ mod tests {
     let mut mem = GameMemory::new();
     // Pointer slot at 0x8000_0004 -> 0x8000_1000.
     mem.data[0x4..0x8].copy_from_slice(&0x8000_1000u32.to_be_bytes());
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let root = GameInstance::new(0x8000_0000, "Owner".to_string());
 
     let via_ptr = root.get_member(&ctx, "target").unwrap();
@@ -662,7 +663,7 @@ mod tests {
     structs.insert_struct(&game_struct("Container", &[], &[prims, foos]));
 
     let mem = GameMemory::new();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let root = GameInstance::new(0x8000_0000, "Container".to_string());
 
     let prim_arr = root.get_member(&ctx, "prims").unwrap();
@@ -693,7 +694,7 @@ mod tests {
     words.array_length = Some(6);
     structs.insert_struct(&game_struct("Header", &[], &[words]));
 
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let base = 0x8000_0000;
     let root = GameInstance::new(base, "Header".to_string());
     let arr = root.get_member(&ctx, "words").unwrap();
@@ -723,7 +724,7 @@ mod tests {
   fn member_matches_get_member_when_present() {
     let structs = chain();
     let mem = GameMemory::new();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let root = GameInstance::new(0x8000_0000, "C".to_string());
 
     let via_get = root.get_member(&ctx, "b_field").unwrap();
@@ -737,7 +738,7 @@ mod tests {
   fn member_panics_on_typo() {
     let structs = chain();
     let mem = GameMemory::new();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let root = GameInstance::new(0x8000_0000, "C".to_string());
     root.member(&ctx, "b_feild");
   }
@@ -746,7 +747,7 @@ mod tests {
   fn extends_class_resolves_transitive_inheritance() {
     let structs = chain();
     let mem = GameMemory::new();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 
     let c = GameInstance::new(0x8000_0000, "C".to_string());
     // identity
@@ -774,7 +775,7 @@ mod tests {
     structs.insert_struct(&game_struct("Top", &[], &[member("a", "Mid", 0x10)]));
 
     let mem = GameMemory::new();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let root = GameInstance::new(0x8000_0000, "Top".to_string());
     let leaf = root.member(&ctx, "a").member(&ctx, "b").member(&ctx, "c");
     assert_eq!(leaf.address, 0x8000_0000 + 0x10 + 0x8 + 0x4);

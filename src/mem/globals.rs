@@ -1,32 +1,31 @@
-//! The fixed global roots the app traverses from every frame.
+//! The global roots the app traverses from every frame, at the running revision's
+//! addresses (`Ctx::symbol`). `None` when this revision has no address for the root.
 //!
-//! Each root's address doubles as its live address. The non-pointer roots
-//! (`g_stateManager`, `g_main`) map straight to a `GameInstance` at that
-//! address. The pointer roots (`gp_MemoryCard`, `gp_TweakPlayer`) hold a `u32`
-//! pointer *at* the fixed address; here that deref is explicit and can fail
-//! (unreadable memory / null), so those return `Option<GameInstance>`.
+//! The non-pointer roots (`CStateManager`, `CMain`) are statically allocated, so the
+//! symbol is the object. The pointer roots (`gpMemoryCard`, `gpTweakPlayer`) hold a
+//! pointer to it, and a failed read of that pointer is also `None`.
 
 use crate::ctx::Ctx;
 use crate::structs::prime_structs::GameInstance;
 use std::string::ToString;
 
-pub fn get_state_manager() -> GameInstance {
-  GameInstance::new(0x8045A1A8, "CStateManager".to_string())
+pub fn get_state_manager(ctx: &Ctx) -> Option<GameInstance> {
+  let address = ctx.symbol("sAllocSpace$CStateManager")?;
+  Some(GameInstance::new(address, "CStateManager".to_string()))
 }
 
-pub fn get_main() -> GameInstance {
-  GameInstance::new(0x80457560, "CMain".to_string())
+pub fn get_main(ctx: &Ctx) -> Option<GameInstance> {
+  let address = ctx.symbol("sMainSpace")?;
+  Some(GameInstance::new(address, "CMain".to_string()))
 }
 
-/// `gp_MemoryCard` — pointer at `0x805A8C44` to a `CMemoryCardSys`.
 pub fn get_memory_card(ctx: &Ctx) -> Option<GameInstance> {
-  let address = ctx.mem.read_u32(0x805A8C44)?;
+  let address = ctx.mem.read_u32(ctx.symbol("gpMemoryCard")?)?;
   Some(GameInstance::new(address, "CMemoryCardSys".to_string()))
 }
 
-/// `gp_TweakPlayer` — pointer at `0x805A8CD8` to a `CTweakPlayer`.
 pub fn get_tweak_player(ctx: &Ctx) -> Option<GameInstance> {
-  let address = ctx.mem.read_u32(0x805A8CD8)?;
+  let address = ctx.mem.read_u32(ctx.symbol("gpTweakPlayer")?)?;
   Some(GameInstance::new(address, "CTweakPlayer".to_string()))
 }
 
@@ -34,33 +33,33 @@ pub fn get_tweak_player(ctx: &Ctx) -> Option<GameInstance> {
 mod tests {
   use super::*;
   use crate::mem::game_memory::GameMemory;
+  use crate::mem::game_version::GameVersion;
   use crate::structs::prime_structs::GameStructs;
 
   #[test]
-  fn non_pointer_roots_match_game_offsets_hpp() {
-    let sm = get_state_manager();
+  fn roots_resolve_per_revision() {
+    let structs = GameStructs::new_empty();
+    let mut mem = GameMemory::new();
+    mem.data[0x805A8C44 & 0x7FFFFFFF..][..4].copy_from_slice(&0x8123_4560u32.to_be_bytes());
+    let ctx = Ctx::new(&structs, &mem, GameVersion::NtscU0_00);
+
+    let sm = get_state_manager(&ctx).unwrap();
     assert_eq!(sm.address, 0x8045A1A8);
     assert_eq!(sm.type_name.as_ref(), "CStateManager");
-    let main = get_main();
+    let main = get_main(&ctx).unwrap();
     assert_eq!(main.address, 0x80457560);
     assert_eq!(main.type_name.as_ref(), "CMain");
-  }
-
-  #[test]
-  fn pointer_roots_deref_the_fixed_address() {
-    // Zeroed memory: the pointer slots read back 0, so the deref succeeds with
-    // address 0 (it does not fail — only an OOB / unreadable slot yields None).
-    let structs = GameStructs::new_empty();
-    let mem = GameMemory::new();
-    let ctx = Ctx::new(&structs, &mem);
-
     let card = get_memory_card(&ctx).unwrap();
-    assert_eq!(card.address, mem.read_u32(0x805A8C44).unwrap());
+    assert_eq!(card.address, 0x8123_4560);
     assert_eq!(card.type_name.as_ref(), "CMemoryCardSys");
 
-    let tweak = get_tweak_player(&ctx).unwrap();
-    assert_eq!(tweak.address, mem.read_u32(0x805A8CD8).unwrap());
-    assert_eq!(tweak.type_name.as_ref(), "CTweakPlayer");
+    let pal = Ctx::new(&structs, &mem, GameVersion::Pal);
+    assert_eq!(get_state_manager(&pal).unwrap().address, 0x803E2088);
+    assert_eq!(get_main(&pal).unwrap().address, 0x803DF440);
+
+    let wii = Ctx::new(&structs, &mem, GameVersion::TrilogyNtsc);
+    assert!(get_state_manager(&wii).is_none());
+    assert!(get_tweak_player(&wii).is_none());
   }
 
   #[test]
@@ -74,7 +73,8 @@ mod tests {
     let structs = GameStructs::new_empty();
     let mut mem = GameMemory::new();
     mem.load_from_file(&path).expect("read mem1.raw");
-    let ctx = Ctx::new(&structs, &mem);
+    let version = GameVersion::detect(&mem).expect("mem1.raw is a Prime dump");
+    let ctx = Ctx::new(&structs, &mem, version);
 
     // Both globals should point somewhere inside the emulated RAM window.
     for inst in [get_memory_card(&ctx), get_tweak_player(&ctx)] {

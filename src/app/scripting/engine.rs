@@ -129,15 +129,24 @@ fn register_window_api(engine: &mut Engine) {
 }
 
 fn register_lookup_api(engine: &mut Engine) {
-  // Fixed global roots — no memory read, always succeed.
-  engine.register_fn("get_state_manager", get_state_manager);
-  engine.register_fn("get_main", get_main);
+  // Global roots at the running revision's addresses. Unit if it has none.
+  engine.register_fn(
+    "get_state_manager",
+    || -> Result<Dynamic, Box<EvalAltResult>> {
+      with_env(|ctx, _| opt_instance(get_state_manager(ctx)))
+    },
+  );
+  engine.register_fn("get_main", || -> Result<Dynamic, Box<EvalAltResult>> {
+    with_env(|ctx, _| opt_instance(get_main(ctx)))
+  });
 
   // `g_stateManager.player` (auto-derefs the `*CPlayer`). Unit if unreadable.
   engine.register_fn(
     "get_player_entity",
     || -> Result<Dynamic, Box<EvalAltResult>> {
-      with_env(|ctx, _| opt_instance(get_state_manager().get_member(ctx, "player")))
+      with_env(|ctx, _| {
+        opt_instance(get_state_manager(ctx).and_then(|sm| sm.get_member(ctx, "player")))
+      })
     },
   );
 

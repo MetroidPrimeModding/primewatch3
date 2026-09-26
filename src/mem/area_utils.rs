@@ -22,8 +22,7 @@ const AREA_CAP: u32 = 1024;
 ///   `name` field; the returned `Vec` index *is* the label and formatting it is
 ///   a render-layer concern.
 pub fn get_areas(ctx: &Ctx) -> Vec<GameInstance> {
-  let sm = get_state_manager();
-  let Some(world) = sm.get_member(ctx, "world") else {
+  let Some(world) = get_state_manager(ctx).and_then(|sm| sm.get_member(ctx, "world")) else {
     return vec![];
   };
   let Some(areas) = world.get_member(ctx, "areas") else {
@@ -50,6 +49,7 @@ pub fn get_areas(ctx: &Ctx) -> Vec<GameInstance> {
 mod tests {
   use super::*;
   use crate::mem::game_memory::GameMemory;
+  use crate::mem::game_version::GameVersion;
   use crate::structs::prime_structs::GameStructs;
 
   /// Real `.bs` schema from this crate's `prime_defs/`.
@@ -79,7 +79,7 @@ mod tests {
   fn autoptr_element_stride_is_8() {
     let structs = load_defs();
     let mem = GameMemory::new();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let first = GameInstance::new(0x8000_0000, "rstl::autoptr<CGameArea>".to_string());
     assert_eq!(first.element_size(&ctx), 8);
   }
@@ -88,7 +88,7 @@ mod tests {
   fn get_areas_reads_the_live_world() {
     let Some(mem) = load_mem1() else { return };
     let structs = load_defs();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 
     let areas = get_areas(&ctx);
     assert!(!areas.is_empty(), "expected a non-empty area list");
@@ -108,7 +108,7 @@ mod tests {
   fn get_areas_on_zeroed_memory_does_not_panic() {
     let structs = load_defs();
     let mem = GameMemory::new();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     assert!(get_areas(&ctx).is_empty());
   }
 }

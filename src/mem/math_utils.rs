@@ -84,6 +84,7 @@ pub fn read_as_transform(ctx: &Ctx, member: &GameInstance) -> Option<Mat4> {
 mod tests {
   use super::*;
   use crate::mem::game_memory::GameMemory;
+  use crate::mem::game_version::GameVersion;
   use crate::structs::prime_structs::{GameMember, GameStruct, GameStructs};
 
   fn member_def(name: &str, type_name: &str, offset: i64) -> GameMember {
@@ -164,7 +165,7 @@ mod tests {
   fn vec3_unpacks_xyz() {
     let structs = math_structs();
     let mem = mem_with_floats(BASE, &[1.5, -2.25, 100.0]);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let inst = GameInstance::new(BASE, "CVector3f".to_string());
     assert_eq!(
       read_as_vec3(&ctx, &inst),
@@ -177,7 +178,7 @@ mod tests {
     let structs = math_structs();
     // memory is w, x, y, z
     let mem = mem_with_floats(BASE, &[0.9, 0.1, 0.2, 0.3]);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let inst = GameInstance::new(BASE, "CQuaternion".to_string());
     let q = read_as_quat(&ctx, &inst).unwrap();
     assert_eq!([q.x, q.y, q.z, q.w], [0.1, 0.2, 0.3, 0.9]);
@@ -189,7 +190,7 @@ mod tests {
     let raw: Vec<f32> = (0..16).map(|i| i as f32).collect();
     let structs = math_structs();
     let mem = mem_with_floats(BASE, &raw);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let inst = GameInstance::new(BASE, "CMatrix4f".to_string());
     let m = read_as_matrix4f(&ctx, &inst).unwrap();
 
@@ -211,7 +212,7 @@ mod tests {
     let raw: Vec<f32> = (0..16).map(|i| i as f32 + 0.5).collect();
     let structs = math_structs();
     let mem = mem_with_floats(BASE, &raw);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let inst = GameInstance::new(BASE, "CTransform".to_string());
     let m = read_as_transform(&ctx, &inst).unwrap();
     let cols = m.to_cols_array();
@@ -234,7 +235,7 @@ mod tests {
   fn missing_member_yields_none() {
     let structs = math_structs();
     let mem = mem_with_floats(BASE, &[1.0, 2.0, 3.0]);
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     // Instance typed as a struct with no x/y/z members.
     let inst = GameInstance::new(BASE, "CMatrix4f".to_string());
     assert_eq!(read_as_vec3(&ctx, &inst), None);
@@ -244,13 +245,11 @@ mod tests {
   fn oob_address_yields_none() {
     let structs = math_structs();
     let mem = GameMemory::new();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let inst = GameInstance::new(0x81F0_0000, "CTransform".to_string());
     assert_eq!(read_as_transform(&ctx, &inst), None);
   }
 
-  /// Skip-if-absent loader for the offline BE dump — same contract as the
-  /// `game_memory.rs` / `prime_structs.rs` tests.
   fn load_mem1() -> Option<GameMemory> {
     let path = std::env::var("PRIMEWATCH_MEM1_RAW")
       .unwrap_or_else(|_| format!("{}/mem1.raw", env!("CARGO_MANIFEST_DIR")));
@@ -263,18 +262,13 @@ mod tests {
     Some(mem)
   }
 
-  /// Byte-layout check against the real BE dump: treat the disc header as a raw
-  /// float block and confirm every value the reader emits matches a direct
-  /// `GameMemory::read_f32` at the C++ `RC` offset. `Mat4::to_cols_array()`
-  /// index `p` holds the value C++ passes as `glm::mat4` arg `p`, i.e.
-  /// `RC(p / 4, p % 4) = ((p / 4) + (p % 4) * 4) * 4` bytes.
   #[test]
   fn matrix_offsets_match_raw_dump() {
     let Some(mem) = load_mem1() else {
       return;
     };
     let structs = math_structs();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let base: u32 = 0x8000_0000;
     let inst = GameInstance::new(base, "CMatrix4f".to_string());
     let m = read_as_matrix4f(&ctx, &inst).unwrap().to_cols_array();

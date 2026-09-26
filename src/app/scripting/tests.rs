@@ -5,6 +5,7 @@ use rhai::Dynamic;
 use crate::ctx::Ctx;
 use crate::mem::game_memory::GameMemory;
 use crate::mem::game_object_utils::TUniqueID;
+use crate::mem::game_version::GameVersion;
 use crate::mem::globals::get_state_manager;
 use crate::structs::prime_structs::{GameInstance, GameStructs};
 
@@ -89,7 +90,7 @@ fn functions_error_outside_a_script_frame() {
 fn missing_member_is_unit_not_a_panic() {
   let structs = load_defs();
   let mem = GameMemory::new();
-  let ctx = Ctx::new(&structs, &mem);
+  let ctx = Ctx::new(&structs, &mem, GameVersion::default());
   let objects = BTreeMap::new();
 
   let windows = run(
@@ -114,7 +115,7 @@ fn missing_member_is_unit_not_a_panic() {
 fn array_member_indexes_by_integer() {
   let structs = load_defs();
   let mem = GameMemory::new();
-  let ctx = Ctx::new(&structs, &mem);
+  let ctx = Ctx::new(&structs, &mem, GameVersion::default());
   let objects = BTreeMap::new();
 
   // CTweakPlayer::maxTranslationalAcceleration is `f32[8]` at offset 0x4.
@@ -155,7 +156,7 @@ fn array_member_indexes_by_integer() {
 fn reads_player_sj_timer_from_live_dump() {
   let Some(mem) = load_mem1() else { return };
   let structs = load_defs();
-  let ctx = Ctx::new(&structs, &mem);
+  let ctx = Ctx::new(&structs, &mem, GameVersion::default());
   let objects = crate::mem::game_object_utils::get_all_objects(&ctx);
 
   let windows = run(
@@ -176,8 +177,8 @@ fn reads_player_sj_timer_from_live_dump() {
   let w = &windows[0];
 
   // Row 0: a live handle at CPlayer + 0x28C, typed f32.
-  let player = get_state_manager()
-    .get_member(&ctx, "player")
+  let player = get_state_manager(&ctx)
+    .and_then(|sm| sm.get_member(&ctx, "player"))
     .expect("player handle");
   match &w.rows[0] {
     CustomInspectorRow::Instance { label, instance } => {
@@ -209,7 +210,7 @@ fn reads_player_sj_timer_from_live_dump() {
 fn env_is_cleared_after_the_frame_guard_drops() {
   let structs = load_defs();
   let mem = GameMemory::new();
-  let ctx = Ctx::new(&structs, &mem);
+  let ctx = Ctx::new(&structs, &mem, GameVersion::default());
   let objects = BTreeMap::new();
   {
     let _frame = ScriptFrame::enter(&ctx, &objects);
@@ -222,7 +223,7 @@ fn env_is_cleared_after_the_frame_guard_drops() {
 fn window_hide_title_and_anchor_set_the_expected_fields() {
   let structs = load_defs();
   let mem = GameMemory::new();
-  let ctx = Ctx::new(&structs, &mem);
+  let ctx = Ctx::new(&structs, &mem, GameVersion::default());
   let objects = BTreeMap::new();
 
   let windows = run(
@@ -249,7 +250,7 @@ fn window_hide_title_and_anchor_set_the_expected_fields() {
 fn window_anchor_rejects_an_unknown_alignment_name() {
   let structs = load_defs();
   let mem = GameMemory::new();
-  let ctx = Ctx::new(&structs, &mem);
+  let ctx = Ctx::new(&structs, &mem, GameVersion::default());
   let objects = BTreeMap::new();
 
   let err = match run(
@@ -275,7 +276,7 @@ fn window_anchor_rejects_an_unknown_alignment_name() {
 fn text_rows(src: &str) -> Vec<String> {
   let structs = load_defs();
   let mem = GameMemory::new();
-  let ctx = Ctx::new(&structs, &mem);
+  let ctx = Ctx::new(&structs, &mem, GameVersion::default());
   let objects = BTreeMap::new();
   let windows = run(src, &ctx, &objects).expect("run");
   assert_eq!(windows.len(), 1);
@@ -381,7 +382,7 @@ fn shipped_scripts_compile() {
 fn player_status_script_runs_against_the_live_dump() {
   let Some(mem) = load_mem1() else { return };
   let structs = load_defs();
-  let ctx = Ctx::new(&structs, &mem);
+  let ctx = Ctx::new(&structs, &mem, GameVersion::default());
   let objects = crate::mem::game_object_utils::get_all_objects(&ctx);
 
   let src = std::fs::read_to_string(concat!(
@@ -406,8 +407,8 @@ fn player_status_script_runs_against_the_live_dump() {
   assert!(rows[2].starts_with("look: "), "row 2: {}", rows[2]);
 
   // Position matches a direct scalar read of the CTransform pos fields.
-  let player = get_state_manager()
-    .get_member(&ctx, "player")
+  let player = get_state_manager(&ctx)
+    .and_then(|sm| sm.get_member(&ctx, "player"))
     .expect("player");
   let xf = player.get_member(&ctx, "transform").expect("transform");
   let px = xf
@@ -426,7 +427,7 @@ fn player_status_script_runs_against_the_live_dump() {
 fn typed_reads_off_the_live_dump() {
   let Some(mem) = load_mem1() else { return };
   let structs = load_defs();
-  let ctx = Ctx::new(&structs, &mem);
+  let ctx = Ctx::new(&structs, &mem, GameVersion::default());
   let objects = crate::mem::game_object_utils::get_all_objects(&ctx);
 
   let windows = run(

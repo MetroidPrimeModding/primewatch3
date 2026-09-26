@@ -1,5 +1,5 @@
 struct CGameCamera: CActor {
-    u32 watchedObject 0xE8
+    u16 watchedObject 0xE8
     CMatrix4f perspectiveMatrix 0xEC
     CTransform origXf 0x12C
     f32 currentFoV 0x15C

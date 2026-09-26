@@ -1,0 +1,3 @@
+struct CMetroidPrimeStage2: CPatterned {
+
+}

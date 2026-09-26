@@ -9,7 +9,6 @@ use std::collections::BTreeMap;
 
 use crate::ctx::Ctx;
 use crate::mem::globals::{get_main, get_state_manager};
-use crate::mem::vtables::vtable_class_name;
 use crate::structs::prime_structs::GameInstance;
 
 /// The per-area object id used as the `CObjectList` slot index.
@@ -22,8 +21,8 @@ const LIST_END: u16 = 0xFFFF;
 /// the intrusive linked list of `SObjectListEntry` slots starting at `firstID`,
 /// stopping at `0xFFFF` or after `size + 1` iterations (a "bad timing"
 /// emergency break). Each slot's `entity` (`*CEntity` auto-deref) is retyped to
-/// its concrete class when the vtable at `+0x0` is in `MP1_VTABLES` *and* the
-/// mapped name is a real `.bs` struct.
+/// its concrete class when the decomp names the vtable at `+0x0` for this revision
+/// *and* that class is a real `.bs` struct.
 ///
 /// Returns a `BTreeMap` (not a `HashMap`): the world renderer's translucent pass has no depth write and
 /// blends in iteration order, so a stable, id-sorted order is load-bearing —
@@ -31,7 +30,8 @@ const LIST_END: u16 = 0xFFFF;
 pub fn get_all_objects(ctx: &Ctx) -> BTreeMap<TUniqueID, GameInstance> {
   let mut objects: BTreeMap<TUniqueID, GameInstance> = BTreeMap::new();
 
-  let Some(global_list) = get_state_manager().get_member(ctx, "allObjects") else {
+  let Some(global_list) = get_state_manager(ctx).and_then(|sm| sm.get_member(ctx, "allObjects"))
+  else {
     return objects;
   };
   let Some(first) = global_list
@@ -71,11 +71,7 @@ pub fn get_all_objects(ctx: &Ctx) -> BTreeMap<TUniqueID, GameInstance> {
       break;
     };
 
-    // Retype only when the vtable is in `MP1_VTABLES` *and* the mapped name is a
-    // real `.bs` struct. Reuse the struct's own interned name (a cheap `Rc`
-    // clone) rather than allocating a fresh `Rc<str>` from the vtable lookup's
-    // `&'static str` on every retyped entity, every frame.
-    if let Some(name) = vtable_class_name(vtable)
+    if let Some(name) = ctx.vtable_class(vtable)
       && let Some(game_struct) = ctx.structs.get_struct_by_name(name)
     {
       entity.type_name = game_struct.name.clone();
@@ -96,33 +92,21 @@ pub fn get_all_objects(ctx: &Ctx) -> BTreeMap<TUniqueID, GameInstance> {
   objects
 }
 
-/// Single-slot lookup into the same `CObjectList`: `eid & 0x3FF` is the slot
-/// index; returns that slot's `entity` (`*CEntity` auto-deref), with no vtable
-/// retype. Needed by the world renderer's camera lookup.
 pub fn get_object_by_entity_id(ctx: &Ctx, eid: u16) -> Option<GameInstance> {
   let actual_id = eid & 0x3FF;
-  let global_list = get_state_manager().get_member(ctx, "allObjects")?;
+  let global_list = get_state_manager(ctx)?.get_member(ctx, "allObjects")?;
   let list = global_list.get_member(ctx, "list")?;
   list
     .element(ctx, actual_id as u32)
     .get_member(ctx, "entity")
 }
 
-/// The four bytes of `cc`, most-significant first, each mapped 1:1 to a `char`
-/// (`char::from(u8)` — the Latin-1 mapping for 0x80-0xFF). NUL / control bytes
-/// land in the result verbatim and are *not* sanitized here (the game's tags
-/// are ASCII; a clean display is the render layer's concern).
 pub fn four_cc_to_string(cc: u32) -> String {
   (0..4)
     .map(|i| char::from((cc >> ((3 - i) * 8)) as u8))
     .collect()
 }
 
-/// Formats an `SObjectTag` as `"{id:08x}.{fourCC}"`.
-///
-/// `id` / `fourCC` are read as `u32` from the `SObjectTag` members; an
-/// unreadable member defaults to `0` at this callsite (the total-read
-/// convention).
 pub fn object_tag_to_string(ctx: &Ctx, inst: &GameInstance) -> String {
   let id = inst
     .get_member(ctx, "id")
@@ -135,16 +119,11 @@ pub fn object_tag_to_string(ctx: &Ctx, inst: &GameInstance) -> String {
   format!("{id:08x}.{}", four_cc_to_string(four_cc))
 }
 
-/// Walks the intrusive `rstl::list<SLoadingData>` at
-/// `g_main["globalObjects"]["gameResFactory"]["loadList"]`: `first` and `end`
-/// auto-deref to `rstl::list_node`s, `["item"]` is the inline `SLoadingData`,
-/// `["next"]` the next node. Terminates on `current == end`, a null node, or
-/// `res.len() > size` (the "emergency exit").
 pub fn get_all_loading_datas(ctx: &Ctx) -> Vec<GameInstance> {
   let mut res: Vec<GameInstance> = Vec::new();
 
-  let Some(list) = get_main()
-    .get_member(ctx, "globalObjects")
+  let Some(list) = get_main(ctx)
+    .and_then(|m| m.get_member(ctx, "globalObjects"))
     .and_then(|g| g.get_member(ctx, "gameResFactory"))
     .and_then(|f| f.get_member(ctx, "loadList"))
   else {
@@ -185,9 +164,9 @@ pub fn get_all_loading_datas(ctx: &Ctx) -> Vec<GameInstance> {
 mod tests {
   use super::*;
   use crate::mem::game_memory::GameMemory;
+  use crate::mem::game_version::GameVersion;
   use crate::structs::prime_structs::{GameMember, GameStruct, GameStructs};
 
-  /// Real `.bs` schema from this crate's `prime_defs/`.
   fn load_defs() -> GameStructs {
     let mut structs = GameStructs::new_empty();
     structs
@@ -196,8 +175,6 @@ mod tests {
     structs
   }
 
-  /// Skip-if-absent loader for the offline BE dump (same contract as the
-  /// `game_memory.rs` / `prime_structs.rs` tests).
   fn load_mem1() -> Option<GameMemory> {
     let path = std::env::var("PRIMEWATCH_MEM1_RAW")
       .unwrap_or_else(|_| format!("{}/mem1.raw", env!("CARGO_MANIFEST_DIR")));
@@ -214,7 +191,7 @@ mod tests {
   fn object_list_entry_resolves_as_struct_with_stride_8() {
     let structs = load_defs();
     let mem = GameMemory::new();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     // A bare handle onto the slot type: `element_size` must be the struct size
     // (0x8), not the `primitive_size` fallback of 4.
     let entry = GameInstance::new(0x8000_0000, "SObjectListEntry".to_string());
@@ -225,7 +202,7 @@ mod tests {
   fn get_all_objects_walks_the_live_list() {
     let Some(mem) = load_mem1() else { return };
     let structs = load_defs();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 
     let objects = get_all_objects(&ctx);
     assert!(!objects.is_empty(), "expected a non-empty object list");
@@ -262,7 +239,7 @@ mod tests {
   fn get_all_objects_on_zeroed_memory_does_not_panic() {
     let structs = load_defs();
     let mem = GameMemory::new();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let _ = get_all_objects(&ctx);
   }
 
@@ -270,7 +247,7 @@ mod tests {
   fn get_all_loading_datas_on_zeroed_memory_is_empty() {
     let structs = load_defs();
     let mem = GameMemory::new();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     assert!(get_all_loading_datas(&ctx).is_empty());
   }
 
@@ -278,7 +255,7 @@ mod tests {
   fn get_all_loading_datas_walks_the_live_list() {
     let Some(mem) = load_mem1() else { return };
     let structs = load_defs();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 
     // The load queue is usually empty on a settled snapshot; the contract under
     // test is that the walk terminates and every returned `SLoadingData` handle
@@ -313,8 +290,8 @@ mod tests {
       size: 8,
       vtable_address: None,
       extends: vec![],
-      members_by_offset: std::collections::BTreeMap::new(),
-      members_by_name: std::collections::BTreeMap::new(),
+      members_by_offset: BTreeMap::new(),
+      members_by_name: BTreeMap::new(),
       members_by_order: Vec::new(),
     };
     tag.insert_member(&member("u32", "fourCC", 0));
@@ -326,7 +303,7 @@ mod tests {
     let mut mem = GameMemory::new();
     mem.data[0..4].copy_from_slice(&0x4D52_4541u32.to_be_bytes()); // "MREA"
     mem.data[4..8].copy_from_slice(&0x0001_2345u32.to_be_bytes());
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 
     let inst = GameInstance::new(0x8000_0000, "SObjectTag".to_string());
     assert_eq!(object_tag_to_string(&ctx, &inst), "00012345.MREA");

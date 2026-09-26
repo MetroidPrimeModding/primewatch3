@@ -498,6 +498,7 @@ mod tests {
   use super::*;
   use crate::mem::area_utils::get_areas;
   use crate::mem::game_memory::GameMemory;
+  use crate::mem::game_version::GameVersion;
   use crate::structs::prime_structs::GameStructs;
 
   fn single_triangle(mat: CMaterialList) -> CollisionMesh {
@@ -688,7 +689,7 @@ mod tests {
   fn load_mesh_over_live_areas() {
     let Some(mem) = load_mem1() else { return };
     let structs = load_defs();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 
     let areas = get_areas(&ctx);
     let mut loaded = 0;

@@ -1,6 +1,6 @@
 struct CCollisionActorManager {
   rstl::vector<CJointCollisionDescription> jointDescriptions 0x4
-  i32 ownerId 0x10
+  u16 ownerId 0x10
   bool active 0x12
   bool destroyed 0x13
   bool movable 0x14

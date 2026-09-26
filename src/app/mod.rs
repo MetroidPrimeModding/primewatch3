@@ -27,6 +27,7 @@ use crate::inspector::Inspector;
 use crate::mem::dolphin_memory::DolphinMemoryAccess;
 use crate::mem::game_memory::GameMemory;
 use crate::mem::game_object_utils::{TUniqueID, get_all_objects};
+use crate::mem::game_version::GameVersion;
 use crate::object_filter::ObjectFilter;
 use crate::structs::prime_structs::{GameInstance, GameStructs};
 use crate::toast::Toasts;
@@ -65,6 +66,10 @@ struct FrameState<'a> {
   dolphin: &'a mut DolphinMemoryAccess,
   mem: &'a mut GameMemory,
   structs: &'a mut GameStructs,
+  /// The revision this frame was read as: `version_override`, else `detected_version`.
+  version: GameVersion,
+  detected_version: Option<GameVersion>,
+  version_override: &'a mut Option<GameVersion>,
   defs_loaded: &'a mut bool,
   status_text: &'a mut String,
   toasts: &'a mut Toasts,
@@ -92,6 +97,8 @@ struct App {
   mem: GameMemory,
   dolphin: DolphinMemoryAccess,
   structs: GameStructs,
+  detected_version: Option<GameVersion>,
+  version_override: Option<GameVersion>,
   /// Live object list, walked off `g_stateManager` once per frame
   objects: BTreeMap<TUniqueID, GameInstance>,
   defs_loaded: bool,
@@ -106,25 +113,13 @@ struct App {
   table_hovered_uid: u16,
   object_filter: ObjectFilter,
   unknown_vtables: BTreeSet<u32>,
-  /// Set when Dolphin disconnects on its own (process exited) rather than via
-  /// an explicit Detach/Load-from-file/Attach action. While set, `redraw`
-  /// rescans for a Dolphin process every `DOLPHIN_POLL_INTERVAL` and
-  /// auto-attaches if exactly one is found, mirroring the startup auto-attach.
   awaiting_dolphin_reconnect: bool,
-  /// Throttles both the attached-process liveness check and the reconnect
-  /// scan to once per `DOLPHIN_POLL_INTERVAL`, independent of frame rate.
   last_dolphin_poll: Instant,
-  /// Wall-clock time of the previous `redraw`, used to compute the frame `dt`
-  /// handed to [`InputState::plan`] so held-key camera motion is seconds-based
-  /// instead of a fixed per-frame step (which sped up when uncapped/high-refresh
-  /// frame rates started actually being hit).
   last_frame: Instant,
-  /// Ephemeral corner notifications
   toasts: Toasts,
   input: InputState,
   /// Render state — `None` until `resumed` (Wayland/macOS require deferred creation).
   window: Option<AppWindow>,
-  /// `*.rhai` scripts + the engine that runs them each frame.
   scripts: ScriptManager,
 }
 
@@ -186,6 +181,8 @@ impl App {
       mem,
       dolphin,
       structs,
+      detected_version: None,
+      version_override: None,
       objects: BTreeMap::new(),
       defs_loaded,
       status_text,
@@ -264,6 +261,8 @@ impl App {
       mem,
       dolphin,
       structs,
+      detected_version,
+      version_override,
       objects,
       defs_loaded,
       status_text,
@@ -292,10 +291,25 @@ impl App {
     if *defs_loaded {
       // Refresh the snapshot (no-op while detached).
       mem.update_from_dolphin(dolphin);
+    }
 
-      // Consume accumulated input into a plan, then apply it (ghost record/clear,
-      // detached-camera move). Camera look/zoom comes from last frame's
-      // drag/scroll over the "World" image (`world_view_input`).
+    let detected = GameVersion::detect(mem);
+    if detected != *detected_version {
+      *detected_version = detected;
+      if let Some(v) = detected {
+        println!("Detected {v}");
+        if !v.is_supported() && version_override.is_none() {
+          toasts.error(format!(
+            "Detected {v}: struct offsets are only verified for {}, so some values may be wrong",
+            GameVersion::default().id()
+          ));
+        }
+      }
+    }
+    // Until a disc is detected, fall back to the revision every offset was written against.
+    let version = version_override.or(detected).unwrap_or_default();
+
+    if *defs_loaded {
       let wants_kb = window.egui_ctx.egui_wants_keyboard_input();
       let plan = input.plan(
         wants_kb,
@@ -320,7 +334,7 @@ impl App {
       }
 
       // Walk the live object list, then update the world.
-      let ctx = Ctx::new(structs, mem);
+      let ctx = Ctx::new(structs, mem, version);
       *objects = get_all_objects(&ctx);
       let viewport = window.world_view_px;
       // The world highlight set: the uid the "Objects"
@@ -346,6 +360,9 @@ impl App {
       dolphin,
       mem,
       structs,
+      version,
+      detected_version: *detected_version,
+      version_override,
       defs_loaded,
       status_text,
       toasts,
@@ -448,8 +465,6 @@ impl ApplicationHandler for App {
   }
 
   fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
-    // Authoritative UI-layout save: covers window-close, menu quit, and any
-    // other clean exit (`render` also autosaves for the crash case).
     if let Some(window) = self.window.as_ref() {
       ui_state::save(&window.egui_ctx, &window.window);
     }

@@ -227,6 +227,7 @@ mod tests {
   use crate::mem::area_utils::get_areas;
   use crate::mem::game_memory::GameMemory;
   use crate::mem::game_object_utils::get_all_objects;
+  use crate::mem::game_version::GameVersion;
   use crate::mem::math_utils::read_as_transform;
   use crate::structs::prime_structs::GameStructs;
 
@@ -282,7 +283,7 @@ mod tests {
   fn load_on_zeroed_memory_does_not_panic() {
     let structs = load_defs();
     let mem = GameMemory::new();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
     let platform = GameInstance::new(0x8000_0000, "CScriptPlatform".to_string());
     assert!(obb_group_container_addr(&ctx, &platform, "treeGroup").is_none());
     assert!(load_obb_group_meshes(&ctx, &platform, "treeGroup").is_none());
@@ -294,7 +295,7 @@ mod tests {
       return;
     };
     let structs = load_defs();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 
     let platform = get_all_objects(&ctx)
       .into_values()
@@ -357,7 +358,7 @@ mod tests {
       return;
     };
     let structs = load_defs();
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 
     let toad = get_all_objects(&ctx)
       .into_values()

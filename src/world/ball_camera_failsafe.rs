@@ -265,7 +265,7 @@ pub fn predict_failsafe_from_live<'a>(
   ctx: &Ctx,
   meshes: impl IntoIterator<Item = &'a CollisionMesh> + Clone,
 ) -> Option<FailsafePrediction> {
-  let sm = get_state_manager();
+  let sm = get_state_manager(ctx)?;
   let cam_mgr = sm.get_member(ctx, "cameraManager")?;
   let ball_cam = cam_mgr.get_member(ctx, "ballCamera")?; // auto-derefs *CBallCamera
 
@@ -397,6 +397,7 @@ fn player_eye_height(ctx: &Ctx, player: &GameInstance) -> Option<f32> {
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::mem::game_version::GameVersion;
   use crate::world::collision_mesh::CollisionMesh;
 
   /// Diagnostic (not an assertion): dump every input the failsafe prediction
@@ -422,9 +423,9 @@ mod tests {
     structs
       .load_from_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/prime_defs"))
       .expect("load prime_defs");
-    let ctx = Ctx::new(&structs, &mem);
+    let ctx = Ctx::new(&structs, &mem, GameVersion::default());
 
-    let sm = get_state_manager();
+    let sm = get_state_manager(&ctx).expect("state manager");
     let player = sm.get_member(&ctx, "player").expect("player");
     let player_addr = player.address;
     eprintln!("player @ {player_addr:#010x}");
