@@ -4,6 +4,7 @@
 //! game ID followed by the disc number and the disc revision byte.
 
 use crate::mem::game_memory::GameMemory;
+use std::path::Path;
 
 /// Every revision `prime-decomp` knows about, in its `VERSIONS` order.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
@@ -66,10 +67,10 @@ impl GameVersion {
     }
   }
 
-  /// Whether this revision's own decomp layouts are compiled in, so `.bs` `= field`
+  /// Whether `defs_dir` has this revision's own decomp layouts, so `.bs` `= field`
   /// members resolve for it. Members with literal offsets are GM8E01_00's regardless.
-  pub fn is_supported(self) -> bool {
-    self.layout_version() == self
+  pub fn is_supported(self, defs_dir: &Path) -> bool {
+    self.layout_version(defs_dir) == self
   }
 
   /// The Korean release shares the NTSC-U game ID and is told apart only by its

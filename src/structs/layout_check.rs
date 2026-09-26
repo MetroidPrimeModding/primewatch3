@@ -11,8 +11,8 @@
 //! - a struct-typed member must land on a DWARF member of that type, or of a
 //!   type deriving from it. Landing *inside* one is also accepted, because some
 //!   `.bs` rstl templates deliberately point past a leading word (see `rstl.bs`);
-//! - anything inside `uchar[]` storage (`reserved_vector`, `optional_object`) is
-//!   accepted, since the storage is untyped.
+//! - anything inside untyped storage (`uchar[]`, or `optional_object`'s `uint m_data[]`)
+//!   is accepted.
 
 use super::layouts::{BitData, LayoutDb, StructDef, TypeRef, short_name};
 use super::prime_structs::{GameMember, GameStruct, GameStructs, primitive_size};
@@ -149,13 +149,14 @@ fn compatible(want: Kind, have: Kind) -> bool {
   )
 }
 
-/// Byte-sized element of an array: untyped inline storage.
+/// Element of untyped inline storage: any byte array, or rstl's `m_data` word array
+/// (`optional_object` rounds its storage up to `uint`s).
 fn in_byte_storage(chain: &[Frame]) -> bool {
   let n = chain.len();
   n >= 2
     && chain[n - 2].ty.is_array()
-    && chain[n - 1].size == 1
     && leaf_kind(&chain[n - 1].ty) == Some(Kind::Int)
+    && (chain[n - 1].size == 1 || chain[n - 2].path.ends_with("m_data"))
 }
 
 enum Outcome {
@@ -466,16 +467,14 @@ fn format_report(r: &Report) -> String {
 
 #[test]
 fn bs_offsets_match_gm8e01_00_dwarf() {
-  let db = GameVersion::NtscU0_00.layouts();
+  let defs_dir = concat!(env!("CARGO_MANIFEST_DIR"), "/prime_defs");
+  let db = LayoutDb::load(std::path::Path::new(defs_dir), GameVersion::NtscU0_00).unwrap();
   let mut structs = GameStructs::new_empty();
   structs
-    .load_from_dir(
-      concat!(env!("CARGO_MANIFEST_DIR"), "/prime_defs"),
-      GameVersion::NtscU0_00,
-    )
+    .load_from_dir(defs_dir, GameVersion::NtscU0_00)
     .expect("load prime_defs");
 
-  let report = run(db, &structs);
+  let report = run(&db, &structs);
   let text = format_report(&report);
   println!("{text}");
   assert!(report.mismatches.is_empty(), "{text}");

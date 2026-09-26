@@ -14,6 +14,7 @@ mod scripting;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::error::Error;
+use std::path::Path;
 use std::time::{Duration, Instant};
 use sysinfo::Pid;
 use winit::application::ApplicationHandler;
@@ -123,11 +124,15 @@ struct App {
   scripts: ScriptManager,
 }
 
-/// Replaces `structs` with `prime_defs/` resolved for `version` (a fresh registry, so
+/// `.bs` files and per-revision layouts, relative to the working directory (shipped next
+/// to the binary in releases).
+pub(super) const DEFS_DIR: &str = "prime_defs";
+
+/// Replaces `structs` with `DEFS_DIR` resolved for `version` (a fresh registry, so
 /// removed `.bs` entries don't linger), returning a status line.
 pub(super) fn load_defs(structs: &mut GameStructs, version: GameVersion) -> Result<String, String> {
   let mut fresh = GameStructs::new_empty();
-  fresh.load_from_dir("prime_defs", version)?;
+  fresh.load_from_dir(DEFS_DIR, version)?;
   *structs = fresh;
   Ok(format!(
     "Loaded {} structs and {} enums ({} layouts)",
@@ -306,17 +311,17 @@ impl App {
       *detected_version = detected;
       if let Some(v) = detected {
         println!("Detected {v}");
-        if !v.is_supported() && version_override.is_none() {
+        if !v.is_supported(Path::new(DEFS_DIR)) && version_override.is_none() {
           toasts.error(format!(
             "Detected {v}: no decomp layouts for it yet, so struct offsets are {}'s and some values may be wrong",
-            v.layout_version().id()
+            v.layout_version(Path::new(DEFS_DIR)).id()
           ));
         }
       }
     }
     // Until a disc is detected, fall back to the revision every offset was written against.
     let version = version_override.or(detected).unwrap_or_default();
-    if *defs_loaded && version.layout_version() != structs.layout_version {
+    if *defs_loaded && version != structs.version {
       match load_defs(structs, version) {
         Ok(text) => {
           println!("{text}");

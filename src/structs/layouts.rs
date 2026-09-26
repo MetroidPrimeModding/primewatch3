@@ -16,7 +16,7 @@ use serde::Deserialize;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Read;
-use std::sync::OnceLock;
+use std::path::{Path, PathBuf};
 
 #[derive(Deserialize)]
 struct TypeLayoutsFile {
@@ -349,44 +349,51 @@ impl FieldResolver for LayoutDb {
   }
 }
 
-/// Add a revision here once `tools/gen_decomp_data.sh` has generated its layouts.
-fn source(version: GameVersion) -> Option<&'static [u8]> {
-  match version {
-    GameVersion::NtscU0_00 => Some(include_bytes!("../../prime_defs/layouts/GM8E01_00.json.gz")),
-    _ => None,
+/// `<defs_dir>/layouts/<VERSION>.json.gz`.
+pub fn layouts_path(defs_dir: &Path, version: GameVersion) -> PathBuf {
+  defs_dir
+    .join("layouts")
+    .join(format!("{}.json.gz", version.id()))
+}
+
+impl LayoutDb {
+  pub fn load(defs_dir: &Path, version: GameVersion) -> Result<Self, String> {
+    let path = layouts_path(defs_dir, version);
+    let gz = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    Self::from_gz(&gz).map_err(|e| format!("{}: {e}", path.display()))
   }
 }
 
 impl GameVersion {
-  /// The revision whose layouts `.bs` field references resolve against: this one if its
-  /// layouts have been generated, otherwise the default.
-  pub fn layout_version(self) -> GameVersion {
-    if source(self).is_some() {
+  /// The revision whose layouts `.bs` field references resolve against: this one if
+  /// `defs_dir` has its layouts, otherwise the default. Checks the disk on every call.
+  pub fn layout_version(self, defs_dir: &Path) -> GameVersion {
+    if layouts_path(defs_dir, self).is_file() {
       self
     } else {
       GameVersion::default()
     }
-  }
-
-  /// Layouts of [`GameVersion::layout_version`], parsed on first use.
-  pub fn layouts(self) -> &'static LayoutDb {
-    static PARSED: [OnceLock<LayoutDb>; GameVersion::ALL.len()] =
-      [const { OnceLock::new() }; GameVersion::ALL.len()];
-    let version = self.layout_version();
-    let index = GameVersion::ALL.iter().position(|v| *v == version).unwrap();
-    PARSED[index].get_or_init(|| {
-      LayoutDb::from_gz(source(version).unwrap())
-        .unwrap_or_else(|e| panic!("layouts for {version}: {e}"))
-    })
   }
 }
 
 #[cfg(test)]
 mod tests {
   use super::*;
+  use crate::structs::prime_structs::GameStructs;
+  use std::sync::OnceLock;
+
+  fn defs_dir() -> &'static Path {
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/prime_defs"))
+  }
+
+  /// GM8E01_00's layouts, parsed once for all tests.
+  fn gm8e01_00_layouts() -> &'static LayoutDb {
+    static LAYOUTS: OnceLock<LayoutDb> = OnceLock::new();
+    LAYOUTS.get_or_init(|| LayoutDb::load(defs_dir(), GameVersion::NtscU0_00).unwrap())
+  }
 
   fn resolve(s: &str, path: &str) -> Result<ResolvedField, String> {
-    GameVersion::NtscU0_00.layouts().resolve_field(s, path)
+    gm8e01_00_layouts().resolve_field(s, path)
   }
 
   fn offset(s: &str, path: &str) -> i64 {
@@ -412,9 +419,7 @@ mod tests {
     );
     assert_eq!(resolve("CScriptTrigger", "mFlags").unwrap().size, 4);
     assert_eq!(
-      GameVersion::NtscU0_00
-        .layouts()
-        .struct_size("CStateManager"),
+      gm8e01_00_layouts().struct_size("CStateManager"),
       Some(0xf98)
     );
   }
@@ -447,9 +452,38 @@ mod tests {
   #[test]
   fn other_revisions_fall_back_to_the_default_layouts() {
     assert_eq!(
-      GameVersion::NtscU0_00.layout_version(),
+      GameVersion::NtscU0_00.layout_version(defs_dir()),
       GameVersion::NtscU0_00
     );
-    assert_eq!(GameVersion::Pal.layout_version(), GameVersion::NtscU0_00);
+    assert_eq!(
+      GameVersion::TrilogyNtsc.layout_version(defs_dir()),
+      GameVersion::NtscU0_00
+    );
+  }
+
+  /// Which revisions' layouts every `.bs` field reference resolves against. Ignored by
+  /// default because revisions other than GM8E01_00 aren't expected to link yet; run with
+  /// `cargo test bs_links_per_revision -- --ignored --nocapture`.
+  #[test]
+  #[ignore]
+  fn bs_links_per_revision() {
+    let mut report = String::new();
+    let mut failed = Vec::new();
+    for version in GameVersion::ALL {
+      if version.layout_version(defs_dir()) != version {
+        report += &format!("{}: no layouts\n", version.id());
+        continue;
+      }
+      let mut structs = GameStructs::new_empty();
+      match structs.load_from_dir(defs_dir().to_str().unwrap(), version) {
+        Ok(()) => report += &format!("{}: ok\n", version.id()),
+        Err(e) => {
+          report += &format!("{}: FAILED\n{e}\n", version.id());
+          failed.push(version.id());
+        }
+      }
+    }
+    println!("{report}");
+    assert!(failed.is_empty(), "failed to link: {}", failed.join(", "));
   }
 }

@@ -2,6 +2,7 @@
 //! `render` pass (menu bar, world view, inspector windows, egui paint).
 
 use std::error::Error;
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -14,12 +15,12 @@ use crate::mem::game_version::GameVersion;
 use crate::mem::globals::{get_main, get_memory_card, get_state_manager, get_tweak_player};
 use crate::ui_state;
 
-use super::FrameState;
 use super::input::WorldViewInput;
 use super::menu_action::{MenuAction, apply_menu_action};
 use super::objects_window::render_objects_window;
 use super::raw_data_view::render_raw_data_view;
 use super::scripting::{AnchorAlign, CustomInspectorRow, WindowAnchor};
+use super::{DEFS_DIR, FrameState};
 
 /// wgpu + egui render state. Created in `resumed`, dropped when the app exits.
 pub(super) struct AppWindow {
@@ -279,7 +280,7 @@ impl AppWindow {
                 ui.radio_value(fs.version_override, None, auto);
                 ui.separator();
                 for v in GameVersion::ALL {
-                  let label = if v.is_supported() {
+                  let label = if v.is_supported(Path::new(DEFS_DIR)) {
                     v.to_string()
                   } else {
                     format!("{v} - no layouts")

@@ -1,9 +1,11 @@
 use crate::ctx::Ctx;
 use crate::mem::game_version::GameVersion;
+use crate::structs::layouts::LayoutDb;
 use bimap::BiBTreeMap;
 use bstruct::bstruct_link::{BEnum, BStruct, BStructMember, LinkError};
 use bstruct::{CompileError, link, parse_directory};
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::rc::Rc;
 
 // `.bs` schema names: parsed once at startup and never mutated again, but
@@ -19,6 +21,8 @@ type EnumName = Rc<str>;
 pub struct GameStructs {
   pub structs: BTreeMap<TypeName, Rc<GameStruct>>,
   pub enums: BTreeMap<EnumName, Rc<GameEnum>>,
+  /// The revision these were loaded for.
+  pub version: GameVersion,
   /// The revision whose layouts `= field` members were resolved against.
   pub layout_version: GameVersion,
 }
@@ -39,6 +43,7 @@ impl GameStructs {
     Self {
       structs: BTreeMap::new(),
       enums: BTreeMap::new(),
+      version: GameVersion::default(),
       layout_version: GameVersion::default(),
     }
   }
@@ -55,13 +60,14 @@ impl GameStructs {
       .insert(enum_.name.clone(), Rc::new(enum_.clone()));
   }
 
-  /// Loads every `.bs` file under `dir`, resolving `= field` members against `version`'s
-  /// layouts ([`GameVersion::layout_version`]).
+  /// Loads every `.bs` file under `dir`, resolving `= field` members against the layouts in
+  /// `dir/layouts/` for `version` ([`GameVersion::layout_version`]).
   pub fn load_from_dir(&mut self, dir: &str, version: GameVersion) -> Result<(), String> {
-    let layout_version = version.layout_version();
+    let layout_version = version.layout_version(Path::new(dir));
+    let layouts = LayoutDb::load(Path::new(dir), layout_version)?;
     let statements = parse_directory(dir).map_err(describe_compile_error)?;
-    let compile_result =
-      link(&statements, Some(layout_version.layouts())).map_err(describe_compile_error)?;
+    let compile_result = link(&statements, Some(&layouts)).map_err(describe_compile_error)?;
+    self.version = version;
     self.layout_version = layout_version;
 
     for bstruct in compile_result.structs.iter() {
@@ -124,6 +130,7 @@ pub struct GameStruct {
   pub name: TypeName,
   pub size: i64,
   /// The decomp's name for this struct (`decomp` in the `.bs` file, else `name`).
+  #[cfg_attr(not(test), expect(dead_code, reason = "read by layout_check"))]
   pub decomp_name: TypeName,
   pub extends: Vec<TypeName>,
   pub members_by_offset: BTreeMap<i64, GameMember>,
