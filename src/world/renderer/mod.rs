@@ -35,6 +35,7 @@ use crate::gl::{WORLD_COLOR_FORMAT, WORLD_DEPTH_FORMAT, shapes};
 use crate::mem::game_object_utils::{TUniqueID, get_object_by_entity_id};
 use crate::mem::globals::get_state_manager;
 use crate::mem::math_utils::{read_as_quat, read_as_transform, read_as_vec3};
+use crate::mem::resource_names::{ResourceNameDisplay, ResourceNames};
 use crate::structs::prime_structs::GameInstance;
 use crate::world::ball_camera_failsafe::{FailsafePrediction, predict_failsafe_from_live};
 use crate::world::bvh::Aabb;
@@ -153,6 +154,8 @@ pub struct WorldRenderer {
   /// brute-force per-frame ray cast scans every loaded area's master triangle
   /// list. Toggled from the Tools menu.
   pub tri_picker_enabled: bool,
+  /// How the loading monitor shows resource paths. Set from the Tools menu.
+  pub resource_name_display: ResourceNameDisplay,
 
   /// The morph-ball unmorph failsafe prediction, recomputed each
   /// [`WorldRenderer::update`] (`None` until a collision mesh + `CBallCamera`
@@ -233,6 +236,7 @@ pub struct WorldRenderer {
   /// Instance keys touched in the current `render_entities` pass — the live
   /// set for evicting `obb_instances` (and transitively `obb_mesh_cache`).
   obb_hulls_seen: HashSet<(u32, &'static str)>,
+  resource_names: ResourceNames,
 }
 
 impl WorldRenderer {
@@ -272,6 +276,7 @@ impl WorldRenderer {
       text_overlays: Vec::new(),
       hovered_tri: None,
       tri_picker_enabled: false,
+      resource_name_display: ResourceNameDisplay::default(),
       morphball_failsafe: None,
       reposition_failsafe_enabled: false,
       reposition_failsafe: None,
@@ -303,6 +308,7 @@ impl WorldRenderer {
       obb_instances: HashMap::new(),
       obb_gpu_hull_cache: HashMap::new(),
       obb_hulls_seen: HashSet::new(),
+      resource_names: ResourceNames::load_or_empty(),
     }
   }
 

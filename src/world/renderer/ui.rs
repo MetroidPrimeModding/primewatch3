@@ -6,6 +6,7 @@
 use crate::ctx::Ctx;
 use crate::mem::area_utils::get_areas;
 use crate::mem::game_object_utils::{get_all_loading_datas, object_tag_to_string};
+use crate::mem::resource_names::ResourceNameDisplay;
 use crate::world::collision_failsafe::RepositionOutcome;
 
 use super::WorldRenderer;
@@ -14,6 +15,29 @@ use super::types::{
   ActorRenderConfig, CameraMode, CullType, OrbitPlayerCameraOrigin, PlayerClipConfig, ShadowConfig,
   TriggerRenderConfig,
 };
+
+const LOADING_NAME_MAX_WIDTH: f32 = 300.0;
+
+/// A single-line label at most `max_width` wide that clips on the left
+fn left_clipped_label(ui: &mut egui::Ui, text: String, max_width: f32) {
+  let galley = egui::WidgetText::from(text.as_str()).into_galley(
+    ui,
+    Some(egui::TextWrapMode::Extend),
+    f32::INFINITY,
+    egui::TextStyle::Body,
+  );
+  let size = galley.size();
+  let (rect, response) = ui.allocate_exact_size(
+    egui::vec2(size.x.min(max_width), size.y),
+    egui::Sense::hover(),
+  );
+  let color = ui.visuals().text_color();
+  ui.painter_at(rect)
+    .galley(egui::pos2(rect.right() - size.x, rect.top()), galley, color);
+  if size.x > max_width {
+    response.on_hover_text(text);
+  }
+}
 
 impl WorldRenderer {
   /// The "WorldStatus" area/loading table.
@@ -89,27 +113,52 @@ impl WorldRenderer {
       });
 
     // Resource load queue.
-    let loading = get_all_loading_datas(ctx);
+    let loading = if self.resource_name_display == ResourceNameDisplay::Disabled {
+      Vec::new()
+    } else {
+      get_all_loading_datas(ctx)
+    };
     if !loading.is_empty() {
       ui.label(format!("Loading {}", loading.len()));
       let mut shown = 0u32;
       let mut shown_size: u32 = 0;
       let mut rest_size: u32 = 0;
-      for ld in &loading {
-        let size = ld
-          .get_member(ctx, "resLen")
-          .and_then(|m| m.read_u32(ctx))
-          .unwrap_or(0);
-        if shown < 5 {
-          if let Some(tag) = ld.get_member(ctx, "tag") {
-            ui.label(format!("{}: {}", object_tag_to_string(ctx, &tag), size));
+      egui::Grid::new("world-status-loading")
+        .striped(true)
+        .show(ui, |ui| {
+          for ld in &loading {
+            let size = ld
+              .get_member(ctx, "resLen")
+              .and_then(|m| m.read_u32(ctx))
+              .unwrap_or(0);
+            if shown < 5 {
+              if let Some(tag) = ld.get_member(ctx, "tag") {
+                let id = tag
+                  .get_member(ctx, "id")
+                  .and_then(|m| m.read_u32(ctx))
+                  .unwrap_or(0);
+                let path = match self.resource_name_display {
+                  ResourceNameDisplay::Disabled | ResourceNameDisplay::Hash => None,
+                  ResourceNameDisplay::Path => self.resource_names.get(id),
+                };
+                let name = match path {
+                  Some(path) => path.to_string(),
+                  None => object_tag_to_string(ctx, &tag),
+                };
+                // Fills the column (its width from last frame), so the text sits flush right.
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                  left_clipped_label(ui, name, LOADING_NAME_MAX_WIDTH);
+                });
+                ui.label(size.to_string());
+                ui.end_row();
+              }
+              shown += 1;
+              shown_size = shown_size.saturating_add(size);
+            } else {
+              rest_size = rest_size.saturating_add(size);
+            }
           }
-          shown += 1;
-          shown_size = shown_size.saturating_add(size);
-        } else {
-          rest_size = rest_size.saturating_add(size);
-        }
-      }
+        });
       if shown_size > 0 || rest_size > 0 {
         ui.label(format!(
           "+{}k = {}k",
@@ -526,6 +575,17 @@ mod tests {
         &mut triggers,
         &mut actors,
       );
+    });
+  }
+
+  #[test]
+  fn left_clipped_label_caps_width() {
+    egui::__run_test_ui(|ui| {
+      let long = "$/Worlds/IntroUnderwater/common_textures/sometexture.txtr".repeat(4);
+      let before = ui.cursor().left();
+      left_clipped_label(ui, long, 50.0);
+      assert!(ui.min_rect().right() - before <= 50.0 + 0.5);
+      left_clipped_label(ui, "short".to_string(), 50.0);
     });
   }
 

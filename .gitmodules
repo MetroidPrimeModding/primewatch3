@@ -1,3 +1,6 @@
 [submodule "bstruct"]
 	path = bstruct
 	url = git@github.com:Pwootage/bstruct_rust.git
+[submodule "prime-dehashing"]
+	path = prime-dehashing
+	url = https://github.com/Bearborg/prime-dehashing.git

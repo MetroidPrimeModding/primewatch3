@@ -5,4 +5,5 @@ pub mod game_object_utils;
 pub mod game_version;
 pub mod globals;
 pub mod math_utils;
+pub mod resource_names;
 pub mod symbols;

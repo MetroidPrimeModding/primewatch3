@@ -5,6 +5,8 @@
 *.raw
 /primewatch_ui.ron
 /primewatch_scripts.ron
+# copied in from prime-dehashing by the release workflow
+/prime_defs/resource_names.json
 # ignore mcp.json for the moment
 .mcp.json
 profile.json.gz

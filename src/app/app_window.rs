@@ -13,6 +13,7 @@ use winit::window::Window;
 use crate::ctx::Ctx;
 use crate::mem::game_version::GameVersion;
 use crate::mem::globals::{get_main, get_memory_card, get_state_manager, get_tweak_player};
+use crate::mem::resource_names::ResourceNameDisplay;
 use crate::ui_state;
 
 use super::input::WorldViewInput;
@@ -310,6 +311,12 @@ impl AppWindow {
                   &mut self.world.reposition_failsafe_enabled,
                   "Collision reposition failsafe",
                 );
+                ui.menu_button("Loading status", |ui| {
+                  let display = &mut self.world.resource_name_display;
+                  ui.radio_value(display, ResourceNameDisplay::Disabled, "Disabled");
+                  ui.radio_value(display, ResourceNameDisplay::Hash, "Hash");
+                  ui.radio_value(display, ResourceNameDisplay::Path, "Path");
+                });
                 ui.separator();
                 ui.checkbox(&mut fs.scripts.show_window, "Scripting");
                 if ui.button("Reload Scripts").clicked() {
