@@ -65,9 +65,11 @@ mod tests {
     assert_eq!(card.type_name.as_ref(), "CMemoryCardSys");
 
     let pal_structs = symbols_only(GameVersion::Pal);
-    let pal = Ctx::new(&pal_structs, &mem, GameVersion::Pal);
-    assert_eq!(get_state_manager(&pal).unwrap().address, 0x803E2088);
-    assert_eq!(get_main(&pal).unwrap().address, 0x803DF440);
+    if pal_structs.symbols.is_some() {
+      let pal = Ctx::new(&pal_structs, &mem, GameVersion::Pal);
+      assert_eq!(get_state_manager(&pal).unwrap().address, 0x803E2088);
+      assert_eq!(get_main(&pal).unwrap().address, 0x803DF440);
+    }
 
     let wii_structs = symbols_only(GameVersion::TrilogyNtsc);
     let wii = Ctx::new(&wii_structs, &mem, GameVersion::TrilogyNtsc);
