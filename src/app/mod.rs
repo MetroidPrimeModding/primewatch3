@@ -484,10 +484,9 @@ impl ApplicationHandler for App {
     }
   }
 
-  fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-    // TODO: only redraw on demand / frame-pace instead of spinning.
+  fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
     if let Some(window) = self.window.as_ref() {
-      window.window.request_redraw();
+      window.schedule_redraw(event_loop);
     }
   }
 

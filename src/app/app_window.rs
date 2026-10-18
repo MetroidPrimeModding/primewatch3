@@ -4,10 +4,10 @@
 use std::error::Error;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use winit::dpi::{LogicalPosition, LogicalSize, PhysicalSize};
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::Window;
 
 use crate::ctx::Ctx;
@@ -23,6 +23,56 @@ use super::raw_data_view::render_raw_data_view;
 use super::scripting::{AnchorAlign, CustomInspectorRow, WindowAnchor};
 use super::{DEFS_DIR, FrameState};
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum FrameLimit {
+  Fps15,
+  Fps30,
+  Fps60,
+  Fps120,
+  Vsync,
+  Unlimited,
+}
+
+impl FrameLimit {
+  const ALL: [FrameLimit; 6] = [
+    FrameLimit::Fps15,
+    FrameLimit::Fps30,
+    FrameLimit::Fps60,
+    FrameLimit::Fps120,
+    FrameLimit::Vsync,
+    FrameLimit::Unlimited,
+  ];
+
+  fn label(self) -> &'static str {
+    match self {
+      FrameLimit::Fps15 => "15 fps",
+      FrameLimit::Fps30 => "30 fps",
+      FrameLimit::Fps60 => "60 fps",
+      FrameLimit::Fps120 => "120 fps",
+      FrameLimit::Vsync => "VSync",
+      FrameLimit::Unlimited => "Unlimited",
+    }
+  }
+
+  fn interval(self) -> Option<Duration> {
+    let fps = match self {
+      FrameLimit::Fps15 => 15.0,
+      FrameLimit::Fps30 => 30.0,
+      FrameLimit::Fps60 => 60.0,
+      FrameLimit::Fps120 => 120.0,
+      FrameLimit::Vsync | FrameLimit::Unlimited => return None,
+    };
+    Some(Duration::from_secs_f64(1.0 / fps))
+  }
+
+  /// Whether presenting must be allowed to run faster than the display refresh
+  /// for this limit to be reachable (a 120 fps cap on a 60 Hz Fifo swapchain
+  /// would otherwise be silently clamped).
+  fn wants_uncapped_present(self) -> bool {
+    matches!(self, FrameLimit::Fps120 | FrameLimit::Unlimited)
+  }
+}
+
 /// wgpu + egui render state. Created in `resumed`, dropped when the app exits.
 pub(super) struct AppWindow {
   pub(super) window: Arc<Window>,
@@ -30,6 +80,9 @@ pub(super) struct AppWindow {
   device: wgpu::Device,
   queue: wgpu::Queue,
   config: wgpu::SurfaceConfiguration,
+  present_modes: Vec<wgpu::PresentMode>,
+  frame_limit: FrameLimit,
+  next_frame: Instant,
   pub(super) egui_ctx: egui::Context,
   pub(super) egui_state: egui_winit::State,
   egui_renderer: egui_wgpu::Renderer,
@@ -94,9 +147,10 @@ impl AppWindow {
     let mut config = surface
       .get_default_config(&adapter, size.width.max(1), size.height.max(1))
       .ok_or("surface is not supported by the adapter")?;
-    config.present_mode = wgpu::PresentMode::Fifo;
-    if let Some(srgb) = surface
-      .get_capabilities(&adapter)
+    let caps = surface.get_capabilities(&adapter);
+    let frame_limit = FrameLimit::Fps60;
+    config.present_mode = pick_present_mode(&caps.present_modes, frame_limit);
+    if let Some(srgb) = caps
       .formats
       .iter()
       .copied()
@@ -131,6 +185,9 @@ impl AppWindow {
       device,
       queue,
       config,
+      present_modes: caps.present_modes,
+      frame_limit,
+      next_frame: Instant::now(),
       egui_ctx,
       egui_state,
       egui_renderer,
@@ -143,6 +200,26 @@ impl AppWindow {
       fps_window_frames: 0,
       fps_display: 0,
     })
+  }
+
+  fn set_frame_limit(&mut self, limit: FrameLimit) {
+    self.frame_limit = limit;
+    self.config.present_mode = pick_present_mode(&self.present_modes, limit);
+    self.surface.configure(&self.device, &self.config);
+  }
+
+  /// Schedules the next redraw: immediately when uncapped, otherwise once the
+  /// frame interval has elapsed.
+  pub(super) fn schedule_redraw(&self, event_loop: &ActiveEventLoop) {
+    match self.frame_limit.interval() {
+      Some(_) if Instant::now() < self.next_frame => {
+        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
+      }
+      _ => {
+        event_loop.set_control_flow(ControlFlow::Poll);
+        self.window.request_redraw();
+      }
+    }
   }
 
   /// Reconfigure the swapchain on window resize
@@ -159,6 +236,12 @@ impl AppWindow {
   /// egui. `fs` carries the game/UI state owned by [`super::App`].
   pub(super) fn render(&mut self, fs: &mut FrameState) {
     let defs_loaded = *fs.defs_loaded;
+    let frame_start = Instant::now();
+    if let Some(interval) = self.frame_limit.interval() {
+      // Anchor to the previous deadline to avoid drift, but don't try to catch up after a stall.
+      self.next_frame = (self.next_frame + interval).max(frame_start);
+    }
+    let mut new_frame_limit = self.frame_limit;
 
     // FPS counter: count frames, recompute at most once per second.
     self.fps_window_frames += 1;
@@ -316,6 +399,11 @@ impl AppWindow {
                   ui.radio_value(display, ResourceNameDisplay::Disabled, "Disabled");
                   ui.radio_value(display, ResourceNameDisplay::Hash, "Hash");
                   ui.radio_value(display, ResourceNameDisplay::Path, "Path");
+                });
+                ui.menu_button("Frame limit", |ui| {
+                  for limit in FrameLimit::ALL {
+                    ui.radio_value(&mut new_frame_limit, limit, limit.label());
+                  }
                 });
                 ui.separator();
                 ui.checkbox(&mut fs.scripts.show_window, "Scripting");
@@ -632,6 +720,10 @@ impl AppWindow {
     self.window.pre_present_notify();
     self.queue.present(frame);
 
+    if new_frame_limit != self.frame_limit {
+      self.set_frame_limit(new_frame_limit);
+    }
+
     // Apply the menu actions collected during the egui pass
     for action in menu_actions {
       apply_menu_action(action, fs);
@@ -654,6 +746,17 @@ impl AppWindow {
       self.last_ui_save = Instant::now();
     }
   }
+}
+
+fn pick_present_mode(supported: &[wgpu::PresentMode], limit: FrameLimit) -> wgpu::PresentMode {
+  if limit.wants_uncapped_present() {
+    for mode in [wgpu::PresentMode::Immediate, wgpu::PresentMode::Mailbox] {
+      if supported.contains(&mode) {
+        return mode;
+      }
+    }
+  }
+  wgpu::PresentMode::Fifo
 }
 
 /// [`WindowAnchor`] -> `egui::Align2`. Kept here rather than in `scripting`
