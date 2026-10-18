@@ -78,6 +78,11 @@ Start Dolphin, load Metroid Prime, and Prime Watch will attach on its own.
 
 ## Version History
 
+### 1.4.0
+- Support for 0-01, 0-02, PAL, and JP (mostly untested)
+- Frame rate limit (configurable)
+- Resource names in resource loading (configurable)
+
 ### 1.3.7
 - Ignore dolphin memory engine in process search
 - Fix situations where the camera shows an invalid projection frustrum
