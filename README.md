@@ -78,6 +78,9 @@ Start Dolphin, load Metroid Prime, and Prime Watch will attach on its own.
 
 ## Version History
 
+### 1.5.0
+- Add visualizers for state machines
+
 ### 1.4.0
 - Support for 0-01, 0-02, PAL, and JP (mostly untested)
 - Frame rate limit (configurable)
