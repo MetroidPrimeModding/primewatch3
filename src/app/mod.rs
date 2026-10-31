@@ -9,6 +9,7 @@ mod app_window;
 mod input;
 mod menu_action;
 mod objects_window;
+mod patterned_window;
 mod raw_data_view;
 mod scripting;
 
@@ -76,6 +77,7 @@ struct FrameState<'a> {
   toasts: &'a mut Toasts,
   pids: &'a mut Vec<Pid>,
   show_raw_data_view: &'a mut bool,
+  show_patterned_window: &'a mut bool,
   inspector: &'a mut Inspector,
   objects: &'a BTreeMap<TUniqueID, GameInstance>,
   /// Per-editor-ID watch windows.
@@ -108,6 +110,7 @@ struct App {
   status_text: String,
   dolphin_pids: Vec<Pid>,
   show_raw_data_view: bool,
+  show_patterned_window: bool,
   inspector: Inspector,
   editor_ids_to_watch: Vec<WatchedEditorId>,
   show_active_in_table_only: bool,
@@ -202,6 +205,7 @@ impl App {
       dolphin_pids: pids,
       toasts,
       show_raw_data_view: false,
+      show_patterned_window: false,
       inspector: Inspector::new(),
       editor_ids_to_watch: Vec::new(),
       show_active_in_table_only: true,
@@ -282,6 +286,7 @@ impl App {
       toasts,
       dolphin_pids: pids,
       show_raw_data_view,
+      show_patterned_window,
       inspector,
       editor_ids_to_watch,
       show_active_in_table_only,
@@ -395,6 +400,7 @@ impl App {
       toasts,
       pids,
       show_raw_data_view,
+      show_patterned_window,
       inspector,
       objects: &*objects,
       editor_ids_to_watch,

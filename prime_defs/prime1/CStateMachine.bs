@@ -1,0 +1,13 @@
+struct CAiState {
+  u8 name = mName
+  u32 numTriggers = mNumTriggers
+}
+
+struct CStateMachineState {
+  *CAiState state = mState
+  f32 time = mTime
+  f32 random = mRandom
+  f32 delay = mDelay
+  f32 fixedRandom = mFixedRandom
+  bool codeTrigger = mCodeTrigger
+}

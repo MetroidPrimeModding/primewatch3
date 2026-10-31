@@ -92,6 +92,18 @@ pub fn get_all_objects(ctx: &Ctx) -> BTreeMap<TUniqueID, GameInstance> {
   objects
 }
 
+/// Name of the AI state a `CPatterned` is currently in. `None` before the first
+/// `Think` (null `mState`) or if the pointer is not a plausible game address.
+pub fn patterned_state_name(ctx: &Ctx, entity: &GameInstance) -> Option<String> {
+  let state = entity
+    .get_member(ctx, "stateMachineState")?
+    .get_member(ctx, "state")?;
+  if state.address < 0x8000_0000 {
+    return None;
+  }
+  state.get_member(ctx, "name")?.read_string(ctx)
+}
+
 pub fn get_object_by_entity_id(ctx: &Ctx, eid: u16) -> Option<GameInstance> {
   let actual_id = eid & 0x3FF;
   let global_list = get_state_manager(ctx)?.get_member(ctx, "allObjects")?;

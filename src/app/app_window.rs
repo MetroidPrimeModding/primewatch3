@@ -19,6 +19,7 @@ use crate::ui_state;
 use super::input::WorldViewInput;
 use super::menu_action::{MenuAction, apply_menu_action};
 use super::objects_window::render_objects_window;
+use super::patterned_window::render_patterned_window;
 use super::raw_data_view::render_raw_data_view;
 use super::scripting::{AnchorAlign, CustomInspectorRow, WindowAnchor};
 use super::{DEFS_DIR, FrameState};
@@ -382,6 +383,7 @@ impl AppWindow {
                   menu_actions.push(MenuAction::ReloadDefs);
                 }
                 ui.checkbox(fs.show_raw_data_view, "Raw Data View");
+                ui.checkbox(fs.show_patterned_window, "Patterned AI States");
                 ui.checkbox(
                   &mut fs.inspector.exact_values,
                   "Show exact floating point values",
@@ -551,6 +553,10 @@ impl AppWindow {
         &mut *fs.object_filter,
         &mut *fs.unknown_vtables,
       );
+
+      if *fs.show_patterned_window {
+        render_patterned_window(&egui_ctx, ctx, fs.objects, &mut *fs.show_patterned_window);
+      }
     }
 
     // --- Raw Data View --------------------------------------------

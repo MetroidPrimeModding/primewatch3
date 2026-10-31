@@ -1,5 +1,5 @@
 struct CPlayer: CPhysicsActor {
-    EPlayerMovementState jumpstate = mMovementState
+    EPlayerMovementState movementState = mMovementState
     f32 sjTimer = mSjTimer
     f32 startingJumpTimeout = mStartingJumpTimeout
     f32 minJumpTimeout = mMinJumpTimeout
@@ -79,7 +79,7 @@ struct CPlayer: CPhysicsActor {
 }
 
 enum EPlayerMovementState: u32 {
-    OnGround=0, Jump, ApplyJump, Falling, FallingMorphed
+    OnGround=0, Leaping, Falling, OffLedge, Bouncing
 }
 
 enum EPlayerMorphBallState: u32 { Unmorphed, Morphed, Morphing, Unmorphing }
