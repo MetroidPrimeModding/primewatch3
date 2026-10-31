@@ -1,4 +1,5 @@
-//! Remembers the last states each `CPatterned` was seen in.
+//! Remembers the last states each `CPatterned` was seen in, by `CAiState` address
+//! (state names repeat within a machine).
 //!
 //! The game keeps only the current state, so history is built from what the UI
 //! observes: a state that lasts less than one UI frame is never seen and will be
@@ -7,7 +8,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use crate::ctx::Ctx;
-use crate::mem::game_object_utils::{TUniqueID, patterned_state_name};
+use crate::mem::game_object_utils::{TUniqueID, patterned_state_address};
 use crate::structs::prime_structs::GameInstance;
 
 /// How many past states are kept.
@@ -15,16 +16,16 @@ pub(super) const HISTORY_LEN: usize = 2;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct StateHistory {
-  current: Option<String>,
+  current: Option<u32>,
   /// Most recent first.
-  previous: Vec<String>,
+  previous: Vec<u32>,
 }
 
 impl StateHistory {
   /// `None` (no state yet) leaves the history untouched.
-  pub(super) fn observe(&mut self, state: Option<String>) {
+  pub(super) fn observe(&mut self, state: Option<u32>) {
     let Some(state) = state else { return };
-    if self.current.as_deref() == Some(state.as_str()) {
+    if self.current == Some(state) {
       return;
     }
     if let Some(old) = self.current.replace(state) {
@@ -34,7 +35,7 @@ impl StateHistory {
   }
 
   /// Most recent first.
-  pub(super) fn previous(&self) -> &[String] {
+  pub(super) fn previous(&self) -> &[u32] {
     &self.previous
   }
 }
@@ -53,7 +54,7 @@ pub(super) fn observe_all(
       map
         .entry(*uid)
         .or_default()
-        .observe(patterned_state_name(ctx, entity));
+        .observe(patterned_state_address(ctx, entity));
     }
   }
 }
@@ -62,31 +63,31 @@ pub(super) fn observe_all(
 mod tests {
   use super::*;
 
-  fn seen(h: &mut StateHistory, names: &[&str]) {
-    for n in names {
-      h.observe(Some(n.to_string()));
+  fn seen(h: &mut StateHistory, states: &[u32]) {
+    for &s in states {
+      h.observe(Some(s));
     }
   }
 
   #[test]
   fn keeps_the_two_most_recent_previous_states() {
     let mut h = StateHistory::default();
-    seen(&mut h, &["Start", "Patrol", "Attack", "Dodge"]);
-    assert_eq!(h.previous(), ["Attack", "Patrol"]);
+    seen(&mut h, &[1, 2, 3, 4]);
+    assert_eq!(h.previous(), [3, 2]);
   }
 
   #[test]
   fn repeats_and_missing_states_do_not_add_entries() {
     let mut h = StateHistory::default();
-    seen(&mut h, &["Start", "Start", "Patrol", "Patrol"]);
+    seen(&mut h, &[1, 1, 2, 2]);
     h.observe(None);
-    assert_eq!(h.previous(), ["Start"]);
+    assert_eq!(h.previous(), [1]);
   }
 
   #[test]
   fn returning_to_an_earlier_state_is_recorded() {
     let mut h = StateHistory::default();
-    seen(&mut h, &["A", "B", "A"]);
-    assert_eq!(h.previous(), ["B", "A"]);
+    seen(&mut h, &[10, 20, 10]);
+    assert_eq!(h.previous(), [20, 10]);
   }
 }

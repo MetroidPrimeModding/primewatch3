@@ -35,6 +35,8 @@ pub struct FsmChain {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct FsmState {
+  /// Address of the `CAiState`; unlike `name` (Exo has several `Run`s) it is unique.
+  pub address: u32,
   pub name: String,
   pub chains: Vec<FsmChain>,
 }
@@ -177,7 +179,11 @@ pub fn read_fsm(ctx: &Ctx, entity: &GameInstance) -> Option<FsmGraph> {
         chains.push(FsmChain { conds, target });
       }
     }
-    states.push(FsmState { name, chains });
+    states.push(FsmState {
+      address: state.address,
+      name,
+      chains,
+    });
   }
 
   let current = sms

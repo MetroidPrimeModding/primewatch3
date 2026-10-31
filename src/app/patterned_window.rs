@@ -135,15 +135,15 @@ pub(super) fn render_patterned_window(
   });
 }
 
-/// Indices of the previous states in `graph`, most recent first. Matched by name;
-/// a state the machine no longer has (different enemy in the same slot) is `None`.
+/// Indices of the previous states in `graph`, most recent first. A state
+/// the machine no longer has (different enemy in the same slot) is `None`.
 fn recent_states(graph: &FsmGraph, history: Option<&StateHistory>) -> [Option<usize>; HISTORY_LEN] {
   let mut out = [None; HISTORY_LEN];
-  for (slot, name) in out
+  for (slot, addr) in out
     .iter_mut()
     .zip(history.map_or(&[][..], |h| h.previous()))
   {
-    *slot = graph.states.iter().position(|s| &s.name == name);
+    *slot = graph.states.iter().position(|s| s.address == *addr);
   }
   out
 }

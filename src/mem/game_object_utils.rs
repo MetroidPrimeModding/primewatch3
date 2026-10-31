@@ -104,6 +104,14 @@ pub fn patterned_state_name(ctx: &Ctx, entity: &GameInstance) -> Option<String> 
   state.get_member(ctx, "name")?.read_string(ctx)
 }
 
+/// Address of the `CAiState` a `CPatterned` is in; unique per state, unlike its name.
+pub fn patterned_state_address(ctx: &Ctx, entity: &GameInstance) -> Option<u32> {
+  let state = entity
+    .get_member(ctx, "stateMachineState")?
+    .get_member(ctx, "state")?;
+  (state.address >= 0x8000_0000).then_some(state.address)
+}
+
 pub fn get_object_by_entity_id(ctx: &Ctx, eid: u16) -> Option<GameInstance> {
   let actual_id = eid & 0x3FF;
   let global_list = get_state_manager(ctx)?.get_member(ctx, "allObjects")?;

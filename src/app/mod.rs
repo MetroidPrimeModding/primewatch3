@@ -7,6 +7,7 @@
 
 mod app_window;
 mod fsm_diagram;
+mod fsm_layout;
 mod input;
 mod menu_action;
 mod objects_window;
