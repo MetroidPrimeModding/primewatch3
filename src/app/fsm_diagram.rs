@@ -56,41 +56,94 @@ pub(super) fn edges(graph: &FsmGraph) -> Vec<Edge> {
   out
 }
 
-/// `(column, row)` per state: column is BFS depth from state 0, states it cannot
-/// reach share one trailing column.
+/// Tallest a column may get before it wraps into a second column to its right.
+const MAX_COLUMN_ROWS: usize = 10;
+
+/// `(column, row)` per state.
+///
+/// States entered from C++ rather than a trigger (`Dead`, `GetUpNow`, ...) have no
+/// way in from `Start`, so every state without an incoming edge is a root too,
+/// and a cycle nothing else reaches gets its lowest-index state as a root. Column
+/// is distance from the nearest root; rows follow the average row of a state's
+/// predecessors to keep arrows short. A column taller than `MAX_COLUMN_ROWS`
+/// wraps into extra columns.
 pub(super) fn grid_layout(graph: &FsmGraph) -> Vec<(usize, usize)> {
   let n = graph.states.len();
-  let mut depth: Vec<Option<usize>> = vec![None; n];
-  let mut queue = VecDeque::new();
-  if n > 0 {
-    depth[0] = Some(0);
-    queue.push_back(0);
-  }
-  while let Some(s) = queue.pop_front() {
-    let d = depth[s].unwrap_or(0);
-    for chain in &graph.states[s].chains {
-      if let Some(t) = chain.target
-        && t < n
-        && depth[t].is_none()
-      {
-        depth[t] = Some(d + 1);
-        queue.push_back(t);
+  let mut succ: Vec<Vec<usize>> = vec![Vec::new(); n];
+  let mut pred: Vec<Vec<usize>> = vec![Vec::new(); n];
+  for (from, state) in graph.states.iter().enumerate() {
+    for t in state
+      .chains
+      .iter()
+      .filter_map(|c| c.target)
+      .filter(|&t| t < n)
+    {
+      succ[from].push(t);
+      if t != from {
+        pred[t].push(from);
       }
     }
   }
-  let unreachable_col = depth.iter().flatten().max().map_or(0, |m| m + 1);
-  let mut rows: Vec<usize> = Vec::new();
-  let mut order: Vec<usize> = (0..n).collect();
-  // Stable: BFS-discovered states keep index order inside a column.
-  order.sort_by_key(|&i| depth[i].unwrap_or(unreachable_col));
-  let mut cells = vec![(0, 0); n];
-  for i in order {
-    let col = depth[i].unwrap_or(unreachable_col);
-    if rows.len() <= col {
-      rows.resize(col + 1, 0);
+
+  let mut depth: Vec<Option<usize>> = vec![None; n];
+  let mut queue = VecDeque::new();
+  let seed = |s: usize, depth: &mut Vec<Option<usize>>, queue: &mut VecDeque<usize>| {
+    if depth[s].is_none() {
+      depth[s] = Some(0);
+      queue.push_back(s);
     }
-    cells[i] = (col, rows[col]);
-    rows[col] += 1;
+  };
+  let flood = |depth: &mut Vec<Option<usize>>, queue: &mut VecDeque<usize>| {
+    while let Some(s) = queue.pop_front() {
+      let d = depth[s].unwrap_or(0);
+      for &t in &succ[s] {
+        if depth[t].is_none() {
+          depth[t] = Some(d + 1);
+          queue.push_back(t);
+        }
+      }
+    }
+  };
+  if n > 0 {
+    seed(0, &mut depth, &mut queue);
+  }
+  for s in (0..n).filter(|&s| pred[s].is_empty()) {
+    seed(s, &mut depth, &mut queue);
+  }
+  flood(&mut depth, &mut queue);
+  while let Some(s) = depth.iter().position(Option::is_none) {
+    seed(s, &mut depth, &mut queue);
+    flood(&mut depth, &mut queue);
+  }
+  let depth: Vec<usize> = depth.into_iter().map(|d| d.unwrap_or(0)).collect();
+
+  let max_depth = depth.iter().copied().max().unwrap_or(0);
+  let mut cells = vec![(0usize, 0usize); n];
+  let mut row_of = vec![0.0f32; n];
+  let mut next_col = 0;
+  for d in 0..=max_depth {
+    let mut members: Vec<usize> = (0..n).filter(|&s| depth[s] == d).collect();
+    let key = |s: usize| {
+      let rows: Vec<f32> = pred[s]
+        .iter()
+        .filter(|&&p| depth[p] < d)
+        .map(|&p| row_of[p])
+        .collect();
+      if rows.is_empty() {
+        f32::MAX
+      } else {
+        rows.iter().sum::<f32>() / rows.len() as f32
+      }
+    };
+    // Stable sort keeps index order for ties and for predecessor-less states.
+    members.sort_by(|&a, &b| key(a).total_cmp(&key(b)));
+    for chunk in members.chunks(MAX_COLUMN_ROWS) {
+      for (row, &s) in chunk.iter().enumerate() {
+        cells[s] = (next_col, row);
+        row_of[s] = row as f32;
+      }
+      next_col += 1;
+    }
   }
   cells
 }
@@ -438,15 +491,46 @@ mod tests {
   }
 
   #[test]
-  fn layers_follow_bfs_depth_and_unreachable_states_trail() {
-    // 0 -> 1,2 ; 1 -> 3 ; 2 -> 3 ; 4 unreachable
+  fn layers_follow_bfs_depth_from_every_root() {
+    // 0 -> 1,2 ; 1 -> 3 ; 2 -> 3 ; 4 -> 0 has no way in, so it is a root too.
     let g = graph(&[&[1, 2], &[3], &[3], &[], &[0]]);
     let cells = grid_layout(&g);
     assert_eq!(cells[0], (0, 0));
+    assert_eq!(cells[4], (0, 1));
     assert_eq!(cells[1], (1, 0));
     assert_eq!(cells[2], (1, 1));
     assert_eq!(cells[3], (2, 0));
-    assert_eq!(cells[4], (3, 0));
+  }
+
+  #[test]
+  fn states_only_entered_from_code_sit_on_the_left() {
+    // 0 -> 1 ; 2 -> 3 and 3 -> 4 are only reachable from code.
+    let g = graph(&[&[1], &[], &[3], &[4], &[]]);
+    let cells = grid_layout(&g);
+    assert_eq!(cells[0].0, 0);
+    assert_eq!(cells[2].0, 0);
+    assert_eq!(cells[3].0, 1);
+    assert_eq!(cells[4].0, 2);
+  }
+
+  #[test]
+  fn an_unreachable_cycle_still_gets_a_root() {
+    // 1 <-> 2 has no incoming edge from outside the cycle.
+    let g = graph(&[&[], &[2], &[1]]);
+    let cells = grid_layout(&g);
+    assert_eq!(cells[1].0, 0);
+    assert_eq!(cells[2].0, 1);
+  }
+
+  #[test]
+  fn tall_columns_wrap_instead_of_growing_forever() {
+    let targets: Vec<usize> = (1..=25).collect();
+    let mut links: Vec<&[usize]> = vec![&targets];
+    links.extend(std::iter::repeat_n(&[][..], 25));
+    let cells = grid_layout(&graph(&links));
+    assert!(cells.iter().all(|&(_, r)| r < MAX_COLUMN_ROWS));
+    let cols: std::collections::BTreeSet<_> = cells.iter().map(|c| c.0).collect();
+    assert_eq!(cols.len(), 4); // root + ceil(25 / 10) wrapped columns
   }
 
   #[test]
