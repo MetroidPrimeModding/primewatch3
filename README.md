@@ -78,7 +78,7 @@ Start Dolphin, load Metroid Prime, and Prime Watch will attach on its own.
 
 ## Version History
 
-### 1.5.0
+### 1.5.0/1.5.1
 - Add visualizers for state machines
 
 ### 1.4.0
