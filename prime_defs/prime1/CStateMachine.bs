@@ -1,13 +1,41 @@
+// `mFunc` (a 12-byte pointer-to-member) is deliberately not a member here: DWARF
+// reports it as 4 bytes. `mem::ai_fsm` reads its 3 words raw at the struct address.
+struct CAiTrigger {
+  f32 arg = mArg
+  *CAiTrigger andTrigger = mAndTrigger
+  *CAiState state = mState
+  bool negated = mLNot
+}
+
 struct CAiState {
   u8 name = mName
   u32 numTriggers = mNumTriggers
+  *CAiTrigger firstTrigger = mFirstTrigger
+}
+
+struct CStateMachine {
+  rstl::vector<CAiState> states = mStates.mCount
+  rstl::vector<CAiTrigger> triggers = mTriggers.mCount
 }
 
 struct CStateMachineState {
+  *CStateMachine machine = mMachine
   *CAiState state = mState
   f32 time = mTime
   f32 random = mRandom
   f32 delay = mDelay
   f32 fixedRandom = mFixedRandom
   bool codeTrigger = mCodeTrigger
+}
+
+// decomp `rstl::pair<const char*, CAiTriggerFunc>`; not in DWARF, so spelled by
+// hand: name pointer, then the 12-byte pointer-to-member (read raw by `ai_fsm`).
+struct CAiFuncMapEntry {
+  size 0x10
+  *u8 name 0x0
+}
+
+struct CAiFuncMap {
+  rstl::vector<CAiFuncMapEntry> states = mStates.mCount
+  rstl::vector<CAiFuncMapEntry> triggers = mTriggers.mCount
 }
