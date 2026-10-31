@@ -6,12 +6,14 @@
 //! consumed at the top of `RedrawRequested`.
 
 mod app_window;
+mod fsm_diagram;
 mod input;
 mod menu_action;
 mod objects_window;
 mod patterned_window;
 mod raw_data_view;
 mod scripting;
+mod state_history;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::error::Error;
