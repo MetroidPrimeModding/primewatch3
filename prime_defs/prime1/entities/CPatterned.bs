@@ -2,4 +2,12 @@ struct CPatterned: CAi {
   f32 currentDamageRemTime = mCurDamageRemTime
   f32 damageWaitTime = mDamageWaitTime
   f32 damageCooldownTimer = mDamageCooldownTimer
+  CStateMachineState stateMachineState = mStateMachineState
+  EAnimState animState = mAnimState
+  EMoveState moveState = mMoveState
+  EPatrolState patrolState = mPatrolState
 }
+
+enum EAnimState: i32 { Invalid = -1, NotReady, Ready, Repeat, Over }
+enum EMoveState: u32 { Zero, One, Two, Three, Four }
+enum EPatrolState: i32 { Invalid = -1, Patrol, Pause, Done }
