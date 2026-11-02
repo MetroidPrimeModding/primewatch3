@@ -1,3 +1,10 @@
 struct CMetroidPrimeStage2: CPatterned {
-
+  f32 hpThreshold = mHpThreshold
+  f32 hpFraction = mHpFraction
+  i32 attackCounter = mAttackCounter
+  i32 nextAttackThreshold = mNextAttackThreshold
+  i32 minAttackInterval = mMinAttackInterval
+  i32 maxAttackInterval = mMaxAttackInterval
+  bool canAttack = mCanAttack
+  bool hasEventStarted = mHasEventStarted
 }

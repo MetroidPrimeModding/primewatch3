@@ -2,6 +2,8 @@ struct CPatterned: CAi {
   f32 currentDamageRemTime = mCurDamageRemTime
   f32 damageWaitTime = mDamageWaitTime
   f32 damageCooldownTimer = mDamageCooldownTimer
+  f32 minAttackRange = mMinAttackRange
+  f32 maxAttackRange = mMaxAttackRange
   CStateMachineState stateMachineState = mStateMachineState
   EAnimState animState = mAnimState
   EMoveState moveState = mMoveState

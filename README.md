@@ -78,6 +78,9 @@ Start Dolphin, load Metroid Prime, and Prime Watch will attach on its own.
 
 ## Version History
 
+### 1.5.2
+- Add script for showing Essence's trigger flags (InMaxRange/TooClose are the most important ones)
+
 ### 1.5.0/1.5.1
 - Add visualizers for state machines
 
