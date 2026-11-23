@@ -4,4 +4,5 @@
     "morph_lift.rhai": false,
     "player_status.rhai": true,
     "prime_stage2_triggers.rhai": false,
+    "aether_depth.rhai": false,
 }

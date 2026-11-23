@@ -462,3 +462,26 @@ fn typed_reads_off_the_live_dump() {
   assert_eq!(rows[1], "vel matches x: true");
   assert_eq!(rows[2], "xf translation matches posX: true");
 }
+
+#[test]
+fn aether_depth_script_runs_against_the_live_dump() {
+  let Some(mem) = load_mem1() else { return };
+  let structs = load_defs();
+  let ctx = Ctx::new(&structs, &mem, GameVersion::default());
+  let objects = crate::mem::game_object_utils::get_all_objects(&ctx);
+
+  let src = std::fs::read_to_string(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/scripts/aether_depth.rhai"
+  ))
+  .expect("read aether_depth.rhai");
+
+  let windows = run(&src, &ctx, &objects).expect("run");
+  assert_eq!(windows.len(), 1, "aether_depth submits one window");
+  for row in &windows[0].rows {
+    if let CustomInspectorRow::Text(t) = row {
+      eprintln!("aether: {t}");
+    }
+  }
+  assert!(!windows[0].rows.is_empty());
+}

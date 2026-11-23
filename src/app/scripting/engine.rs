@@ -5,7 +5,7 @@
 use rhai::{Dynamic, Engine, EvalAltResult, Position};
 
 use crate::ctx::Ctx;
-use crate::mem::globals::{get_main, get_state_manager};
+use crate::mem::globals::{get_main, get_state_manager, get_tweak_player};
 use crate::structs::prime_structs::GameInstance;
 
 use super::env::{submit_window, with_env};
@@ -139,6 +139,12 @@ fn register_lookup_api(engine: &mut Engine) {
   engine.register_fn("get_main", || -> Result<Dynamic, Box<EvalAltResult>> {
     with_env(|ctx, _| opt_instance(get_main(ctx)))
   });
+  engine.register_fn(
+    "get_tweak_player",
+    || -> Result<Dynamic, Box<EvalAltResult>> {
+      with_env(|ctx, _| opt_instance(get_tweak_player(ctx)))
+    },
+  );
 
   // `g_stateManager.player` (auto-derefs the `*CPlayer`). Unit if unreadable.
   engine.register_fn(
