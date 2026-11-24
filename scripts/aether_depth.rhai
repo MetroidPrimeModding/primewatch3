@@ -11,11 +11,18 @@
 //   vz += dt * gravity   (momentum = gravity * mass, so mass cancels)
 // then `CheckFalling` runs on the new position.
 //
-// Floating back out: `MoveGroundCollider_New` nudges the player up by 0.0005
-// each step when nothing collides at the raised spot (always true in the
-// aether), and the "undo" in the no-floor branch only edits a local copy of
-// the transform. So the player rises 0.0005 per frame (f32, so the real step
-// shrinks slightly as |z| grows). "Pop out" is the first step whose touch
+// Two small per-step offsets, both confirmed against a frame-by-frame trace
+// (`primewatch3 --trace-player`, fall matched to ~6e-6):
+//   - `MoveObjectAnalytical` shortens every move by mMinimumTranslationDelta
+//     (0.002): the whole dt*v vector (x, y and z) is scaled by
+//     max(|dt*v| - 0.002, 0) / |dt*v|.
+//   - `MoveGroundCollider_New` nudges the player up by 0.0005 each step when
+//     nothing collides at the raised spot (true in open air and in the aether),
+//     and the "undo" in the no-floor branch only edits a local copy of the
+//     transform, so it sticks.
+// A straight-down step is dt*vz + 0.002 + 0.0005. In the aether the velocity is
+// 0 (no motion, so no 0.002) and the player rises 0.0005 per frame (f32, so the
+// real step shrinks slightly as |z| grows). "Pop out" is the first step whose touch
 // bounds overlap an alive area again; `CheckFalling` then sends Falling
 // instead of OnFloor. Whether the player then stays or bobs back down at the
 // edge isn't modelled. If no area lies above, the float never ends.
@@ -23,8 +30,13 @@
 // Assumptions, all of which make the number approximate rather than exact:
 //   - Fixed dt of 1/60 s and f32 rounding is ignored (rhai uses f64), so a
 //     fall that lands within ~1e-4 of an area edge could differ by one step.
-//   - Pure vertical fall: horizontal motion, geometry collision, jumps, and
-//     fluid / dash gravity are ignored. Gravity is the tweak's normal value.
+//   - Horizontal velocity is held constant (HOLD_HORIZONTAL); stick input and
+//     air control during the fall aren't predicted. Geometry collision, jumps,
+//     and fluid / dash gravity are ignored. Gravity is the tweak's normal value.
+//   - Gravity is applied from the first step. Walking off a ledge actually
+//     takes ~4 frames (OnGround -> OffLedge -> Falling, rising 0.0005 a frame
+//     with vz = 0) before the first gravity step, so "enters aether in" is
+//     short by about that when you start on the ground.
 //   - Morph ball: not handled. The ball moves through `MoveAndCollide`, which
 //     never calls `CheckFalling`, so it doesn't stop in the aether this way.
 //   - Areas are taken as they are loaded now; streaming during the fall that
@@ -33,6 +45,10 @@
 const DT = 1.0 / 60.0;
 const MAX_STEPS = 1200;
 const CHAIN_ALIVE = 3;
+// Carry the current horizontal velocity through the fall (no stick input, no
+// air drag). The 0.002 shortening works along the whole motion direction, so
+// horizontal speed changes how far each step drops. false = straight down.
+const HOLD_HORIZONTAL = true;
 
 fn round3(x) { (x * 1000.0).round() / 1000.0 }
 
@@ -217,11 +233,23 @@ if !in_bounds(start, local_lo, local_hi, area_lo, area_hi) {
 }
 
 let pos = start;
+let vx = if HOLD_HORIZONTAL { vel.x } else { 0.0 };
+let vy = if HOLD_HORIZONTAL { vel.y } else { 0.0 };
 let vz = vel.z;
 let steps = 0;
 let found = false;
 while steps < MAX_STEPS {
-    pos = vec3(pos.x, pos.y, pos.z + DT * vz);
+    let dx = DT * vx;
+    let dy = DT * vy;
+    let dz = DT * vz;
+    let mag = (dx * dx + dy * dy + dz * dz).sqrt();
+    let k = 1.0;
+    if mag > 0.0 {
+        k = mag - 0.002;
+        if k < 0.0 { k = 0.0; }
+        k /= mag;
+    }
+    pos = vec3(pos.x + dx * k, pos.y + dy * k, pos.z + dz * k + 0.0005);
     vz += DT * gravity;
     steps += 1;
     if !in_bounds(pos, local_lo, local_hi, area_lo, area_hi) {
